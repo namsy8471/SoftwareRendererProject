@@ -1,6 +1,6 @@
 #include "Framework.h"
 #include "Resource.h"
-#include <WinUser.h>
+#include "Renderer.h"
 
 Framework::Framework() : m_hWnd(nullptr), m_hInstance(nullptr), m_pRenderer(nullptr), m_szTitle(), m_szWindowClass()
 {
@@ -71,7 +71,7 @@ void Framework::Run()
 
         // 메시지가 없는 이 시간에 렌더링 코드를 실행!
         Framework::Update();
-        //Renderer::Render();
+        m_pRenderer->Render();
     }
 }
 
@@ -110,7 +110,7 @@ LRESULT Framework::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
         PAINTSTRUCT ps;
         HDC hdc = BeginPaint(hWnd, &ps);
         // TODO: 여기에 hdc를 사용하는 그리기 코드를 추가합니다...
-        SetPixel(hdc, 100, 50, RGB(255, 0, 0));
+        // SetPixel(hdc, 100, 50, RGB(255, 0, 0));
 
         EndPaint(hWnd, &ps);
     }
