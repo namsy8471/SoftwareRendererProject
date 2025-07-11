@@ -13,18 +13,20 @@ private:
 	int m_width;
 	int m_height;
 
+	unsigned int* m_pPixelData;
 public:
 	Renderer();
 	~Renderer();
 
 	bool Initialize(HWND hWnd);
-	void Shutdown();
+	void Shutdown() const;
 
-	void DrawPixel(int x, int y, COLORREF color);
-	void DrawLine(int x0, int y0, int x1, int y1, COLORREF color);
+	void DrawPixel(int x, int y, unsigned int color);
+	void DrawLine(int x0, int y0, int x1, int y1, unsigned int color);
+	void DrawTriangle(int x0, int y0, int x1, int y1, int x2, int y2, unsigned int color);
 
-	void Clear();
-	void Present(HDC hScreenDC);
+	void Clear() const;
+	void Present(HDC hScreenDC) const;
 	void Render();
 
 	void OnResize(HWND hWnd);

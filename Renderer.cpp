@@ -1,7 +1,7 @@
 ﻿#include "Renderer.h"
 
 Renderer::Renderer() : m_hBitmap(nullptr), m_hMemDC(nullptr),
-m_hOldBitmap(nullptr)
+m_hOldBitmap(nullptr), m_height(), m_width(), m_pPixelData(nullptr)
 {
 }
 
@@ -30,8 +30,22 @@ bool Renderer::Initialize(HWND hWnd)
         return false;
     }
 
+    // DIB 정보를 담을 BITMAPINFO 구조체를 설정합니다.
+    BITMAPINFO bmi;
+    ZeroMemory(&bmi, sizeof(BITMAPINFO));
+    bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bmi.bmiHeader.biWidth = m_width;
+    bmi.bmiHeader.biHeight = -m_height; //  중요: 높이를 음수로 설정! [y * width + x]
+    bmi.bmiHeader.biPlanes = 1;
+    bmi.bmiHeader.biBitCount = 32;      // 32비트 컬러
+    bmi.bmiHeader.biCompression = BI_RGB; // 압축 안 함
+
     // 메모리 DC에 그려질 비트맵(백버퍼)을 생성합니다.
     m_hBitmap = CreateCompatibleBitmap(hScreenDC, m_width, m_height);
+    
+    m_hBitmap = CreateDIBSection(m_hMemDC, &bmi, DIB_RGB_COLORS,
+        (void**)&m_pPixelData, NULL, 0);
+
     if (!m_hBitmap)
     {
         // 실패 시 메모리 DC와 Screen DC를 해제하고 종료
@@ -54,7 +68,7 @@ bool Renderer::Initialize(HWND hWnd)
     return true;
 }
 
-void Renderer::Shutdown()
+void Renderer::Shutdown() const
 {
     // 생성의 역순으로 GDI 객체들을 해제합니다.
     if (m_hMemDC)
@@ -70,15 +84,40 @@ void Renderer::Shutdown()
     }
 }
 
-void Renderer::DrawPixel(int x, int y, COLORREF color)
+void Renderer::DrawPixel(int x, int y, unsigned int color)
+{
+    // Checking Boundary
+    // 화면 밖을 침범해서 메모리를 오염시키는 것을 방지합니다.
+    if (x < 0 || x >= m_width || y < 0 || y >= m_height)
+    {
+        return;
+    }
+
+    // !! Important
+    // Color exchange to RGB from BGR
+    unsigned char r = (color >> 16) & 0xFF;
+    unsigned char g = (color >> 8) & 0xFF;
+    unsigned char b = (color >> 0) & 0xFF;
+
+    unsigned int newColor = (r << 0) | (g << 8) | (b << 16);
+
+    // 1차원 배열 인덱스를 계산해서 픽셀 값을 직접 씁니다.
+    m_pPixelData[y * m_width + x] = newColor;
+}
+
+
+void Renderer::DrawLine(int x0, int y0, int x1, int y1, unsigned int color)
 {
 }
 
-void Renderer::DrawLine(int x0, int y0, int x1, int y1, COLORREF color)
+void Renderer::DrawTriangle(int x0, int y0, int x1, int y1, int x2, int y2, unsigned int color)
 {
+    DrawLine(x0, y0, x1, y1, color);
+    DrawLine(x0, y0, x2, y2, color);
+    DrawLine(x1, y1, x2, y2, color);
 }
 
-void Renderer::Clear()
+void Renderer::Clear() const
 {
     // 검은색 브러시를 가져옵니다.
     HBRUSH blackBrush = (HBRUSH)GetStockObject(BLACK_BRUSH);
@@ -90,7 +129,7 @@ void Renderer::Clear()
     FillRect(m_hMemDC, &rect, blackBrush);
 }
 
-void Renderer::Present(HDC hScreenDC)
+void Renderer::Present(HDC hScreenDC) const
 {
     // BitBlt API를 사용해 메모리 DC의 내용을 화면 DC로 복사합니다.
     BitBlt(hScreenDC,      // 복사 대상 DC (화면)
@@ -105,13 +144,22 @@ void Renderer::Present(HDC hScreenDC)
 void Renderer::Render()
 {
     // TODO: Draw something here
-    
+
+    int half_h = m_height / 2;
+    int half_w = m_width / 2;
+
+    for (int i = half_h / 2; i < half_h + half_h / 2; i++)
+    {
+        for (int j = half_w / 2; j < half_w + half_w / 2; j++)
+        {
+            DrawPixel(j, i, RGB(255, 0, 0));
+        }
+    }
 
 }
 
 void Renderer::OnResize(HWND hWnd)
 {
     Shutdown();
-
     Initialize(hWnd);
 }
