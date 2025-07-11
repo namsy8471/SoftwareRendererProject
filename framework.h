@@ -9,14 +9,16 @@ class Renderer;
 class Framework
 {
 private:
-	Renderer* m_pRenderer;
+	std::unique_ptr<Renderer> m_pRenderer;
 
 	// Windows Variables
-	HWND m_hWnd;                                // 윈도우 핸들
-	HINSTANCE m_hInstance;						// 핸들 인스턴스
+	HWND m_hWnd;                            // 윈도우 핸들
+	HINSTANCE m_hInstance;					// 핸들 인스턴스
 
-	WCHAR m_szTitle[MAX_LOADSTRING];              // 제목 표시줄 텍스트입니다.
-	WCHAR m_szWindowClass[MAX_LOADSTRING];        // 기본 창 클래스 이름입니다.
+	WCHAR m_szTitle[MAX_LOADSTRING];        // 제목 표시줄 텍스트입니다.
+	WCHAR m_szWindowClass[MAX_LOADSTRING];  // 기본 창 클래스 이름입니다.
+
+	bool m_bIsResizing = false;				// 리사이즈 중인지 확인하는 플래그
 
 public:
 	Framework();
@@ -25,7 +27,9 @@ public:
 	bool Initialize(HINSTANCE, int);
 	void Run();
 	void Update();
+	void Render();
 	void Shutdown();
+
 	LRESULT HandleMessage(HWND, UINT, WPARAM, LPARAM);
 
 public:

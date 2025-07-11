@@ -12,3 +12,6 @@
 #include <malloc.h>
 #include <memory.h>
 #include <tchar.h>
+
+// Header for Software Renderer
+#include <memory> // For SmartPointer

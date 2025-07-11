@@ -1,3 +1,5 @@
+#include <memory>
+
 #include "Framework.h"
 #include "Resource.h"
 #include "Renderer.h"
@@ -40,7 +42,7 @@ bool Framework::Initialize(HINSTANCE hInstance, int nCmdShow)
         return FALSE; // 등록 실패 시 즉시 종료
     }
 
-    // Init Instance
+    // Init Class Instance
     m_hWnd = CreateWindowW(m_szWindowClass, m_szTitle, WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT, 0, CW_USEDEFAULT, 0, nullptr, nullptr, hInstance, this);
 
@@ -51,6 +53,13 @@ bool Framework::Initialize(HINSTANCE hInstance, int nCmdShow)
 
     ShowWindow(m_hWnd, nCmdShow);
     UpdateWindow(m_hWnd);
+
+    m_pRenderer = std::make_unique<Renderer>();
+
+    if (!m_pRenderer->Initialize(m_hWnd))
+    {
+        return FALSE;
+    }
 
     return TRUE;
 }
@@ -71,17 +80,32 @@ void Framework::Run()
 
         // 메시지가 없는 이 시간에 렌더링 코드를 실행!
         Framework::Update();
-        m_pRenderer->Render();
+        Framework::Render();
+
+        HDC hdc = GetDC(m_hWnd);
+        if (m_pRenderer)
+        {
+            m_pRenderer->Present(hdc);
+        }
+        ReleaseDC(m_hWnd, hdc);
     }
+}
+
+void Framework::Render()
+{
+    m_pRenderer->Clear();
+
+    m_pRenderer->Render();
 }
 
 void Framework::Update()
 {
+    //TODO Logic Update
 }
 
 void Framework::Shutdown()
 {
-
+    m_pRenderer->Shutdown();
 }
 
 LRESULT Framework::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
@@ -107,14 +131,50 @@ LRESULT Framework::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
     break;
     case WM_PAINT:
     {
+        //It is not used anymore
         PAINTSTRUCT ps;
         HDC hdc = BeginPaint(hWnd, &ps);
-        // TODO: 여기에 hdc를 사용하는 그리기 코드를 추가합니다...
-        // SetPixel(hdc, 100, 50, RGB(255, 0, 0));
-
         EndPaint(hWnd, &ps);
     }
     break;
+
+    // 사용자가 창 크기 조절/이동을 시작할 때 호출됨
+    case WM_ENTERSIZEMOVE:
+        m_bIsResizing = true;
+        break;
+
+        // 사용자가 창 크기 조절/이동을 끝냈을 때 호출됨
+    case WM_EXITSIZEMOVE:
+        m_bIsResizing = false;
+        // 조절이 끝났으니, 이때 딱 한 번 OnResize를 호출
+        if (m_pRenderer)
+        {
+            m_pRenderer->OnResize(hWnd);
+        }
+        break;
+
+    case WM_SIZE:
+    {
+        // 창이 최소화(SIZE_MINIMIZED) 상태가 아니고,
+        // 사용자가 마우스로 드래그하는 중이 아닐 때만 OnResize를 호출
+        // (예: 창을 최대화했을 때)
+        if (wParam != SIZE_MINIMIZED && !m_bIsResizing)
+        {
+            if (m_pRenderer)
+            {
+                m_pRenderer->OnResize(hWnd);
+
+                Render();
+
+                HDC hdc = GetDC(hWnd);
+                m_pRenderer->Present(hdc);
+                ReleaseDC(hWnd, hdc);
+            }
+        }
+        
+    }
+    break;
+
     case WM_DESTROY:
         PostQuitMessage(0);
         break;

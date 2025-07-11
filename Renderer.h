@@ -10,6 +10,9 @@ private:
 	HBITMAP m_hBitmap;      // 백버퍼용 비트맵
 	HBITMAP m_hOldBitmap;   // m_hMemDC에 원래 선택되어 있던 비트맵
 
+	int m_width;
+	int m_height;
+
 public:
 	Renderer();
 	~Renderer();
@@ -21,8 +24,11 @@ public:
 	void DrawLine(int x0, int y0, int x1, int y1, COLORREF color);
 
 	void Clear();
-	void Present();
+	void Present(HDC hScreenDC);
 	void Render();
+
+	void OnResize(HWND hWnd);
+
 
 };
 
