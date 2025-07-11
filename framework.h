@@ -18,8 +18,7 @@ private:
 	WCHAR m_szTitle[MAX_LOADSTRING];        // 제목 표시줄 텍스트입니다.
 	WCHAR m_szWindowClass[MAX_LOADSTRING];  // 기본 창 클래스 이름입니다.
 
-	bool m_bIsResizing = false;				// 리사이즈 중인지 확인하는 플래그
-
+	
 public:
 	Framework();
 	~Framework();

@@ -138,40 +138,18 @@ LRESULT Framework::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
     }
     break;
 
-    // 사용자가 창 크기 조절/이동을 시작할 때 호출됨
-    case WM_ENTERSIZEMOVE:
-        m_bIsResizing = true;
-        break;
-
-        // 사용자가 창 크기 조절/이동을 끝냈을 때 호출됨
-    case WM_EXITSIZEMOVE:
-        m_bIsResizing = false;
-        // 조절이 끝났으니, 이때 딱 한 번 OnResize를 호출
+    case WM_SIZE:
+    {
         if (m_pRenderer)
         {
             m_pRenderer->OnResize(hWnd);
+
+            Render();
+
+            HDC hdc = GetDC(hWnd);
+            m_pRenderer->Present(hdc);
+            ReleaseDC(hWnd, hdc);
         }
-        break;
-
-    case WM_SIZE:
-    {
-        // 창이 최소화(SIZE_MINIMIZED) 상태가 아니고,
-        // 사용자가 마우스로 드래그하는 중이 아닐 때만 OnResize를 호출
-        // (예: 창을 최대화했을 때)
-        if (wParam != SIZE_MINIMIZED && !m_bIsResizing)
-        {
-            if (m_pRenderer)
-            {
-                m_pRenderer->OnResize(hWnd);
-
-                Render();
-
-                HDC hdc = GetDC(hWnd);
-                m_pRenderer->Present(hdc);
-                ReleaseDC(hWnd, hdc);
-            }
-        }
-        
     }
     break;
 
