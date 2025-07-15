@@ -3,8 +3,9 @@
 #include "Framework.h"
 #include "Resource.h"
 #include "Renderer.h"
+#include "PerformanceAnalyzer.h"
 
-Framework::Framework() : m_hWnd(nullptr), m_hInstance(nullptr), m_pRenderer(nullptr), m_szTitle(), m_szWindowClass()
+Framework::Framework() : m_hWnd(nullptr), m_hInstance(nullptr), m_pRenderer(nullptr), m_perfAnalyzer(), m_szTitle(), m_szWindowClass()
 {
 
 }
@@ -61,6 +62,8 @@ bool Framework::Initialize(HINSTANCE hInstance, int nCmdShow)
         return FALSE;
     }
 
+    m_perfAnalyzer.Initialize();
+
     return TRUE;
 }
 
@@ -78,7 +81,21 @@ void Framework::Run()
             DispatchMessage(&msg);
         }
 
+        int prevFPS = m_perfAnalyzer.GetAvgFPSForSecond();
         // 메시지가 없는 이 시간에 렌더링 코드를 실행!
+        m_perfAnalyzer.Update();
+        
+        if (m_perfAnalyzer.GetAvgFPSForSecond() != prevFPS) {
+            // 문자열 버퍼를 준비하고
+            wchar_t buffer[100];
+            // "SoftrendererProject - FPS: 60" 같은 형식으로 문자열을 만듭니다.
+            swprintf_s(buffer, 100, L"%s - AvgFPS: %d", 
+                m_szTitle, m_perfAnalyzer.GetAvgFPSForSecond());
+
+            // 창 제목을 설정합니다.
+            SetWindowText(m_hWnd, buffer);
+        }
+
         Framework::Update();
         Framework::Render();
 
@@ -98,6 +115,7 @@ void Framework::Render()
     m_pRenderer->Render();
 }
 
+// Framework Logic Update(For Game)
 void Framework::Update()
 {
     //TODO Logic Update
@@ -121,6 +139,13 @@ LRESULT Framework::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
         case IDM_ABOUT:
             DialogBox(m_hInstance, MAKEINTRESOURCE(IDD_ABOUTBOX), hWnd, Framework::About);
             break;
+        case ID_LINEALGORITHM_BRESENHAM:
+            m_pRenderer->SetLineAlgorithm(ELineAlgorithm::Bresenham);
+            break;
+        case ID_LINEALGORITHM_DDA:
+            m_pRenderer->SetLineAlgorithm(ELineAlgorithm::DDA);
+            break;
+
         case IDM_EXIT:
             DestroyWindow(hWnd);
             break;

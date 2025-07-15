@@ -130,6 +130,7 @@
     <ClInclude Include="Framework.h" />
     <ClInclude Include="Math.h" />
     <ClInclude Include="pch.h" />
+    <ClInclude Include="PerformanceAnalyzer.h" />
     <ClInclude Include="Renderer.h" />
     <ClInclude Include="Resource.h" />
     <ClInclude Include="SoftrendererProject.h" />
@@ -137,6 +138,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Framework.cpp" />
+    <ClCompile Include="PerformanceAnalyzer.cpp" />
     <ClCompile Include="Renderer.cpp" />
     <ClCompile Include="SoftrendererProject.cpp" />
   </ItemGroup>

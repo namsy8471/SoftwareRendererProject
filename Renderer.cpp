@@ -1,4 +1,7 @@
 ﻿#include "Renderer.h"
+#include <cmath>
+
+
 
 Renderer::Renderer() : m_hBitmap(nullptr), m_hMemDC(nullptr),
 m_hOldBitmap(nullptr), m_height(), m_width(), m_pPixelData(nullptr)
@@ -105,9 +108,70 @@ void Renderer::DrawPixel(int x, int y, unsigned int color)
     m_pPixelData[y * m_width + x] = newColor;
 }
 
+// Bresenham Algorithm
+void Renderer::drawLineByBresenham(int x0, int y0, int x1, int y1, unsigned int color)
+{
+    const int dx = abs(x1 - x0);
+    const int sx = (x0 < x1) ? 1 : -1;
+    const int dy = -abs(y1 - y0); // y는 음수인 것이 계산에 편리
+    const int sy = (y0 < y1) ? 1 : -1;
+
+    int err = dx + dy;
+
+    while (true)
+    {
+        DrawPixel(x0, y0, color);
+
+        if (x0 == x1 && y0 == y1) break;
+
+        int e2 = 2 * err;
+        if (e2 >= dy)
+        {
+            err += dy;
+            x0 += sx;
+        }
+        if (e2 <= dx)
+        {
+            err += dx;
+            y0 += sy;
+        }
+    }
+}
+
+// DDA(Digital Differential Analyzer) Algorithm
+void Renderer::drawLineByDDA(int x0, int y0, int x1, int y1, unsigned int color)
+{
+    const float dy = abs(y1 - y0);
+    const float dx = abs(x1 - x0);
+
+    int steps = dx > dy ? dx : dy;
+
+    const float x_inc = dx / (float)steps;
+    const float y_inc = dy / (float)steps;
+
+    float x = x0;
+    float y = y0;
+    
+    for (int i = 0; i <= steps; i++) {
+        DrawPixel(x, round(y), color);
+        x += x_inc;
+        y += y_inc;
+    }
+    
+}
 
 void Renderer::DrawLine(int x0, int y0, int x1, int y1, unsigned int color)
 {
+    switch (m_currentLineAlgorithm)
+    {
+    case ELineAlgorithm::Bresenham:
+        drawLineByBresenham(x0, y0, x1, y1, color);
+        break;
+    
+    case ELineAlgorithm::DDA:
+        drawLineByDDA(x0, y0, x1, y1, color);
+        break;
+    }
 }
 
 void Renderer::DrawTriangle(int x0, int y0, int x1, int y1, int x2, int y2, unsigned int color)
@@ -115,6 +179,11 @@ void Renderer::DrawTriangle(int x0, int y0, int x1, int y1, int x2, int y2, unsi
     DrawLine(x0, y0, x1, y1, color);
     DrawLine(x0, y0, x2, y2, color);
     DrawLine(x1, y1, x2, y2, color);
+}
+
+void Renderer::SetLineAlgorithm(ELineAlgorithm eLineAlgorithm)
+{
+    m_currentLineAlgorithm = eLineAlgorithm;
 }
 
 void Renderer::Clear() const
@@ -145,17 +214,25 @@ void Renderer::Render()
 {
     // TODO: Draw something here
 
-    int half_h = m_height / 2;
-    int half_w = m_width / 2;
+    ///*int half_h = m_height / 2;
+    //int half_w = m_width / 2;
 
-    for (int i = half_h / 2; i < half_h + half_h / 2; i++)
-    {
-        for (int j = half_w / 2; j < half_w + half_w / 2; j++)
-        {
-            DrawPixel(j, i, RGB(255, 0, 0));
-        }
+    //for (int i = half_h / 2; i < half_h + half_h / 2; i++)
+    //{
+    //    for (int j = half_w / 2; j < half_w + half_w / 2; j++)
+    //    {
+    //        DrawPixel(j, i, RGB(255, 0, 0));
+    //    }
+    //}*/
+    
+    switch (m_currentLineAlgorithm) {
+    case ELineAlgorithm::Bresenham:
+        DrawTriangle(100, 200, 100, 300, 200, 300, RGB(255, 0, 0));
+        break;
+    case ELineAlgorithm::DDA:
+        DrawTriangle(100, 200, 100, 300, 200, 300, RGB(0, 255, 0));
+        break;
     }
-
 }
 
 void Renderer::OnResize(HWND hWnd)
