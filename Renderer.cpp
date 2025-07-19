@@ -1,7 +1,8 @@
 ﻿#include "Renderer.h"
+#include <thread>
+#include <vector>
+#include <algorithm>
 #include <cmath>
-
-
 
 Renderer::Renderer() : m_hBitmap(nullptr), m_hMemDC(nullptr),
 m_hOldBitmap(nullptr), m_height(), m_width(), m_pPixelData(nullptr)
@@ -181,21 +182,94 @@ void Renderer::DrawTriangle(int x0, int y0, int x1, int y1, int x2, int y2, unsi
     DrawLine(x1, y1, x2, y2, color);
 }
 
+// Using Barycentric Coordinates
+void Renderer::DrawFilledTriangle(const SRMath::vec2& v0, const SRMath::vec2& v1, const SRMath::vec2& v2, unsigned int color)
+{
+    // Calculate boundary box
+    int minX = static_cast<int>(std::min({ v0.x, v1.x, v2.x }));
+    int minY = static_cast<int>(std::min({ v0.y, v1.y, v2.y }));
+    int maxX = static_cast<int>(std::max({ v0.x, v1.x, v2.x }));
+    int maxY = static_cast<int>(std::max({ v0.y, v1.y, v2.y }));
+
+    // multithread setting
+    const unsigned int numThreads = std::thread::hardware_concurrency();
+    std::vector<std::thread> threads;
+
+    for (unsigned int i = 0; i < numThreads; ++i)
+    {
+        threads.emplace_back([this, i, numThreads, minY, maxY, minX, maxX, &v0, &v1, &v2, color]() {
+            for (int y = minY + i; y <= maxY; y += numThreads)
+            {
+                for (int x = minX; x <= maxX; ++x)
+                {
+                    // Barycentric Coordinate
+                    SRMath::vec3 p = { static_cast<float>(x), static_cast<float>(y), 0 };
+                    SRMath::vec3 pv0 = { v0.x, v0.y, 0 };
+                    SRMath::vec3 pv1 = { v1.x, v1.y, 0 };
+                    SRMath::vec3 pv2 = { v2.x, v2.y, 0 };
+
+                    SRMath::vec3 u_vec = SRMath::cross({ pv2.x - pv0.x, pv1.x - pv0.x, pv0.x - p.x },
+                        { pv2.y - pv0.y, pv1.y - pv0.y, pv0.y - p.y });
+
+                    if (std::abs(u_vec.z) < 1) continue;
+                    float u = u_vec.x / u_vec.z;
+                    float v = u_vec.y / u_vec.z;
+                    float w = 1.0f - u - v;
+
+                    if (w >= 0 && u >= 0 && v >= 0)
+                    {
+                        DrawPixel(x, y, color);
+                    }
+                }
+            }
+        });
+    }
+
+    // 5. 모든 스레드가 작업을 마칠 때까지 기다립니다.
+    for (auto& t : threads)
+    {
+        t.join();
+    }
+}
+
 void Renderer::SetLineAlgorithm(ELineAlgorithm eLineAlgorithm)
 {
     m_currentLineAlgorithm = eLineAlgorithm;
 }
 
-void Renderer::Clear() const
+void Renderer::Clear()
 {
-    // 검은색 브러시를 가져옵니다.
-    HBRUSH blackBrush = (HBRUSH)GetStockObject(BLACK_BRUSH);
+    // 1. Get Thread
+    const unsigned int numThreads = std::thread::hardware_concurrency();
+    std::vector<std::thread> threads;
 
-    // 백버퍼의 전체 영역을 나타내는 사각형을 정의합니다.
-    RECT rect = { 0, 0, m_width, m_height };
+    // 2. divide height by Threads.
+    const int linesPerThread = m_height / numThreads;
 
-    // FillRect API로 메모리 DC(백버퍼)의 사각 영역을 칠합니다.
-    FillRect(m_hMemDC, &rect, blackBrush);
+    for (unsigned int i = 0; i < numThreads; ++i)
+    {
+        // 3. calculate line for height.
+        const int startY = i * linesPerThread;
+        const int endY = (i == numThreads - 1) ? m_height : startY + linesPerThread;
+
+        // 4. Call the DrawPixel in each Thread
+        threads.emplace_back([this, startY, endY]() {
+
+            for (int y = startY; y < endY; y++)
+            {
+                for (int x = 0; x < m_width; x++)
+                {
+                    DrawPixel(x, y, RGB(0, 0, 0));
+                }
+            }
+        });
+    }
+
+    // 5. await for complete
+    for (auto& t : threads)
+    {
+        t.join();
+    }
 }
 
 void Renderer::Present(HDC hScreenDC) const
@@ -214,17 +288,6 @@ void Renderer::Render()
 {
     // TODO: Draw something here
 
-    ///*int half_h = m_height / 2;
-    //int half_w = m_width / 2;
-
-    //for (int i = half_h / 2; i < half_h + half_h / 2; i++)
-    //{
-    //    for (int j = half_w / 2; j < half_w + half_w / 2; j++)
-    //    {
-    //        DrawPixel(j, i, RGB(255, 0, 0));
-    //    }
-    //}*/
-    
     switch (m_currentLineAlgorithm) {
     case ELineAlgorithm::Bresenham:
         DrawTriangle(100, 200, 100, 300, 200, 300, RGB(255, 0, 0));
@@ -233,6 +296,8 @@ void Renderer::Render()
         DrawTriangle(100, 200, 100, 300, 200, 300, RGB(0, 255, 0));
         break;
     }
+
+    DrawFilledTriangle(SRMath::vec2(400, 400), SRMath::vec2(500, 600), SRMath::vec2(600, 400), RGB(0, 0, 255));
 }
 
 void Renderer::OnResize(HWND hWnd)

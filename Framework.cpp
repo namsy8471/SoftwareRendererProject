@@ -1,5 +1,3 @@
-#include <memory>
-
 #include "Framework.h"
 #include "Resource.h"
 #include "Renderer.h"

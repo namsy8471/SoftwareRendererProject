@@ -3,7 +3,7 @@
 #include <cmath>
 
 constexpr float PI = 3.1415926535f;
-float angle90 = PI / 2.0f;
+const float angle90 = PI / 2.0f;
 
 namespace SRMath {
 	// General Template
@@ -82,13 +82,13 @@ namespace SRMath {
 			for (auto i = 0; i < N; i++)
 			{
 				for (auto j = 0; j < N; j++)
-					data[i][j] = (i == j) ? diagonal : 0.0f;
+					cols[i][j] = (i == j) ? diagonal : 0.0f;
 			}
 		}
 		
 		static Matrix<N> identity()
 		{
-			return Maxtrix<N>(1.f);
+			return Matrix<N>(1.f);
 		}
 
 		Vector<N>& operator[](size_t index) { return cols[index]; }

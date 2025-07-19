@@ -1,6 +1,6 @@
 #pragma once
-
 #include "pch.h"
+#include "Math.h"
 
 enum class ELineAlgorithm
 {
@@ -37,11 +37,12 @@ public:
 	void DrawPixel(int x, int y, unsigned int color);
 	void DrawLine(int x0, int y0, int x1, int y1, unsigned int color);
 	void DrawTriangle(int x0, int y0, int x1, int y1, int x2, int y2, unsigned int color);
+	void DrawFilledTriangle(const SRMath::vec2& v0, const SRMath::vec2& v1, const SRMath::vec2& v2, unsigned int color);
 
 	void SetLineAlgorithm(ELineAlgorithm eLineAlgorithm);
 
 	
-	void Clear() const;
+	void Clear();
 	void Present(HDC hScreenDC) const;
 	void Render();
 
