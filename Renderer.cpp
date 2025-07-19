@@ -225,7 +225,6 @@ void Renderer::DrawFilledTriangle(const SRMath::vec2& v0, const SRMath::vec2& v1
         });
     }
 
-    // 5. 모든 스레드가 작업을 마칠 때까지 기다립니다.
     for (auto& t : threads)
     {
         t.join();
@@ -297,7 +296,7 @@ void Renderer::Render()
         break;
     }
 
-    DrawFilledTriangle(SRMath::vec2(400, 400), SRMath::vec2(500, 600), SRMath::vec2(600, 400), RGB(0, 0, 255));
+    DrawFilledTriangle(SRMath::vec2(200, 1000), SRMath::vec2(500, 100), SRMath::vec2(800, 1000), RGB(0, 0, 255));
 }
 
 void Renderer::OnResize(HWND hWnd)
