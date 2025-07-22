@@ -1,4 +1,5 @@
 #pragma once
+#include <vector>
 #include "pch.h"
 #include "Math.h"
 
@@ -20,6 +21,7 @@ private:
 	int m_height;
 
 	unsigned int* m_pPixelData;
+	std::vector<float> m_depthBuffer;
 
 	ELineAlgorithm m_currentLineAlgorithm = 
 		ELineAlgorithm::Bresenham;	// 선 그리기 알고리즘
@@ -41,13 +43,14 @@ public:
 
 	void SetLineAlgorithm(ELineAlgorithm eLineAlgorithm);
 
-	
 	void Clear();
 	void Present(HDC hScreenDC) const;
 	void Render();
 
 	void OnResize(HWND hWnd);
 
-
+	// Getter
+	const int GetWidth() const { return m_width; }
+	const int GetHeight() const { return m_height; }
 };
 

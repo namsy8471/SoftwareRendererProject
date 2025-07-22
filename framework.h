@@ -2,6 +2,7 @@
 
 #include "pch.h"
 #include "PerformanceAnalyzer.h"
+#include "Model.h"
 
 #define MAX_LOADSTRING 100
 
@@ -20,6 +21,9 @@ private:
 	// Framework Variables
 	std::unique_ptr<Renderer> m_pRenderer;	// It is for Rendering
 	PerformanceAnalyzer m_perfAnalyzer;		// It is for counting FPS/CPU/GPU
+
+	// Model Variables
+	Model m_model;
 
 public:
 	Framework();

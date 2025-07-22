@@ -65,41 +65,9 @@ namespace SRMath {
 		const float& operator[](size_t index) const { return data[index]; }
 	};
 
-	template<size_t N>
-	struct Matrix
-	{
-		static_assert(N == 3 || N == 4,
-			"Matrix is only for 3 and 4 Dimensions!");
-		
-		union {
-			Vector<N> cols[N];
-			float data[N * N];
-		};
-
-		Matrix() = default;
-		Matrix(float diagonal)
-		{
-			for (auto i = 0; i < N; i++)
-			{
-				for (auto j = 0; j < N; j++)
-					cols[i][j] = (i == j) ? diagonal : 0.0f;
-			}
-		}
-		
-		static Matrix<N> identity()
-		{
-			return Matrix<N>(1.f);
-		}
-
-		Vector<N>& operator[](size_t index) { return cols[index]; }
-		const Vector<N>& operator[](size_t index) const { return cols[index]; }
-	};
-
 	using vec2 = Vector<2>;
 	using vec3 = Vector<3>;
 	using vec4 = Vector<4>;
-	using mat3 = Matrix<3>;
-	using mat4 = Matrix<4>;
 
 	// inline operator overloading function
 
@@ -145,6 +113,47 @@ namespace SRMath {
 		return ret;
 	}
 
+
+
+	template<size_t N>
+	struct Matrix
+	{
+		static_assert(N == 3 || N == 4,
+			"Matrix is only for 3 and 4 Dimensions!");
+
+		union {
+			Vector<N> cols[N];
+			float data[N * N];
+		};
+
+		Matrix() = default;
+		Matrix(float diagonal)
+		{
+			for (auto i = 0; i < N; i++)
+			{
+				for (auto j = 0; j < N; j++)
+					cols[i][j] = (i == j) ? diagonal : 0.0f;
+			}
+		}
+
+		static Matrix<N> identity()
+		{
+			return Matrix<N>(1.f);
+		}
+
+		
+
+		Vector<N>& operator[](size_t index) { return cols[index]; }
+		const Vector<N>& operator[](size_t index) const { return cols[index]; }
+	};
+
+	using mat3 = Matrix<3>;
+	using mat4 = Matrix<4>;
+
+
+	// inline operator overloading function
+
+
 	inline vec4 operator*(const mat4& m, const vec4& v)
 	{
 		return (m[0] * v.x) + (m[1] * v.y) + (m[2] * v.z) + (m[3] * v.w);
@@ -157,7 +166,6 @@ namespace SRMath {
 		return m * newV;
 	}
 
-	template <size_t N>
 	inline mat4 operator*(const mat4& a, const mat4& b)
 	{
 		mat4 ret(0.0f);
@@ -169,6 +177,12 @@ namespace SRMath {
 		
 		return ret;
 	}
+
+	
+
+		
+
+		
 
 	// inline utility functions (dot product, cross product)
 
@@ -221,7 +235,7 @@ namespace SRMath {
 	}
 
 	// Translate Mat4
-	inline Matrix<4> translate(const vec3& v)
+	static Matrix<4> translate(const Vector<3>& v)
 	{
 		Matrix<4> ret(1.0f);
 		ret[3][0] = v.x;
@@ -231,7 +245,7 @@ namespace SRMath {
 	}
 
 	// Scale Mat4
-	inline Matrix<4> scale(const vec3& v)
+	static Matrix<4> scale(const Vector<3>& v)
 	{
 		Matrix<4> ret(1.0f);
 		ret[0][0] = v.x;
@@ -240,10 +254,10 @@ namespace SRMath {
 		return ret;
 	}
 
-	// Rotate Mat4
-	inline Matrix<4> rotate(float angleInRadians, const vec3& axis)
+	// Rotate Mat4 (Right-handed Coordinate System)
+	static inline Matrix<4> rotate(float angleInRadians, const Vector<3>& axis)
 	{
-		vec3 u = normalize(axis);
+		Vector<3> u = normalize(axis);
 
 		const float c = std::cos(angleInRadians);
 		const float s = -std::sin(angleInRadians);
@@ -265,6 +279,20 @@ namespace SRMath {
 
 		return result;
 	}
-	
 
+	// perspective (Right-handed Coordinate System)
+	static Matrix<4> perspective(float angleInRadians, float aspectRatio, float zNear, float zFar)
+	{
+		Matrix<4> result(0.0f);
+
+		const float f = 1.0f / std::tan(angleInRadians / 2.0f);
+
+		result[0][0] = f / aspectRatio;
+		result[1][1] = f;
+		result[2][2] = (zFar + zNear) / (zNear - zFar);
+		result[2][3] = -1.0f;
+		result[3][2] = (2.0f * zFar * zNear) / (zNear - zFar);
+
+		return result;
+	}
 }

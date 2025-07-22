@@ -2,6 +2,7 @@
 #include <thread>
 #include <vector>
 #include <algorithm>
+#include <limits>
 #include <cmath>
 
 Renderer::Renderer() : m_hBitmap(nullptr), m_hMemDC(nullptr),
@@ -57,6 +58,8 @@ bool Renderer::Initialize(HWND hWnd)
         ReleaseDC(hWnd, hScreenDC);
         return false;
     }
+
+    m_depthBuffer.resize(m_height * m_width);
 
     // 생성한 비트맵을 메모리 DC에 선택시킵니다.
     // 이 시점부터 m_hMemDC에 그리는 모든 것은 m_hBitmap에 그려집니다.
@@ -245,6 +248,8 @@ void Renderer::Clear()
     // 2. divide height by Threads.
     const int linesPerThread = m_height / numThreads;
 
+    const float INF = std::numeric_limits<float>::infinity();   // Z Buffer Clearing
+
     for (unsigned int i = 0; i < numThreads; ++i)
     {
         // 3. calculate line for height.
@@ -252,13 +257,16 @@ void Renderer::Clear()
         const int endY = (i == numThreads - 1) ? m_height : startY + linesPerThread;
 
         // 4. Call the DrawPixel in each Thread
-        threads.emplace_back([this, startY, endY]() {
+        threads.emplace_back([this, startY, endY, INF]() {
 
             for (int y = startY; y < endY; y++)
             {
+                int rowOffset = y * m_width;
                 for (int x = 0; x < m_width; x++)
                 {
-                    DrawPixel(x, y, RGB(0, 0, 0));
+                    int idx = x + rowOffset;
+                    m_pPixelData[idx] = 0;
+                    m_depthBuffer[idx] = INF;
                 }
             }
         });
