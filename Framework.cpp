@@ -121,20 +121,19 @@ void Framework::Render()
     m_pRenderer->Clear();
 
     // Transform Matrix(MVP);
-
     int width = m_pRenderer->GetWidth();
     int height = m_pRenderer->GetHeight();
 
     // Calculate aspect ratio
     float aspectRatio = static_cast<float>(width) / height;
 
-    SRMath::mat4 modelMatrix = SRMath::translate({ 0.0f, -1.0f, 5.0f }) * SRMath::scale({0.01f, 0.01f, 0.01f});
+    SRMath::mat4 modelMatrix = SRMath::translate({ 0.0f, -1.0f, 5.0f }) * SRMath::rotate(PI, SRMath::vec3(1.0f, 0, 0)) * SRMath::scale({ 0.01f, 0.01f, 0.01f });
     SRMath::mat4 viewMatrix(1.0f); // Camera is at (0, 0, 0);
     SRMath::mat4 projectionMatrix = SRMath::perspective(PI / 3.0f, aspectRatio, 0.1f, 100.f); // 60 FOV
     
     // Final MVP Matrix
     SRMath::mat4 mvp = projectionMatrix * viewMatrix * modelMatrix;
-
+    
     const auto& positions = m_model.GetPositions();
     for (const auto& pos : positions)
     {
@@ -150,9 +149,11 @@ void Framework::Render()
 
         int screenX = static_cast<int>((v_clip.x + 1.0f) * 0.5f * width);
         int screenY = static_cast<int>((1.0f - v_clip.y) * 0.5f * height); // inverse Y
+        //int screenY = static_cast<int>((v_clip.y + 1.0f) * 0.5f * height); // inverse Y
 
         m_pRenderer->DrawPixel(screenX, screenY, RGB(255, 255, 255));
     }
+
 
     m_pRenderer->Render();
 }
