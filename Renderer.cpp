@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <limits>
 #include <cmath>
+#include <omp.h>
 
 Renderer::Renderer() : m_hBitmap(nullptr), m_hMemDC(nullptr),
 m_hOldBitmap(nullptr), m_height(), m_width(), m_pPixelData(nullptr)
@@ -145,19 +146,19 @@ void Renderer::drawLineByBresenham(int x0, int y0, int x1, int y1, unsigned int 
 // DDA(Digital Differential Analyzer) Algorithm
 void Renderer::drawLineByDDA(int x0, int y0, int x1, int y1, unsigned int color)
 {
-    const float dy = abs(y1 - y0);
-    const float dx = abs(x1 - x0);
+    const double dy = abs(y1 - y0);
+    const double dx = abs(x1 - x0);
 
     int steps = dx > dy ? dx : dy;
 
-    const float x_inc = dx / (float)steps;
-    const float y_inc = dy / (float)steps;
+    const double x_inc = dx / (double)steps;
+    const double y_inc = dy / (double)steps;
 
-    float x = x0;
-    float y = y0;
+    double x = x0;
+    double y = y0;
     
     for (int i = 0; i <= steps; i++) {
-        DrawPixel(x, round(y), color);
+        DrawPixel(round(x), round(y), color);
         x += x_inc;
         y += y_inc;
     }
@@ -181,56 +182,69 @@ void Renderer::DrawLine(int x0, int y0, int x1, int y1, unsigned int color)
 void Renderer::DrawTriangle(int x0, int y0, int x1, int y1, int x2, int y2, unsigned int color)
 {
     DrawLine(x0, y0, x1, y1, color);
-    DrawLine(x0, y0, x2, y2, color);
     DrawLine(x1, y1, x2, y2, color);
+    DrawLine(x2, y2, x0, y0, color);
+}
+
+void Renderer::DrawTriangle(const SRMath::vec2 v0, const SRMath::vec2 v1, const SRMath::vec2 v2, unsigned int color)
+{
+    DrawTriangle(v0.x, v0.y, v1.x, v1.y, v2.x, v2.y, color);
 }
 
 // Using Barycentric Coordinates
 void Renderer::DrawFilledTriangle(const SRMath::vec2& v0, const SRMath::vec2& v1, const SRMath::vec2& v2, unsigned int color)
 {
-    // Calculate boundary box
-    int minX = static_cast<int>(std::min({ v0.x, v1.x, v2.x }));
-    int minY = static_cast<int>(std::min({ v0.y, v1.y, v2.y }));
-    int maxX = static_cast<int>(std::max({ v0.x, v1.x, v2.x }));
-    int maxY = static_cast<int>(std::max({ v0.y, v1.y, v2.y }));
+    // 정점 좌표를 정수로 변환 (화면 픽셀 기준)
+    const SRMath::vec2 p0 = { v0.x, v0.y };
+    const SRMath::vec2 p1 = { v1.x, v1.y };
+    const SRMath::vec2 p2 = { v2.x, v2.y };
 
-    // multithread setting
-    const unsigned int numThreads = std::thread::hardware_concurrency();
-    std::vector<std::thread> threads;
+    // 1. 경계 상자(Bounding Box)를 계산합니다.
+    int minX = static_cast<int>(std::min({ p0.x, p1.x, p2.x }));
+    int minY = static_cast<int>(std::min({ p0.y, p1.y, p2.y }));
+    int maxX = static_cast<int>(std::max({ p0.x, p1.x, p2.x }));
+    int maxY = static_cast<int>(std::max({ p0.y, p1.y, p2.y }));
 
-    for (unsigned int i = 0; i < numThreads; ++i)
+    // --- 사전 계산 단계 ---
+    // 각 변(edge)의 x, y 변화량을 미리 계산해 둡니다.
+    const int dx01 = p0.x - p1.x;
+    const int dy01 = p0.y - p1.y;
+    const int dx12 = p1.x - p2.x;
+    const int dy12 = p1.y - p2.y;
+    const int dx20 = p2.x - p0.x;
+    const int dy20 = p2.y - p0.y;
+
+    // 경계 상자의 시작점(minX, minY)에서의 바리센트릭 좌표 값을 계산합니다.
+    int w0_row = dy12 * (minX - p1.x) - dx12 * (minY - p1.y);
+    int w1_row = dy20 * (minX - p2.x) - dx20 * (minY - p2.y);
+    int w2_row = dy01 * (minX - p0.x) - dx01 * (minY - p0.y);
+
+    // --- 래스터화 루프 ---
+    for (int y = minY; y <= maxY; ++y)
     {
-        threads.emplace_back([this, i, numThreads, minY, maxY, minX, maxX, &v0, &v1, &v2, color]() {
-            for (int y = minY + i; y <= maxY; y += numThreads)
+        // 현재 행의 시작 값을 복사
+        int w0 = w0_row;
+        int w1 = w1_row;
+        int w2 = w2_row;
+
+        for (int x = minX; x <= maxX; ++x)
+        {
+            // 바리센트릭 좌표가 모두 양수이면 삼각형 내부에 있는 것입니다.
+            if (w0 >= 0 && w1 >= 0 && w2 >= 0)
             {
-                for (int x = minX; x <= maxX; ++x)
-                {
-                    // Barycentric Coordinate
-                    SRMath::vec3 p = { static_cast<float>(x), static_cast<float>(y), 0 };
-                    SRMath::vec3 pv0 = { v0.x, v0.y, 0 };
-                    SRMath::vec3 pv1 = { v1.x, v1.y, 0 };
-                    SRMath::vec3 pv2 = { v2.x, v2.y, 0 };
-
-                    SRMath::vec3 u_vec = SRMath::cross({ pv2.x - pv0.x, pv1.x - pv0.x, pv0.x - p.x },
-                        { pv2.y - pv0.y, pv1.y - pv0.y, pv0.y - p.y });
-
-                    if (std::abs(u_vec.z) < 1) continue;
-                    float u = u_vec.x / u_vec.z;
-                    float v = u_vec.y / u_vec.z;
-                    float w = 1.0f - u - v;
-
-                    if (w >= 0 && u >= 0 && v >= 0)
-                    {
-                        DrawPixel(x, y, color);
-                    }
-                }
+                DrawPixel(x, y, color);
             }
-        });
-    }
 
-    for (auto& t : threads)
-    {
-        t.join();
+            // x가 1 증가했으므로, y의 변화량만큼 더해줍니다. (점진적 계산)
+            w0 += dy12;
+            w1 += dy20;
+            w2 += dy01;
+        }
+
+        // y가 1 증가했으므로, 다음 행의 시작 값을 x의 변화량만큼 더해서 갱신합니다.
+        w0_row -= dx12;
+        w1_row -= dx20;
+        w2_row -= dx01;
     }
 }
 

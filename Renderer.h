@@ -39,6 +39,7 @@ public:
 	void DrawPixel(int x, int y, unsigned int color);
 	void DrawLine(int x0, int y0, int x1, int y1, unsigned int color);
 	void DrawTriangle(int x0, int y0, int x1, int y1, int x2, int y2, unsigned int color);
+	void DrawTriangle(const SRMath::vec2 v0, const SRMath::vec2 v1, const SRMath::vec2 v2, unsigned int color);
 	void DrawFilledTriangle(const SRMath::vec2& v0, const SRMath::vec2& v1, const SRMath::vec2& v2, unsigned int color);
 
 	void SetLineAlgorithm(ELineAlgorithm eLineAlgorithm);

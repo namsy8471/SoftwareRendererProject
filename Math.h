@@ -9,6 +9,12 @@ const float angle90 = PI / 2.0f;
 
 namespace SRMath {
 	// General Template
+
+	template <size_t N>	struct alignas(16) Vector;
+	using vec2 = Vector<2>;
+	using vec3 = Vector<3>;
+	using vec4 = Vector<4>;
+
 	template <size_t N>
 	struct alignas(16) Vector
 	{
@@ -20,6 +26,7 @@ namespace SRMath {
 			__m128 m128;
 		};
 
+		Vector(Vector<N>& v) : m128(v.m128) {}
 		float& operator[](size_t index) { return data[index]; }
 		const float& operator[](size_t index) const { return data[index]; }
 	};
@@ -34,8 +41,8 @@ namespace SRMath {
 			__m128 m128;
 		};
 
-		Vector() : x(0.0f), y(0.0f) {}
-		Vector(float x, float y) : x(x), y(y) {}
+		Vector();
+		Vector(float x, float y);
 
 		float& operator[](size_t index) { return data[index]; }
 		const float& operator[](size_t index) const { return data[index]; }
@@ -51,8 +58,10 @@ namespace SRMath {
 			__m128 m128;
 		};
 
-		Vector() : x(0.0f), y(0.0f), z(0.0f) {}
-		Vector(float x, float y, float z) : x(x), y(y), z(z) {}
+		Vector();
+		Vector(float x, float y, float z);
+		Vector(const SRMath::Vector<2>& v);
+		Vector(const SRMath::Vector<4>& v);
 		float& operator[](size_t index) { return data[index]; }
 		const float& operator[](size_t index) const { return data[index]; }
 	};
@@ -67,14 +76,32 @@ namespace SRMath {
 			__m128 m128;
 		};
 
-		Vector() : x(0.0f), y(0.0f), z(0.0f), w(0.0f) {}
-		Vector(float x, float y, float z, float w) : x(x), y(y), z(z), w(w) {}
+		Vector();
+		Vector(float x, float y, float z, float w);
+		Vector(const SRMath::Vector<2>& v, float w);
+		Vector(const SRMath::Vector<2>& v);
+		Vector(const SRMath::Vector<3>& v, float w);
+		Vector(const SRMath::Vector<3>& v);
 		float& operator[](size_t index) { return data[index]; }
 		const float& operator[](size_t index) const { return data[index]; }
 	};
 
-	// inline operator overloading function
+	inline Vector<2>::Vector() : x(0.0f), y(0.0f) {}
+	inline Vector<2>::Vector(float x, float y) : x(x), y(y) {}
 
+	inline Vector<3>::Vector() : x(0.0f), y(0.0f), z(0.0f) {}
+	inline Vector<3>::Vector(float x, float y, float z) : x(x), y(y), z(z) {}
+	inline Vector<3>::Vector(const SRMath::Vector<2>& v) : x(v.x), y(v.y), z(0.f) {}
+	inline Vector<3>::Vector(const SRMath::Vector<4>& v) : x(v.x), y(v.y), z(v.z) {}
+
+	inline Vector<4>::Vector() : x(0.0f), y(0.0f), z(0.0f), w(0.0f) {}
+	inline Vector<4>::Vector(float x, float y, float z, float w) : x(x), y(y), z(z), w(w) {}
+	inline Vector<4>::Vector(const SRMath::Vector<2>& v, float w) : x(v.x), y(v.y), z(0.f), w(w) {}
+	inline Vector<4>::Vector(const SRMath::Vector<2>& v) : x(v.x), y(v.y), z(0.f), w(1.0f) {}
+	inline Vector<4>::Vector(const SRMath::Vector<3>& v, float w) : x(v.x), y(v.y), z(v.z), w(w) {}
+	inline Vector<4>::Vector(const SRMath::Vector<3>& v) : x(v.x), y(v.y), z(v.z), w(1.0f) {}
+
+	// inline operator overloading function
 	template<size_t N>
 	inline Vector<N> operator+(const Vector<N>& a, const Vector<N>& b)
 	{
@@ -140,6 +167,11 @@ namespace SRMath {
 		return ret;
 	}
 
+	// -- Matrix 선언 및 정의
+	template <size_t N> struct alignas(16) Matrix;
+	using mat3 = Matrix<3>;
+	using mat4 = Matrix<4>;
+
 	template<size_t N>
 	struct alignas(16) Matrix
 	{
@@ -172,11 +204,6 @@ namespace SRMath {
 		const Vector<N>& operator[](size_t index) const { return cols[index]; }
 	};
 
-	using vec2 = Vector<2>;
-	using vec3 = Vector<3>;
-	using vec4 = Vector<4>;
-	using mat3 = Matrix<3>;
-	using mat4 = Matrix<4>;
 
 
 	// inline operator overloading function
@@ -273,6 +300,15 @@ namespace SRMath {
 		ret.m128 = _mm_sub_ps(term1, term2);
 
 		return ret;
+	}
+
+	inline vec3 cross(const vec2& a, const vec2& b)
+	{
+		vec3 newA, newB;
+		newA.m128 = a.m128;
+		newB.m128 = b.m128;
+
+		return cross(newA, newB);
 	}
 
 	// Get power of Length of Vector to compare length with the other Vector

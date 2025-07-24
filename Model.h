@@ -22,5 +22,8 @@ public:
 	const std::vector<SRMath::vec3>& GetPositions() const { return positions; }
 	const std::vector<SRMath::vec2>& GetTexcoords() const { return texcoords; }
 	const std::vector<SRMath::vec3>& Getnormals() const { return normals; }
+	const std::vector<int>& GetPositionIndices() const { return pos_indices; }
+	const std::vector<int>& GetTextureIndices() const { return tex_indices; }
+	const std::vector<int>& GetNormalIndices() const { return nrm_indices; }
 
 };
