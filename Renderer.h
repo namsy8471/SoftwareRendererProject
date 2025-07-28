@@ -1,7 +1,9 @@
 #pragma once
 #include <vector>
 #include "pch.h"
-#include "Math.h"
+#include "SRMath.h"
+
+class Model;
 
 enum class ELineAlgorithm
 {
@@ -26,6 +28,8 @@ private:
 	ELineAlgorithm m_currentLineAlgorithm = 
 		ELineAlgorithm::Bresenham;	// 선 그리기 알고리즘
 
+	bool m_isNrmDebug = false;
+
 	void drawLineByBresenham(int x0, int y0, int x1, int y1, unsigned int color);
 	void drawLineByDDA(int x0, int y0, int x1, int y1, unsigned int color);
 
@@ -40,13 +44,19 @@ public:
 	void DrawLine(int x0, int y0, int x1, int y1, unsigned int color);
 	void DrawTriangle(int x0, int y0, int x1, int y1, int x2, int y2, unsigned int color);
 	void DrawTriangle(const SRMath::vec2 v0, const SRMath::vec2 v1, const SRMath::vec2 v2, unsigned int color);
-	void DrawFilledTriangle(const SRMath::vec2& v0, const SRMath::vec2& v1, const SRMath::vec2& v2, unsigned int color);
+	void DrawFilledTriangle(const SRMath::vec2& v0, const SRMath::vec2& v1, const SRMath::vec2& v2,
+		const SRMath::vec3& n0_World, const SRMath::vec3& n1_World, const SRMath::vec3& n2_World,
+		float z0, float z1, float z2, const SRMath::vec3& light_dir);
 
 	void SetLineAlgorithm(ELineAlgorithm eLineAlgorithm);
+	void SetDebugNormal();
 
 	void Clear();
 	void Present(HDC hScreenDC) const;
-	void Render();
+	void Render(const std::vector<std::shared_ptr<Model>>& m_models, SRMath::mat4& projectionMatrix, SRMath::mat4& viewMatrix
+		, SRMath::vec3& light_dir);
+
+	void DebugNormalVector(const SRMath::vec3& v0_World, const SRMath::vec3& v1_World, const SRMath::vec3& v2_World, const SRMath::vec3& n0_World, const SRMath::vec3& n1_World, const SRMath::vec3& n2_World, SRMath::mat4& vp);
 
 	void OnResize(HWND hWnd);
 

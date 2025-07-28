@@ -5,7 +5,8 @@
 #include "ModelLoader.h"
 #include <omp.h>
 
-Framework::Framework() : m_hWnd(nullptr), m_hInstance(nullptr), m_pRenderer(nullptr), m_perfAnalyzer(), m_szTitle(), m_szWindowClass()
+Framework::Framework() : m_hWnd(nullptr), m_hInstance(nullptr), m_pRenderer(nullptr), 
+m_perfAnalyzer(), m_szTitle(), m_szWindowClass(), m_model(nullptr), m_models()
 {
 
 }
@@ -64,11 +65,15 @@ bool Framework::Initialize(HINSTANCE hInstance, int nCmdShow)
 
     m_perfAnalyzer.Initialize();
 
-    if (!ModelLoader::LoadOBJ("assets/teapot.obj", m_model))
+    m_model = ModelLoader::LoadOBJ("assets/teapot.obj");
+
+    if (!m_model)
     {
         MessageBox(m_hWnd, L"Failed to load Model.", L"Model Load Error", MB_OK);
         return false;
     }
+
+    m_models.push_back(std::move(m_model));
 
     return TRUE;
 }
@@ -90,12 +95,12 @@ void Framework::Run()
         int prevFPS = m_perfAnalyzer.GetAvgFPSForSecond();
         // 메시지가 없는 이 시간에 렌더링 코드를 실행!
         m_perfAnalyzer.Update();
-        
+
         if (m_perfAnalyzer.GetAvgFPSForSecond() != prevFPS) {
             // 문자열 버퍼를 준비하고
             wchar_t buffer[100];
             // "SoftrendererProject - FPS: 60" 같은 형식으로 문자열을 만듭니다.
-            swprintf_s(buffer, 100, L"%s - AvgFPS: %d", 
+            swprintf_s(buffer, 100, L"%s - AvgFPS: %d",
                 m_szTitle, m_perfAnalyzer.GetAvgFPSForSecond());
 
             // 창 제목을 설정합니다.
@@ -111,6 +116,8 @@ void Framework::Run()
             m_pRenderer->Present(hdc);
         }
         ReleaseDC(m_hWnd, hdc);
+        
+
     }
 }
 
@@ -128,101 +135,50 @@ void Framework::Render()
     // Calculate aspect ratio
     float aspectRatio = static_cast<float>(width) / height;
 
-    SRMath::mat4 scaleMatrix = SRMath::scale({ 0.04f, 0.04f, 0.04f });
-    SRMath::mat4 rotationMatrix = SRMath::rotate(PI, { 0.0f, 1.0f, 0.0f }); // 모델 뒤집기
-    SRMath::mat4 translationMatrix = SRMath::translate({ 0.0f, -1.5f, -5.0f });
-    SRMath::mat4 modelMatrix = translationMatrix * rotationMatrix * scaleMatrix;
+    SRMath::mat4 viewMatrix = SRMath::lookAt(m_cameraPos, 
+        m_cameraPos + m_cameraforward, SRMath::vec3(0.f, 1.f, 0.f));
 
-    SRMath::mat4 viewMatrix(1.0f); // Camera is at (0, 0, 0);
     SRMath::mat4 projectionMatrix = 
-        SRMath::perspective(PI / 3.0f, aspectRatio, 0.1f, 100.f); // 60 FOV
+        SRMath::perspective(PI / 3.0f, aspectRatio, 0.01f, 100.f); // 60 FOV
     
     SRMath::vec3 light_dir = 
-        SRMath::normalize(SRMath::vec3{ 0.0f, 0.5f, -1.0f });
-    
-    // Final MVP Matrix
-    SRMath::mat4 mvp = projectionMatrix * viewMatrix * modelMatrix;
-    
-    const auto& positions = m_model.GetPositions();
-    const auto& indices = m_model.GetPositionIndices();
+        SRMath::normalize(SRMath::vec3{ 0.0f, 0.5f, 1.0f });
 
-    for (size_t i = 0; i < indices.size(); i += 3)
-    {
-        const auto& v0 = positions[indices[i]];
-        const auto& v1 = positions[indices[i + 1]];
-        const auto& v2 = positions[indices[i + 2]];
-
-        SRMath::vec3 v0_World = modelMatrix * v0;
-        SRMath::vec3 v1_World = modelMatrix * v1;
-        SRMath::vec3 v2_World = modelMatrix * v2;
-
-        SRMath::vec3 normal_world = 
-            SRMath::normalize(SRMath::cross(v1_World - v0_World, v2_World - v0_World));
-        SRMath::vec3 view_dir = SRMath::normalize(v0_World);
-
-        // Back face culling
-        if (SRMath::dot(normal_world, view_dir) <= 0)
-        {
-            continue;
-        }
-
-        // Lambersian Light model 
-        float intensity = std::max(0.0f, SRMath::dot(normal_world, light_dir));
-        SRMath::vec3 base_color = { 1.f, 1.f, 1.0f };
-        SRMath::vec3 final_color_vec = base_color * intensity;
-        unsigned int final_color = RGB(
-            final_color_vec.x * 255.0f, 
-            final_color_vec.y * 255.0f,
-            final_color_vec.z * 255.0f);
-
-        // Clipping
-        SRMath::mat4 vp = projectionMatrix * viewMatrix;
-        SRMath::vec4 v0_clip = vp * v0_World;
-        SRMath::vec4 v1_clip = vp * v1_World;
-        SRMath::vec4 v2_clip = vp * v2_World;
-
-        // 8. 최종적으로 정점들을 화면 좌표로 변환
-        SRMath::vec4 clip_coords[] = { v0_clip, v1_clip, v2_clip };
-        SRMath::vec2 screen_coords[3];
-        float z_depth[3]; // Z-버퍼에 사용할 깊이 값 저장용
-
-        for (int j = 0; j < 3; ++j)
-        {
-            // 간단한 클리핑: w가 0보다 작거나 같으면 카메라 뒤쪽이므로 그리지 않음
-            if (clip_coords[j].w <= 0) continue;
-
-            // 8-1. 원근 분할 (Perspective Division): 클립 공간 -> NDC 공간
-            // x, y, z를 w로 나누어 원근을 적용하고 -1 ~ 1 범위로 정규화합니다.
-            clip_coords[j].x /= clip_coords[j].w;
-            clip_coords[j].y /= clip_coords[j].w;
-            clip_coords[j].z /= clip_coords[j].w;
-
-            // 8-2. 뷰포트 변환 (Viewport Transform): NDC 공간 -> 화면 공간
-            // -1 ~ 1 범위의 좌표를 실제 창 픽셀 좌표(0~width, 0~height)로 변환합니다.
-            screen_coords[j].x = (clip_coords[j].x + 1.0f) * 0.5f * width;
-            screen_coords[j].y = (1.0f - clip_coords[j].y) * 0.5f * height; // Y축 뒤집기
-
-            // 8-3. Z-버퍼에 사용할 깊이 값을 저장해 둡니다.
-            z_depth[j] = clip_coords[j].z;
-        }
-
-        // 9. 계산된 최종 색상과 화면 좌표로 삼각형 그리기
-        // 참고: Z-버퍼를 사용하려면 DrawFilledTriangle 함수가 깊이 값도 받아야 합니다.
-        m_pRenderer->DrawFilledTriangle(screen_coords[0], screen_coords[1], screen_coords[2], final_color);
-
-    }
-
-    //m_pRenderer->Render();
+    m_pRenderer->Render(m_models, projectionMatrix, viewMatrix, light_dir);
 }
 
 // Framework Logic Update(For Game)
 void Framework::Update()
 {
     //TODO Logic Update
+        // 매 프레임 시간(deltaTime)을 구해서 곱해주어야 일정한 속도로 움직입니다.
+    // 여기서는 간단히 고정된 속도로 움직입니다.
+    const float moveSpeed = .1f;
+
+    // --- 카메라의 실제 방향 벡터 계산 ---
+    // Yaw와 Pitch를 모두 사용하여 3D 방향 벡터를 계산합니다.
+    m_cameraforward = {
+        cos(m_cameraPitch) * sin(m_cameraYaw),
+        sin(m_cameraPitch),
+        cos(m_cameraPitch) * cos(m_cameraYaw)
+    };
+    m_cameraforward = SRMath::normalize(m_cameraforward); // 정규화하여 길이를 1로 만듦
+
+    // 월드의 '위쪽' 방향 벡터
+    SRMath::vec3 worldUp = { 0.0f, 1.0f, 0.0f };
+    // forward 벡터와 worldUp 벡터를 외적하여 카메라의 '오른쪽' 방향 벡터를 구합니다.
+    SRMath::vec3 right = SRMath::normalize(SRMath::cross(m_cameraforward, worldUp));
+
+    if (m_keys['W']) m_cameraPos = m_cameraPos + m_cameraforward * moveSpeed;
+    if (m_keys['S']) m_cameraPos = m_cameraPos - m_cameraforward * moveSpeed;
+    if (m_keys['A']) m_cameraPos = m_cameraPos - right * moveSpeed;
+    if (m_keys['D']) m_cameraPos = m_cameraPos + right * moveSpeed;
 }
 
 void Framework::Shutdown()
 {
+    //m_models.clear();
+
     m_pRenderer->Shutdown();
 }
 
@@ -236,16 +192,22 @@ LRESULT Framework::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
         // 메뉴 선택을 구문 분석합니다:
         switch (wmId)
         {
-        case IDM_ABOUT:
-            DialogBox(m_hInstance, MAKEINTRESOURCE(IDD_ABOUTBOX), hWnd, Framework::About);
-            break;
+
+        // Other variables
         case ID_LINEALGORITHM_BRESENHAM:
             m_pRenderer->SetLineAlgorithm(ELineAlgorithm::Bresenham);
             break;
         case ID_LINEALGORITHM_DDA:
             m_pRenderer->SetLineAlgorithm(ELineAlgorithm::DDA);
             break;
+        case ID_DEBUG_NORMALVECTOR:
+            m_pRenderer->SetDebugNormal();
+            break;
 
+        case IDM_ABOUT:
+            DialogBox(m_hInstance, MAKEINTRESOURCE(IDD_ABOUTBOX), hWnd, Framework::About);
+            break;
+        
         case IDM_EXIT:
             DestroyWindow(hWnd);
             break;
@@ -277,6 +239,40 @@ LRESULT Framework::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
         }
     }
     break;
+
+    // Keyborad Input
+    case WM_KEYDOWN:
+        m_keys[wParam] = true;
+        break;
+    case WM_KEYUP:
+        m_keys[wParam] = false;
+        break;
+
+        // Mouse Input
+    case WM_RBUTTONDOWN:
+        m_isRightMouseDown = true;
+        GetCursorPos(&m_lastMousePos);
+        ScreenToClient(hWnd, &m_lastMousePos);
+        break;
+    case WM_RBUTTONUP:
+        m_isRightMouseDown = false;
+        break;
+    case WM_MOUSEMOVE:
+        if (m_isRightMouseDown)
+        {
+            POINT currentMousePos = { LOWORD(lParam), HIWORD(lParam) };
+            float deltaX = currentMousePos.x - m_lastMousePos.x;
+            float deltaY = currentMousePos.y - m_lastMousePos.y;
+
+            m_cameraYaw -= deltaX * 0.005f;
+            m_cameraPitch -= deltaY * 0.005f;
+
+            if (m_cameraPitch > PI / 2.0f - 0.01f) m_cameraPitch = PI / 2.0f - 0.01f;
+            if (m_cameraPitch < -PI / 2.0f + 0.01f) m_cameraPitch = -PI / 2.0f + 0.01f;
+
+            m_lastMousePos = currentMousePos;
+        }
+        break;
 
     case WM_DESTROY:
         PostQuitMessage(0);

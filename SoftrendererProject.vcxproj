@@ -134,7 +134,8 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="Framework.h" />
-    <ClInclude Include="Math.h" />
+    <ClInclude Include="GameObject.h" />
+    <ClInclude Include="SRMath.h" />
     <ClInclude Include="Model.h" />
     <ClInclude Include="ModelLoader.h" />
     <ClInclude Include="pch.h" />
@@ -142,15 +143,21 @@
     <ClInclude Include="Renderer.h" />
     <ClInclude Include="Resource.h" />
     <ClInclude Include="SoftrendererProject.h" />
+    <ClInclude Include="stb_image.h" />
     <ClInclude Include="targetver.h" />
+    <ClInclude Include="TextuerLoader.h" />
+    <ClInclude Include="Texture.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Framework.cpp" />
+    <ClCompile Include="GameObject.cpp" />
     <ClCompile Include="Model.cpp" />
     <ClCompile Include="ModelLoader.cpp" />
     <ClCompile Include="PerformanceAnalyzer.cpp" />
     <ClCompile Include="Renderer.cpp" />
     <ClCompile Include="SoftrendererProject.cpp" />
+    <ClCompile Include="TextuerLoader.cpp" />
+    <ClCompile Include="Texture.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="SoftrendererProject.rc" />

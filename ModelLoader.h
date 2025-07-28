@@ -1,10 +1,13 @@
 #pragma once
 #include <string>
+#include <memory>
+
 
 class Model;
+
 class ModelLoader
 {
 public:
-	static bool LoadOBJ(const std::string& filepath, Model& outModel);
+	static std::unique_ptr<Model> LoadOBJ(const std::string& filepath);
 };
 

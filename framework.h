@@ -3,6 +3,7 @@
 #include "pch.h"
 #include "PerformanceAnalyzer.h"
 #include "Model.h"
+#include <vector>
 
 #define MAX_LOADSTRING 100
 
@@ -22,8 +23,20 @@ private:
 	std::unique_ptr<Renderer> m_pRenderer;	// It is for Rendering
 	PerformanceAnalyzer m_perfAnalyzer;		// It is for counting FPS/CPU/GPU
 
+	// Key Input Variables
+	bool m_keys[256];
+	bool m_isRightMouseDown = false;
+	POINT m_lastMousePos;
+
+	// Camera Variables
+	SRMath::vec3 m_cameraPos = { 0.f, 0.f, 5.f };
+	SRMath::vec3 m_cameraforward;
+	float m_cameraYaw = 0.f;	// 좌우 회전 (Y축 기준)
+	float m_cameraPitch = 0.f;	// 상하 회전 (X축 기준)
+
 	// Model Variables
-	Model m_model;
+	std::vector<std::shared_ptr<Model>> m_models;
+	std::shared_ptr<Model> m_model;
 
 public:
 	Framework();

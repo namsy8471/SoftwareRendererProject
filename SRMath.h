@@ -139,6 +139,8 @@ namespace SRMath {
 		/*for (size_t i = 0; i < N; i++)
 			ret[i] = v[i] * scalar;*/
 		
+		if (scalar <= 1e-5f) return v;
+
 		__m128 s = _mm_set1_ps(scalar);
 		//SIMD
 		ret.m128 = _mm_mul_ps(v.m128, s);
@@ -329,6 +331,9 @@ namespace SRMath {
 	template<size_t N>
 	inline Vector<N> normalize(const Vector<N>& v)
 	{
+		float l = length(v);
+		if (l < 1e-5f) return v;
+
 		return v / length(v);
 	}
 
@@ -359,27 +364,47 @@ namespace SRMath {
 	}
 
 	// Rotate Mat4 (Right-handed Coordinate System)
-	static inline Matrix<4> rotate(float angleInRadians, const Vector<3>& axis)
+	static inline Matrix<4> rotate(const Vector<3>& rotationVector)
 	{
-		Vector<3> u = normalize(axis);
+		// 1. 벡터의 크기(length)를 회전 각도(angle)로 사용합니다.
+		float angleInRadians = length(rotationVector);
 
+		// 2. 만약 회전 각도가 거의 0이면, 계산 없이 단위 행렬을 반환합니다 (최적화 및 0으로 나누기 방지).
+		if (angleInRadians < 1e-6f)
+		{
+			return Matrix<4>(1.0f);
+		}
+
+		// 3. 벡터를 정규화하여 회전 축을 구합니다.
+		Vector<3> axis = rotationVector / angleInRadians;
+
+		// 4. 기존의 로드리게스 회전 공식 코드를 그대로 사용합니다.
 		const float c = std::cos(angleInRadians);
-		const float s = -std::sin(angleInRadians);
+		const float s = std::sin(angleInRadians);
 		const float t = 1.0f - c;
 
-		Matrix<4> result(1.0f);
+		Matrix<4> result(1); // 단위 행렬로 초기화할 필요 없음. 모든 요소를 직접 설정.
 
-		result[0][0] = t * u.x * u.x + c;
-		result[0][1] = t * u.x * u.y + s * u.z;
-		result[0][2] = t * u.x * u.z - s * u.y;
+		// 오른손 좌표계 열 우선 회전 행렬
+		result[0][0] = c + axis.x * axis.x * t;
+		result[0][1] = axis.y * axis.x * t + axis.z * s;
+		result[0][2] = axis.z * axis.x * t - axis.y * s;
+		result[0][3] = 0.0f;
 
-		result[1][0] = t * u.y * u.x - s * u.z;
-		result[1][1] = t * u.y * u.y + c;
-		result[1][2] = t * u.y * u.z + s * u.x;
+		result[1][0] = axis.x * axis.y * t - axis.z * s;
+		result[1][1] = c + axis.y * axis.y * t;
+		result[1][2] = axis.z * axis.y * t + axis.x * s;
+		result[1][3] = 0.0f;
 
-		result[2][0] = t * u.z * u.x + s * u.y;
-		result[2][1] = t * u.z * u.y - s * u.x;
-		result[2][2] = t * u.z * u.z + c;
+		result[2][0] = axis.x * axis.z * t + axis.y * s;
+		result[2][1] = axis.y * axis.z * t - axis.x * s;
+		result[2][2] = c + axis.z * axis.z * t;
+		result[2][3] = 0.0f;
+
+		result[3][0] = 0.0f;
+		result[3][1] = 0.0f;
+		result[3][2] = 0.0f;
+		result[3][3] = 1.0f;
 
 		return result;
 	}
@@ -397,6 +422,28 @@ namespace SRMath {
 		result[2][3] = -1.0f;
 		result[3][2] = (2.0f * zFar * zNear) / (zNear - zFar);
 
+		return result;
+	}
+
+	inline mat4 lookAt(const vec3& eye, const vec3& center, const vec3& up)
+	{
+		vec3 f = normalize(center - eye);
+		vec3 s = normalize(cross(f, up));
+		vec3 u = cross(s, f);
+
+		mat4 result(1.0f);
+		result[0][0] = s.x;
+		result[1][0] = s.y;
+		result[2][0] = s.z;
+		result[0][1] = u.x;
+		result[1][1] = u.y;
+		result[2][1] = u.z;
+		result[0][2] = -f.x;
+		result[1][2] = -f.y;
+		result[2][2] = -f.z;
+		result[3][0] = -dot(s, eye);
+		result[3][1] = -dot(u, eye);
+		result[3][2] = dot(f, eye);
 		return result;
 	}
 }

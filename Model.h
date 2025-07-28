@@ -1,13 +1,13 @@
 #pragma once
 #include <vector>
 #include <string>
-#include "Math.h"
+#include "SRMath.h"
 #include "ModelLoader.h"
 
 class Model
 {
 	// To Optimize to use private variable in LoadOBJ
-	friend bool ModelLoader::LoadOBJ(const std::string& filepath, Model& outModel);
+	friend std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filepath);
 
 private:
 	std::vector<SRMath::vec3> positions;	// v
