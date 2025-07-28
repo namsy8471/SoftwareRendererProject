@@ -5,7 +5,7 @@
 #include <limits>
 #include <cmath>
 #include "Model.h"
-#include <omp.h>
+#include "Texture.h"
 
 constexpr float FLOATINF = std::numeric_limits<float>::infinity();
 
@@ -75,6 +75,31 @@ bool Renderer::Initialize(HWND hWnd)
 
     // 이 예제에서는 백버퍼를 흰색으로 초기화합니다.
     PatBlt(m_hMemDC, 0, 0, m_width, m_height, WHITENESS);
+
+    // Load Model
+    m_model = ModelLoader::LoadOBJ("assets/teapot.obj");
+
+    if (!m_model)
+    {
+        MessageBox(hWnd, L"Failed to load Model.", L"Model Load Error", MB_OK);
+        return false;
+    }
+
+    m_models.push_back(std::move(m_model));
+
+    // Load Texture
+    std::string texName = "assets/default.png";
+    texNames.emplace_back(texName);
+
+    m_ptexture = TextureLoader::LoadImageFile(texName);
+
+    if (!m_ptexture)
+    {
+        MessageBox(hWnd, L"Failed to load Texture.", L"Texture Load Error", MB_OK);
+        return false;
+    }
+
+    m_textures[texName] = m_ptexture;
 
     return true;
 }
@@ -202,8 +227,9 @@ void Renderer::DrawTriangle(const SRMath::vec2 v0, const SRMath::vec2 v1, const 
 
 // Using Barycentric Coordinates
 void Renderer::DrawFilledTriangle(const SRMath::vec2& v0, const SRMath::vec2& v1, const SRMath::vec2& v2,
-    const SRMath::vec3& n0_view, const SRMath::vec3& n1_view, const SRMath::vec3& n2_view,
-    float z0, float z1, float z2, const SRMath::vec3& light_dir)
+    const SRMath::vec3& n0_clipped, const SRMath::vec3& n1_clipped, const SRMath::vec3& n2_clipped,
+    const float one_over_w0, const float one_over_w1, const float one_over_w2, const SRMath::vec2& uv0_clipped, const SRMath::vec2& uv1_clipped, 
+    const SRMath::vec2& uv2_clipped, const SRMath::vec3& light_dir, const std::shared_ptr<Texture> texture)
 {
     // 정점 좌표를 정수로 변환 (화면 픽셀 기준)
     const SRMath::vec2 p0 = { v0.x, v0.y };
@@ -257,25 +283,43 @@ void Renderer::DrawFilledTriangle(const SRMath::vec2& v0, const SRMath::vec2& v1
                 float u_bary = w1 / total_w;
                 float v_bary = w2 / total_w;
                 
-                float z_interpolated = z0 * w_bary + z1 * u_bary + z2 * v_bary;
+                float interpolated_one_over_w = 
+                    one_over_w0 * w_bary + one_over_w1 * u_bary + one_over_w2 * v_bary;
                 
                 int idx = y * m_width + x;
-                if (z_interpolated < m_depthBuffer[idx])
+                if (interpolated_one_over_w > m_depthBuffer[idx])
                 {
                     SRMath::vec3 normal_interpolated =
-                        SRMath::normalize(n0_view * w_bary + n1_view * u_bary + n2_view * v_bary);
+                        SRMath::normalize((n0_clipped * w_bary + n1_clipped * u_bary + n2_clipped * v_bary) / interpolated_one_over_w);
 
-                    float intensity = std::max(0.0f, SRMath::dot(normal_interpolated, light_dir * -1));
+                    SRMath::vec2 uv_over_w_interpolated = uv0_clipped * w_bary + uv1_clipped * u_bary + uv2_clipped * v_bary;
+                    SRMath::vec2 uv_interpolated = uv_over_w_interpolated / interpolated_one_over_w;
+
+                    //float intensity = std::max(0.0f, SRMath::dot(normal_interpolated, light_dir));
+                    float intensity = SRMath::dot(normal_interpolated, light_dir);
+
+                    /*unsigned int texel_color = texture->GetPixels(uv_interpolated.x, uv_interpolated.y);
+                    unsigned int final_color = texel_color * intensity;*/
+
+                    // 1. 난반사(diffuse) 조명을 계산합니다.
+                    float diffuse_intensity = std::max(0.0f, dot(normal_interpolated, light_dir));
+
+                    // 2. 💡 아주 작은 값의 주변광(ambient)을 추가합니다.
+                    float ambient_intensity = 0.1f; // 10%의 주변광
+
+                    // 3. 최종 빛의 세기는 난반사 + 주변광입니다. (최대 1.0을 넘지 않도록)
+                    float final_intensity = std::min(1.0f, diffuse_intensity + ambient_intensity);
 
                     SRMath::vec3 base_color = { 1.f, 1.f, 1.f };
-                    SRMath::vec3 final_color_vec = base_color * intensity;
+                    SRMath::vec3 color = base_color * intensity;
 
-                    unsigned int final_color = 
-                        RGB(static_cast<int>(final_color_vec.x * 255.f),
-                        static_cast<int>(final_color_vec.y * 255.f),
-                        static_cast<int>(final_color_vec.z * 255.f));
-
-                    m_depthBuffer[idx] = z_interpolated;
+                    unsigned int final_color = RGB(
+                        color.x * 255.f,
+                        color.y * 255.f,
+                        color.z * 255.f
+                    );
+                    
+                    m_depthBuffer[idx] = interpolated_one_over_w;
                     DrawPixel(x, y, final_color);
                 }
             }
@@ -328,7 +372,7 @@ void Renderer::Clear()
                 {
                     int idx = x + rowOffset;
                     m_pPixelData[idx] = 0;
-                    m_depthBuffer[idx] = FLOATINF; // Z Buffer Clearing
+                    m_depthBuffer[idx] = 0; // Z Buffer Clearing
                 }
             }
         });
@@ -353,25 +397,7 @@ void Renderer::Present(HDC hScreenDC) const
         SRCCOPY);       // 복사 방식 (그대로 복사)
 }
 
-
-//void Renderer::Render()
-//{
-//    
-//
-//    /*switch (m_currentLineAlgorithm) {
-//    case ELineAlgorithm::Bresenham:
-//        DrawTriangle(100, 200, 100, 300, 200, 300, RGB(255, 0, 0));
-//        break;
-//    case ELineAlgorithm::DDA:
-//        DrawTriangle(100, 200, 100, 300, 200, 300, RGB(0, 255, 0));
-//        break;
-//    }
-//
-//    DrawFilledTriangle(SRMath::vec2(200, 1000), SRMath::vec2(500, 100), SRMath::vec2(800, 1000), RGB(0, 0, 255));*/
-//}
-
-void Renderer::Render(const std::vector<std::shared_ptr<Model>>& m_models,
-    SRMath::mat4& projectionMatrix, SRMath::mat4& viewMatrix, SRMath::vec3& light_dir)
+void Renderer::Render(SRMath::mat4& projectionMatrix, SRMath::mat4& viewMatrix, SRMath::vec3& light_dir)
 {
     // TODO: Draw something here
 
@@ -391,6 +417,8 @@ void Renderer::Render(const std::vector<std::shared_ptr<Model>>& m_models,
         const auto& pos_indices = m_model->GetPositionIndices();
         const auto& normals = m_model->Getnormals();
         const auto& nrm_indices = m_model->GetNormalIndices();
+        const auto& texcoords = m_model->GetTexcoords();
+        const auto& tex_indices = m_model->GetTextureIndices();
 
         if (nrm_indices.size() != pos_indices.size()) continue;
 
@@ -398,6 +426,7 @@ void Renderer::Render(const std::vector<std::shared_ptr<Model>>& m_models,
         {
             SRMath::vec3 p_model[] = { positions[pos_indices[i]], positions[pos_indices[i + 1]], positions[pos_indices[i + 2]] };
             SRMath::vec3 n_model[] = { normals[nrm_indices[i]], normals[nrm_indices[i + 1]] , normals[nrm_indices[i + 2]] };
+            SRMath::vec2 t_model[] = { texcoords[tex_indices[i]], texcoords[tex_indices[i + 1]], texcoords[tex_indices[i + 2]] };
 
             SRMath::vec3 v0_view = mv * p_model[0];
             SRMath::vec3 v1_view = mv * p_model[1];
@@ -412,26 +441,32 @@ void Renderer::Render(const std::vector<std::shared_ptr<Model>>& m_models,
                 continue;
             }
 
+            // clipping
             SRMath::vec4 p0_clip = mvp * p_model[0];
             SRMath::vec4 p1_clip = mvp * p_model[1];
             SRMath::vec4 p2_clip = mvp * p_model[2];
             
-            SRMath::vec4 n0_clip = SRMath::normalize(mvp * SRMath::vec4(n_model[0], 0.f));
-            SRMath::vec4 n1_clip = SRMath::normalize(mvp * SRMath::vec4(n_model[1], 0.f));
-            SRMath::vec4 n2_clip = SRMath::normalize(mvp * SRMath::vec4(n_model[2], 0.f));
+            SRMath::vec4 n0_world = SRMath::normalize(modelMatrix * SRMath::vec4(n_model[0], 0.f));
+            SRMath::vec4 n1_world = SRMath::normalize(modelMatrix * SRMath::vec4(n_model[1], 0.f));
+            SRMath::vec4 n2_world = SRMath::normalize(modelMatrix * SRMath::vec4(n_model[2], 0.f));
 
             std::vector<SRMath::vec4> clipped_vertices;
             std::vector<SRMath::vec4> clipped_vertices_nrm;
+            std::vector<SRMath::vec2> clipped_texcoords;    // No need MVP Matrics
+
             SRMath::vec4 vertices[] = { p0_clip, p1_clip, p2_clip };
-            SRMath::vec4 vertices_nrm[] = { n0_clip, n1_clip, n2_clip };
+            SRMath::vec4 vertices_nrm[] = { n0_world, n1_world, n2_world };
 
             for (int j = 0; j < 3; j++)
             {
                 const SRMath::vec4& start_v = vertices[j];
                 const SRMath::vec4& end_v = vertices[(j + 1) % 3];
 
-                SRMath::vec4 start_normal = SRMath::vec4(vertices_nrm[j], 0.f);
-                SRMath::vec4 end_normal = SRMath::vec4(vertices_nrm[(j + 1) % 3], 0.f);
+                const SRMath::vec4 start_normal = SRMath::vec4(vertices_nrm[j], 0.f);
+                const SRMath::vec4 end_normal = SRMath::vec4(vertices_nrm[(j + 1) % 3], 0.f);
+
+                const SRMath::vec2& start_uv = t_model[j];
+                const SRMath::vec2& end_uv = t_model[(j + 1) % 3];
 
                 bool isStartInside = start_v.w > 0.1f;
                 bool isEndInside = end_v.w > 0.1f;
@@ -439,6 +474,7 @@ void Renderer::Render(const std::vector<std::shared_ptr<Model>>& m_models,
                 if (isStartInside && isEndInside) {
                     clipped_vertices.emplace_back(end_v);
                     clipped_vertices_nrm.emplace_back(end_normal);
+                    clipped_texcoords.emplace_back(end_uv);
                 }
                 else if (isStartInside != isEndInside)
                 {
@@ -447,84 +483,77 @@ void Renderer::Render(const std::vector<std::shared_ptr<Model>>& m_models,
                     {
                         float t = (start_v.w - 0.1f) / (start_v.w - end_v.w);
                         SRMath::vec4 intersection = start_v + (end_v - start_v) * t;
-                        SRMath::vec3 intersection_normal = SRMath::normalize(start_normal + (end_normal - start_normal) * t);
+                        SRMath::vec4 intersection_normal = SRMath::normalize(start_normal + (end_normal - start_normal) * t);
+                        SRMath::vec2 intersection_uv = start_uv + (end_uv - start_uv) * t;
 
                         if (isStartInside){
                             clipped_vertices.emplace_back(intersection);
-                            clipped_vertices_nrm.emplace_back(SRMath::vec4(intersection_normal, 0.f));
+                            clipped_vertices_nrm.emplace_back(intersection_normal);
+                            clipped_texcoords.emplace_back(intersection_uv);
                         }
                         else {
                             clipped_vertices.emplace_back(intersection);
                             clipped_vertices.emplace_back(end_v);
-                            clipped_vertices_nrm.emplace_back(SRMath::vec4(intersection_normal, 0.f));
+                            clipped_vertices_nrm.emplace_back(intersection_normal);
                             clipped_vertices_nrm.emplace_back(end_normal);
+                            clipped_texcoords.emplace_back(intersection_uv);
+                            clipped_texcoords.emplace_back(end_uv);
                         }
                     }
                 }
             }
 
-            if (clipped_vertices.size() < 3)
-                continue;
+            if (clipped_vertices.size() < 3) continue;
 
-            std::vector<SRMath::vec2> screen_coords(clipped_vertices.size());
-            std::vector<SRMath::vec3> view_normals(clipped_vertices.size());
-            std::vector<float> z_depth(clipped_vertices.size()); // Z-버퍼에 사용할 깊이 값 저장용
+            // Resterization
+            // 클리핑된 최종 정점들을 담을 벡터들
+            std::vector<SRMath::vec4> final_vertices(clipped_vertices.size());
+            std::vector<SRMath::vec2> final_screen_coords(clipped_vertices.size());
+            std::vector<SRMath::vec3> final_view_normals(clipped_vertices.size());
+            std::vector<SRMath::vec2> final_uvs(clipped_vertices.size());
+            std::vector<float> final_one_over_w(clipped_vertices.size());
 
-            for (size_t j = 0; j < clipped_vertices.size() - 2; j++)
+            // 1. 모든 클리핑된 정점에 대해 원근 분할 및 뷰포트 변환을 먼저 수행합니다.
+            for (size_t j = 0; j < clipped_vertices.size(); ++j)
             {
-                SRMath::vec4 clipped_v0 = clipped_vertices[j];
-                SRMath::vec4 clipped_v1 = clipped_vertices[j + 1];
-                SRMath::vec4 clipped_v2 = clipped_vertices[j + 2];
+                final_one_over_w[j] = 1.0f / clipped_vertices[j].w;
 
-                // 8-1. 원근 분할 (Perspective Division): 클립 공간 -> NDC 공간
-                // x, y, z를 w로 나누어 원근을 적용하고 -1 ~ 1 범위로 정규화합니다.
-                clipped_v0.x /= clipped_v0.w;
-                clipped_v0.y /= clipped_v0.w;
-                clipped_v0.z /= clipped_v0.w;
+                // 원근 분할
+                final_vertices[j] = clipped_vertices[j] * final_one_over_w[j];
 
-                clipped_v1.x /= clipped_v1.w;
-                clipped_v1.y /= clipped_v1.w;
-                clipped_v1.z /= clipped_v1.w;
+                // 뷰포트 변환
+                final_screen_coords[j].x = (final_vertices[j].x + 1.0f) * 0.5f * m_width;
+                final_screen_coords[j].y = (1.0f - final_vertices[j].y) * 0.5f * m_height;
 
-                clipped_v2.x /= clipped_v2.w;
-                clipped_v2.y /= clipped_v2.w;
-                clipped_v2.z /= clipped_v2.w;
-
-                // 8-2. 뷰포트 변환 (Viewport Transform): NDC 공간 -> 화면 공간
-                // -1 ~ 1 범위의 좌표를 실제 창 픽셀 좌표(0~width, 0~height)로 변환합니다.
-                screen_coords[j].x = (clipped_v0.x + 1.0f) * 0.5f * m_width;
-                screen_coords[j].y = (1.0f - clipped_v0.y) * 0.5f * m_height; // Y축 뒤집기
-
-                screen_coords[j + 1].x = (clipped_v1.x + 1.0f) * 0.5f * m_width;
-                screen_coords[j + 1].y = (1.0f - clipped_v1.y) * 0.5f * m_height;
-
-                screen_coords[j + 2].x = (clipped_v2.x + 1.0f) * 0.5f * m_width;
-                screen_coords[j + 2].y = (1.0f - clipped_v2.y) * 0.5f * m_height;
-
-                // 8-3. Z-버퍼에 사용할 깊이 값을 저장해 둡니다.
-                z_depth[j] = clipped_v0.z;
-                z_depth[j + 1] = clipped_v1.z;
-                z_depth[j + 2] = clipped_v2.z;
-
-                SRMath::vec4 clipped_n0 = clipped_vertices_nrm[j];
-                SRMath::vec4 clipped_n1 = clipped_vertices_nrm[j + 1];
-                SRMath::vec4 clipped_n2 = clipped_vertices_nrm[j + 2];
-
-                DrawFilledTriangle(screen_coords[j], screen_coords[j + 1], screen_coords[j + 2],
-                    clipped_n0, clipped_n1, clipped_n2, z_depth[j], z_depth[j + 1], z_depth[j + 2],
-                    light_dir);
+                // 속성들도 w로 나눠서 준비 (원근 보정용)
+                final_view_normals[j] = SRMath::vec3(clipped_vertices_nrm[j]) * final_one_over_w[j];
+                final_uvs[j] = clipped_texcoords[j] * final_one_over_w[j];
             }
 
-            SRMath::vec3 v0_world = modelMatrix * p_model[0];
-            SRMath::vec3 v1_world = modelMatrix * p_model[1];
-            SRMath::vec3 v2_world = modelMatrix * p_model[2];
+            // 2. 변환된 정점들을 팬 삼각 분할하여 래스터라이저에 넘깁니다.
+            for (size_t j = 1; j < clipped_vertices.size() - 1; ++j)
+            {
+                DrawFilledTriangle(
+                    final_screen_coords[0], final_screen_coords[j], final_screen_coords[j + 1],
+                    final_view_normals[0], final_view_normals[j], final_view_normals[j + 1],
+                    final_one_over_w[0], final_one_over_w[j], final_one_over_w[j + 1],
+                    final_uvs[0], final_uvs[j], final_uvs[j + 1],
+                    light_dir, m_ptexture
+                );
+            }
 
+            // DEBUG CODE
             if (m_isNrmDebug)
             {
+                SRMath::vec3 v0_world = modelMatrix * p_model[0];
+                SRMath::vec3 v1_world = modelMatrix * p_model[1];
+                SRMath::vec3 v2_world = modelMatrix * p_model[2];
+
                 SRMath::vec3 n0_world = SRMath::normalize(modelMatrix * SRMath::vec4(n_model[0], 0.f));
                 SRMath::vec3 n1_world = SRMath::normalize(modelMatrix * SRMath::vec4(n_model[1], 0.f));
                 SRMath::vec3 n2_world = SRMath::normalize(modelMatrix * SRMath::vec4(n_model[2], 0.f));
-                DebugNormalVector(v0_world, v1_world, v2_world, n0_world, n1_world, n2_world, vp);
+                DebugNormalVector(v0_world, v1_world, v2_world,
+                    n0_world, n1_world, n2_world, vp);
             }
         }
     }

@@ -34,10 +34,6 @@ private:
 	float m_cameraYaw = 0.f;	// 좌우 회전 (Y축 기준)
 	float m_cameraPitch = 0.f;	// 상하 회전 (X축 기준)
 
-	// Model Variables
-	std::vector<std::shared_ptr<Model>> m_models;
-	std::shared_ptr<Model> m_model;
-
 public:
 	Framework();
 	~Framework();

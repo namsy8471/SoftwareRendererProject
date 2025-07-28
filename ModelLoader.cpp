@@ -31,14 +31,22 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filepath)
         {
             SRMath::vec3 pos;
             ss >> pos.x >> pos.y >> pos.z;
-            outModel->positions.push_back(pos);
+            outModel->m_positions.push_back(pos);
+        }
+
+        else if (prefix == "vt")
+        {
+            SRMath::vec2 uv;
+            ss >> uv.x >> uv.y;
+            outModel->m_texcoords.push_back(uv);
+
         }
 
         else if (prefix == "vn")
         {
             SRMath::vec3 nrm;
             ss >> nrm.x >> nrm.y >> nrm.z;
-            outModel->normals.push_back(nrm);
+            outModel->m_normals.push_back(nrm);
             
         }
 
@@ -76,53 +84,53 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filepath)
 
             for (int i = 0; i < faceIndices.size() - 2; i++)
             {
-                outModel->pos_indices.push_back(faceIndices[0].pos);
-                outModel->pos_indices.push_back(faceIndices[i + 1].pos);
-                outModel->pos_indices.push_back(faceIndices[i + 2].pos);
+                outModel->m_pos_indices.push_back(faceIndices[0].pos);
+                outModel->m_pos_indices.push_back(faceIndices[i + 1].pos);
+                outModel->m_pos_indices.push_back(faceIndices[i + 2].pos);
 
                 if (faceIndices[0].tex != -1)
                 {
-                    outModel->tex_indices.push_back(faceIndices[0].tex);
-                    outModel->tex_indices.push_back(faceIndices[i + 1].tex);
-                    outModel->tex_indices.push_back(faceIndices[i + 2].tex);
+                    outModel->m_tex_indices.push_back(faceIndices[0].tex);
+                    outModel->m_tex_indices.push_back(faceIndices[i + 1].tex);
+                    outModel->m_tex_indices.push_back(faceIndices[i + 2].tex);
                 }
 
                 if (faceIndices[0].nrm != -1)
                 {
-                    outModel->nrm_indices.push_back(faceIndices[0].nrm);
-                    outModel->nrm_indices.push_back(faceIndices[i + 1].nrm);
-                    outModel->nrm_indices.push_back(faceIndices[i + 2].nrm);
+                    outModel->m_nrm_indices.push_back(faceIndices[0].nrm);
+                    outModel->m_nrm_indices.push_back(faceIndices[i + 1].nrm);
+                    outModel->m_nrm_indices.push_back(faceIndices[i + 2].nrm);
                 }
             }
         }
     }
 
     // If there is no Normal vector in OBJ File
-    if (outModel->normals.empty())
+    if (outModel->m_normals.empty())
     {
-        outModel->normals.resize(outModel->positions.size(), { 0.0f, 0.0f, 0.0f });
+        outModel->m_normals.resize(outModel->m_positions.size(), { 0.0f, 0.0f, 0.0f });
         
-        for (size_t i = 0; i < outModel->pos_indices.size(); i += 3)
+        for (size_t i = 0; i < outModel->m_pos_indices.size(); i += 3)
         {
-            int idx0 = outModel->pos_indices[i];
-            int idx1 = outModel->pos_indices[i + 1];
-            int idx2 = outModel->pos_indices[i + 2];
+            int idx0 = outModel->m_pos_indices[i];
+            int idx1 = outModel->m_pos_indices[i + 1];
+            int idx2 = outModel->m_pos_indices[i + 2];
         
-            const SRMath::vec3 v0 = outModel->positions[idx0];
-            const SRMath::vec3 v1 = outModel->positions[idx1];
-            const SRMath::vec3 v2 = outModel->positions[idx2];
+            const SRMath::vec3 v0 = outModel->m_positions[idx0];
+            const SRMath::vec3 v1 = outModel->m_positions[idx1];
+            const SRMath::vec3 v2 = outModel->m_positions[idx2];
 
             SRMath::vec3 face_nrm = SRMath::normalize(SRMath::cross(v1 - v0, v2 - v0));
 
-            outModel->normals[idx0] = outModel->normals[idx0] + face_nrm;
-            outModel->normals[idx1] = outModel->normals[idx1] + face_nrm;
-            outModel->normals[idx2] = outModel->normals[idx2] + face_nrm;
+            outModel->m_normals[idx0] = outModel->m_normals[idx0] + face_nrm;
+            outModel->m_normals[idx1] = outModel->m_normals[idx1] + face_nrm;
+            outModel->m_normals[idx2] = outModel->m_normals[idx2] + face_nrm;
         }
 
-        for (size_t i = 0; i < outModel->normals.size(); i++)
-            outModel->normals[i] = SRMath::normalize(outModel->normals[i]);
+        for (size_t i = 0; i < outModel->m_normals.size(); i++)
+            outModel->m_normals[i] = SRMath::normalize(outModel->m_normals[i]);
 
-        outModel->nrm_indices = outModel->pos_indices;
+        outModel->m_nrm_indices = outModel->m_pos_indices;
     }
 
     file.close();

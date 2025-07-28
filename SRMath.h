@@ -425,7 +425,7 @@ namespace SRMath {
 		return result;
 	}
 
-	inline mat4 lookAt(const vec3& eye, const vec3& center, const vec3& up)
+	static inline mat4 lookAt(const vec3& eye, const vec3& center, const vec3& up)
 	{
 		vec3 f = normalize(center - eye);
 		vec3 s = normalize(cross(f, up));

@@ -9,10 +9,11 @@ struct StbiImageDeleter
 
 using StbiImagePtr = std::unique_ptr<unsigned char, StbiImageDeleter>;
 
+class Texture;
 
-class TextuerLoader
+class TextureLoader
 {
 public:
-	static StbiImagePtr LoadImageFile(const std::string& filepath, int& width, int& height);
+	static std::shared_ptr<Texture> LoadImageFile(const std::string& filepath);
 };
 

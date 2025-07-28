@@ -1,9 +1,12 @@
 #pragma once
 #include <vector>
+#include <unordered_map>
+#include <string>
 #include "pch.h"
 #include "SRMath.h"
 
 class Model;
+class Texture;
 
 enum class ELineAlgorithm
 {
@@ -24,6 +27,15 @@ private:
 
 	unsigned int* m_pPixelData;
 	std::vector<float> m_depthBuffer;
+	
+	// Model Variables
+	std::vector<std::shared_ptr<Model>> m_models;
+	std::shared_ptr<Model> m_model;
+
+	// Texture Variables
+	std::vector<std::string> texNames;
+	std::unordered_map<std::string, std::shared_ptr<Texture>> m_textures;
+	std::shared_ptr<Texture> m_ptexture;
 
 	ELineAlgorithm m_currentLineAlgorithm = 
 		ELineAlgorithm::Bresenham;	// 선 그리기 알고리즘
@@ -46,15 +58,15 @@ public:
 	void DrawTriangle(const SRMath::vec2 v0, const SRMath::vec2 v1, const SRMath::vec2 v2, unsigned int color);
 	void DrawFilledTriangle(const SRMath::vec2& v0, const SRMath::vec2& v1, const SRMath::vec2& v2,
 		const SRMath::vec3& n0_World, const SRMath::vec3& n1_World, const SRMath::vec3& n2_World,
-		float z0, float z1, float z2, const SRMath::vec3& light_dir);
+		float z0, float z1, float z2, const SRMath::vec2& uv0_clipped, const SRMath::vec2& uv1_clipped,
+		const SRMath::vec2& uv2_clipped, const SRMath::vec3& light_dir, const std::shared_ptr<Texture> texture);
 
 	void SetLineAlgorithm(ELineAlgorithm eLineAlgorithm);
 	void SetDebugNormal();
 
 	void Clear();
 	void Present(HDC hScreenDC) const;
-	void Render(const std::vector<std::shared_ptr<Model>>& m_models, SRMath::mat4& projectionMatrix, SRMath::mat4& viewMatrix
-		, SRMath::vec3& light_dir);
+	void Render(SRMath::mat4& projectionMatrix, SRMath::mat4& viewMatrix, SRMath::vec3& light_dir);
 
 	void DebugNormalVector(const SRMath::vec3& v0_World, const SRMath::vec3& v1_World, const SRMath::vec3& v2_World, const SRMath::vec3& n0_World, const SRMath::vec3& n1_World, const SRMath::vec3& n2_World, SRMath::mat4& vp);
 

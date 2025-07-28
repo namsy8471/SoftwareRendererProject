@@ -2,13 +2,11 @@
 #include "Resource.h"
 #include "Renderer.h"
 #include "PerformanceAnalyzer.h"
-#include "ModelLoader.h"
 #include <omp.h>
 
 Framework::Framework() : m_hWnd(nullptr), m_hInstance(nullptr), m_pRenderer(nullptr), 
-m_perfAnalyzer(), m_szTitle(), m_szWindowClass(), m_model(nullptr), m_models()
+m_perfAnalyzer(), m_szTitle(), m_szWindowClass()
 {
-
 }
 
 Framework::~Framework()
@@ -64,16 +62,6 @@ bool Framework::Initialize(HINSTANCE hInstance, int nCmdShow)
     }
 
     m_perfAnalyzer.Initialize();
-
-    m_model = ModelLoader::LoadOBJ("assets/teapot.obj");
-
-    if (!m_model)
-    {
-        MessageBox(m_hWnd, L"Failed to load Model.", L"Model Load Error", MB_OK);
-        return false;
-    }
-
-    m_models.push_back(std::move(m_model));
 
     return TRUE;
 }
@@ -135,16 +123,17 @@ void Framework::Render()
     // Calculate aspect ratio
     float aspectRatio = static_cast<float>(width) / height;
 
-    SRMath::mat4 viewMatrix = SRMath::lookAt(m_cameraPos, 
+    SRMath::mat4 viewMatrix = SRMath::lookAt(m_cameraPos,
         m_cameraPos + m_cameraforward, SRMath::vec3(0.f, 1.f, 0.f));
+    
 
     SRMath::mat4 projectionMatrix = 
         SRMath::perspective(PI / 3.0f, aspectRatio, 0.01f, 100.f); // 60 FOV
     
     SRMath::vec3 light_dir = 
-        SRMath::normalize(SRMath::vec3{ 0.0f, 0.5f, 1.0f });
+        SRMath::normalize(SRMath::vec3{ 0.0f, -0.5f, 1.0f });
 
-    m_pRenderer->Render(m_models, projectionMatrix, viewMatrix, light_dir);
+    m_pRenderer->Render(projectionMatrix, viewMatrix, light_dir);
 }
 
 // Framework Logic Update(For Game)

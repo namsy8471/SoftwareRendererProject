@@ -145,7 +145,7 @@
     <ClInclude Include="SoftrendererProject.h" />
     <ClInclude Include="stb_image.h" />
     <ClInclude Include="targetver.h" />
-    <ClInclude Include="TextuerLoader.h" />
+    <ClInclude Include="TextureLoader.h" />
     <ClInclude Include="Texture.h" />
   </ItemGroup>
   <ItemGroup>
@@ -156,7 +156,7 @@
     <ClCompile Include="PerformanceAnalyzer.cpp" />
     <ClCompile Include="Renderer.cpp" />
     <ClCompile Include="SoftrendererProject.cpp" />
-    <ClCompile Include="TextuerLoader.cpp" />
+    <ClCompile Include="TextureLoader.cpp" />
     <ClCompile Include="Texture.cpp" />
   </ItemGroup>
   <ItemGroup>
