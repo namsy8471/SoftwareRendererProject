@@ -50,5 +50,110 @@
 ## **결과물 (Output Screenshots/GIFs)**
 
 ![2025-07-29 01-58-27 (1)](https://github.com/user-attachments/assets/3db5a4bc-7764-4d8e-a99f-8185a08df974)
-Result by 07/28
+* Result by 07/28
 
+---
+
+## はじめに (Introduction)
+このプロジェクトは、コンピューターグラフィックスパイプラインの核心原理を理解し、直接実装するために開発されたCPUベースのソフトウェアレンダラーです。DirectX 11の経験を通じて不足を感じていた基本原理の深い学習と、最適化手法（SIMD）の適用に重点を置きました。
+
+---
+
+## プロジェクト目標 (Project Goal)
+* コンピューターグラフィックスパイプラインの核心原理および数学的背景の深層理解。
+* **SIMD (Single Instruction, Multiple Data) 命令**を活用したベクトル・行列演算の**性能最適化手法の習得と適用**。
+* レンダリングパイプラインの各段階におけるエラー診断を含む**デバッグおよび問題解決能力**の向上。
+* 低レベルグラフィックス処理過程に対する深い理解。
+
+---
+
+## 期間 (Duration)
+2025/07/07 ～ 進行中
+
+---
+
+## 主要機能 (Key Features)
+* **MVP (Model-View-Projection) 変換**: 3D空間のオブジェクトを2D画面に投影するための必須の行列変換ステップを直接実装。
+* **ラスタライズ (Rasterization)**: 三角形や線などの基本的な幾何プリミティブをピクセルに変換する核心プロセスを実装。
+* **Zバッファリング (Z-Buffering)**: 深度テストを通じて正確なオブジェクトの可視性を保証し、レンダリングアーティファクトを防止。
+* **テクスチャマッピング (Texture Mapping)**: 3Dモデルの表面に画像を適用してリアリズムを向上。
+* **フォンイルミネーションモデル (Phong Illumination Model)**: 光源、視点、法線ベクトルを考慮してリアルな表面シェーディングを計算するシェーディングモデルを実装。
+* **線描画アルゴリズム**: BresenhamアルゴリズムとDDAアルゴリズムの2種類を実装し、切り替え可能に設定。
+* **クリッピング (Clipping)**: Sutherland–Hodgmanアルゴリズムを用いたニアプレーンクリッピングを実装し、パイプラインの効率を向上。
+* **バックフェースカリング (Back-face Culling)**: カメラから見て裏側にあるポリゴンを除去し、レンダリング負荷を軽減する最適化手法を適用。
+* **法線表示デバッグ (Normal Visualization for Debugging)**: 頂点法線を視覚化し、レンダリングエラーの診断とデバッグを容易に。
+* **カスタム数学ライブラリ (SRMath.h)**: 行列およびベクトル演算関数を**SIMD命令（SSE/AVX）**を活用して直接実装し、性能最適化能力と数学の基礎理解を証明。
+
+---
+
+## 使用技術スタック (Technologies Used)
+* **言語**: `C++17` (オブジェクト指向設計および最新の言語機能、例: 構造化束縛、を活用)
+* **開発環境**: `Visual Studio 2022`
+* **OSインターフェース**: `WinAPI` (ウィンドウ管理、ユーザー入力処理、ピクセルバッファアクセスなどのOSレベルインターフェースを制御)
+* **ライブラリ**: `stb_image.h` (様々な画像フォーマットの読み込みと解析のためのシングルヘッダーライブラリ)
+
+---
+
+## 課題と解決策 (Challenges & Solutions)
+* **SIMD最適化**: ソフトウェアレンダラーの核心である数学演算（行列、ベクトル）は性能に決定的な影響を及ぼします。プロジェクトの初期段階からこれらの演算効率を最大化するため、**CPUのSIMD (Single Instruction, Multiple Data) 命令セットであるSSE (`xmmintrin.h`)** を活用して`SRMath.h`ライブラリを直接設計および実装しました。
+* **クリッピングの複雑性**: Sutherland–Hodgmanアルゴリズムの実装において、多角形の頂点順序の維持と新しい頂点の生成ロジックに複雑さが発生しました。これをOBJパーサー作成時に使用した**三角分割（Triangulation）**を応用することで、問題なく実装しました。
+* **遠近投影時の近接オブジェクトレンダリングエラーの解決**: デバッグ中に**コールスタックとメモリウォッチ**を使用し、Zバッファ段階で`x, y`座標が有効範囲を逸脱することによるメモリ参照エラーを特定しました。この問題は、**`std::clamp`関数を用いた値のクランプ(Clamping)**によって正常に解決しました。
+
+---
+
+## 成果物 (Output Screenshots/GIFs)
+![2025-07-29 01-58-27 (1)](https://github.com/user-attachments/assets/3db5a4bc-7764-4d8e-a99f-8185a08df974)
+* Result by 07/28
+
+---
+
+## Introduction
+This project is a CPU-based software renderer developed to deeply understand and directly implement the core principles of the computer graphics pipeline. It focuses on in-depth learning of fundamental principles, which I felt were lacking from my DirectX 11 experience, and the application of optimization techniques (SIMD).
+
+---
+
+## Project Goal
+* Deep understanding of the core principles and mathematical background of the computer graphics pipeline.
+* Acquisition and application of **performance optimization techniques** for vector/matrix operations using **SIMD (Single Instruction, Multiple Data) instructions**.
+* Enhancement of **debugging and problem-solving skills**, including diagnosing errors at each stage of the rendering pipeline.
+* Profound understanding of low-level graphics processing.
+
+---
+
+## Duration
+2025/07/07 ~ Ongoing
+
+---
+
+## Key Features
+* **MVP (Model-View-Projection) Transformation**: Direct implementation of the essential matrix transformation steps to project 3D objects onto a 2D screen.
+* **Rasterization**: Implementation of the core process of converting basic geometric primitives like triangles and lines into pixels.
+* **Z-Buffering**: Ensures correct object visibility through depth testing, preventing rendering artifacts.
+* **Texture Mapping**: Enhances realism by applying images onto 3D model surfaces.
+* **Phong Illumination Model**: Implemented a shading model that calculates realistic surface shading by considering light source, viewpoint, and normal vectors.
+* **Line Drawing Algorithms**: Implemented two algorithms, Bresenham's and DDA, with the ability to switch between them.
+* **Clipping**: Implementation of Near Plane Clipping using the Sutherland–Hodgman algorithm to improve pipeline efficiency.
+* **Back-face Culling**: Application of an optimization technique that removes polygons facing away from the camera, reducing rendering load.
+* **Normal Visualization for Debugging**: Visualizes vertex normals to facilitate rendering error diagnosis and debugging.
+* **Custom Math Library (SRMath.h)**: Directly implemented matrix and vector operation functions leveraging **SIMD instructions (SSE/AVX)**, demonstrating performance optimization capabilities and a fundamental understanding of mathematics.
+
+---
+
+## Technologies Used
+* **Language**: `C++17` (Utilizes object-oriented design and modern language features, e.g., Structured Bindings)
+* **Development Environment**: `Visual Studio 2022`
+* **OS Interface**: `WinAPI` (Controls OS-level interfaces for window management, user input handling, and pixel buffer access)
+* **Library**: `stb_image.h` (Single-header library for loading and parsing various image formats)
+
+---
+
+## Challenges & Solutions
+* **SIMD Optimization**: Mathematical operations (matrices, vectors) are critical for software renderer performance. From the early stages of the project, to maximize the efficiency of these operations, I designed and implemented the `SRMath.h` library using **SSE (Streaming SIMD Extensions) intrinsics (`xmmintrin.h`)** for CPU's SIMD instruction set.
+* **Complexity of Clipping**: During the implementation of the Sutherland–Hodgman algorithm, complexities arose in maintaining polygon vertex order and generating new vertices. This was successfully implemented by leveraging **triangulation**, a technique previously used when developing an OBJ parser.
+* **Fixing Near-Object Rendering Issues with Perspective Projection**: During debugging, by using the **call stack and memory watch**, I identified a memory access error in the Z-buffer stage caused by `x, y` coordinates exceeding their valid range. This issue was successfully resolved by **clamping these values using `std::clamp`**.
+
+---
+
+## Output Screenshots/GIFs
+![2025-07-29 01-58-27 (1)](https://github.com/user-attachments/assets/3db5a4bc-7764-4d8e-a99f-8185a08df974)
+* Result by 07/28
