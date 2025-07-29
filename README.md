@@ -20,6 +20,7 @@
 
 ## **주요 기능 (Key Features)**
 * **MVP (Model-View-Projection) 변환**: 3D 공간의 객체를 2D 화면에 투영하기 위한 필수 행렬 변환 단계를 직접 구현.
+* **OBJ 파서 (OBJ Parser)**: std::fstream을 활용하여 .obj 파일 포맷을 읽고, **std::stringstream**을 이용해 각 줄의 데이터를 효율적으로 파싱하여 3D 모델 데이터를 로드하는 기능 구현.
 * **래스터화 (Rasterization)**: 삼각형, 선 등 기본적인 기하 도형을 픽셀로 변환하는 핵심 과정 구현.
 * **Z-버퍼링 (Z-Buffering)**: 깊이 테스트를 통해 올바른 객체 가시성을 보장하여 렌더링 오류를 방지.
 * **텍스처 매핑 (Texture Mapping)**: 3D 모델 표면에 이미지를 입혀 사실감 향상.
@@ -28,7 +29,7 @@
 * **클리핑 (Clipping)**: Sutherland–Hodgman algorithm을 이용한 Near Plane Clipping 구현으로 파이프라인 효율성 증대.
 * **백 페이스 컬링 (Back-face Culling)**: 카메라를 등지고 있는 폴리곤을 제거하여 렌더링 부하를 줄이는 최적화 기법 적용.
 * **법선 표시 디버깅 (Normal Visualization for Debugging)**: 정점 법선을 시각화하여 렌더링 오류 진단 및 디버깅 용이성 확보.
-* **수학 함수 라이브러리 직접 구현 (Custom Math Library: SRMath.h)**: 행렬 및 벡터 연산 함수를 SIMD 명령어(SSE/AVX)를 활용하여 직접 구현, 성능 최적화와 기초 수학 이해도를 증명.
+* **수학 함수 라이브러리 직접 구현 (Custom Math Library: SRMath.h)**: 행렬 및 벡터 연산 함수를 SIMD 명령어(SSE)를 활용하여 직접 구현, 성능 최적화와 기초 수학 이해도를 증명.
 
 ---
 
@@ -74,6 +75,7 @@
 
 ## 主要機能 (Key Features)
 * **MVP (Model-View-Projection) 変換**: 3D空間のオブジェクトを2D画面に投影するための必須の行列変換ステップを直接実装。
+* **OBJパーサー (OBJ Parser)**: std::fstreamを活用して.objファイルフォーマットを読み込み、**std::stringstream**を利用して各行のデータを効率的にパースし、3Dモデルデータをロードする機能を実装。
 * **ラスタライズ (Rasterization)**: 三角形や線などの基本的な幾何プリミティブをピクセルに変換する核心プロセスを実装。
 * **Zバッファリング (Z-Buffering)**: 深度テストを通じて正確なオブジェクトの可視性を保証し、レンダリングアーティファクトを防止。
 * **テクスチャマッピング (Texture Mapping)**: 3Dモデルの表面に画像を適用してリアリズムを向上。
@@ -127,6 +129,7 @@ This project is a CPU-based software renderer developed to deeply understand and
 
 ## Key Features
 * **MVP (Model-View-Projection) Transformation**: Direct implementation of the essential matrix transformation steps to project 3D objects onto a 2D screen.
+* **OBJ Parser**: Implemented functionality to load 3D model data by reading the .obj file format using std::fstream and efficiently parsing each line's data with **std::stringstream**.
 * **Rasterization**: Implementation of the core process of converting basic geometric primitives like triangles and lines into pixels.
 * **Z-Buffering**: Ensures correct object visibility through depth testing, preventing rendering artifacts.
 * **Texture Mapping**: Enhances realism by applying images onto 3D model surfaces.
