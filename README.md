@@ -49,4 +49,6 @@
 
 ## **결과물 (Output Screenshots/GIFs)**
 
+![2025-07-29 01-58-27 (1)](https://github.com/user-attachments/assets/3db5a4bc-7764-4d8e-a99f-8185a08df974)
+Result by 07/28
 
