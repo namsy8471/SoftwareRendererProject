@@ -28,6 +28,7 @@
 * **선그리기 알고리즘**: Bresenham 알고리즘과 DDA 알고리즘, 두 가지를 만들고 변경 가능하게 구현
 * **클리핑 (Clipping)**: Sutherland–Hodgman algorithm을 이용한 Near Plane Clipping 구현으로 파이프라인 효율성 증대.
 * **백 페이스 컬링 (Back-face Culling)**: 카메라를 등지고 있는 폴리곤을 제거하여 렌더링 부하를 줄이는 최적화 기법 적용.
+* **프러스텀 컬링 (Frustum Culling)**: 화면 밖의 오브젝트는 그리지 않게 하여 최적화.
 * **법선 표시 디버깅 (Normal Visualization for Debugging)**: 정점 법선을 시각화하여 렌더링 오류 진단 및 디버깅 용이성 확보.
 * **수학 함수 라이브러리 직접 구현 (Custom Math Library: SRMath.h)**: 행렬 및 벡터 연산 함수를 SIMD 명령어(SSE)를 활용하여 직접 구현, 성능 최적화와 기초 수학 이해도를 증명.
 
@@ -49,8 +50,7 @@
 ---
 
 ## **결과물 (Output Screenshots/GIFs)**
-
-![2025-07-29 01-58-27 (1)](https://github.com/user-attachments/assets/3db5a4bc-7764-4d8e-a99f-8185a08df974)
+![2025-07-31 17-31-10](https://github.com/user-attachments/assets/d18cc9cf-04ff-41b7-948e-f75586cd03fb)
 * Result by 07/28
 
 ---
@@ -104,7 +104,7 @@
 ---
 
 ## 成果物 (Output Screenshots/GIFs)
-![2025-07-29 01-58-27 (1)](https://github.com/user-attachments/assets/3db5a4bc-7764-4d8e-a99f-8185a08df974)
+![2025-07-31 17-31-10](https://github.com/user-attachments/assets/d18cc9cf-04ff-41b7-948e-f75586cd03fb)
 * Result by 07/28
 
 ---
@@ -158,5 +158,5 @@ This project is a CPU-based software renderer developed to deeply understand and
 ---
 
 ## Output Screenshots/GIFs
-![2025-07-29 01-58-27 (1)](https://github.com/user-attachments/assets/3db5a4bc-7764-4d8e-a99f-8185a08df974)
+![2025-07-31 17-31-10](https://github.com/user-attachments/assets/d18cc9cf-04ff-41b7-948e-f75586cd03fb)
 * Result by 07/28
