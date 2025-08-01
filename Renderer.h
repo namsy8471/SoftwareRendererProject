@@ -4,6 +4,7 @@
 #include <string>
 #include "pch.h"
 #include "SRMath.h"
+#include "Octree.h"
 
 class Model;
 class Texture;
@@ -13,6 +14,10 @@ enum class ELineAlgorithm
 	Bresenham,
 	DDA
 };
+
+struct ShadedVertex;
+struct RasterizerVertex;
+struct Frustum;
 
 class Renderer
 {
@@ -45,6 +50,16 @@ private:
 	void drawLineByBresenham(int x0, int y0, int x1, int y1, unsigned int color);
 	void drawLineByDDA(int x0, int y0, int x1, int y1, unsigned int color);
 
+	ShadedVertex interpolate(const ShadedVertex& v0, const ShadedVertex& v1, float t);
+	std::vector<ShadedVertex> clipPolygonAgainstPlane(const std::vector<ShadedVertex>& vertices, int plane_axis, int plane_sign);
+	std::vector<ShadedVertex> clipTriangle(const ShadedVertex& v0, const ShadedVertex& v1, const ShadedVertex& v2);
+	void resterization(const std::vector<ShadedVertex>& clipped_vertices, std::vector<RasterizerVertex>& final_vertices, const SRMath::vec3& light_dir);
+
+	void extractFrustumPlanes(const SRMath::mat4& vp, Frustum& out_frustum);
+	bool isSphereInFrustum(const Frustum& frustum, const SRMath::vec3& sphere_center, float sphere_radius);
+	bool isAABBInFrustum(const Frustum& frustum, const AABB& aabb);
+	void renderOctreeNode(const OctreeNode* node, const Frustum& frustum, const Mesh& mesh, const SRMath::mat4& modelMatrix,const SRMath::mat4& mv, const SRMath::mat4& mvp, const SRMath::mat4& normal_matrix, const SRMath::vec3& light_dir);
+
 public:
 	Renderer();
 	~Renderer();
@@ -57,9 +72,9 @@ public:
 	void DrawTriangle(int x0, int y0, int x1, int y1, int x2, int y2, unsigned int color);
 	void DrawTriangle(const SRMath::vec2 v0, const SRMath::vec2 v1, const SRMath::vec2 v2, unsigned int color);
 	void DrawFilledTriangle(const SRMath::vec2& v0, const SRMath::vec2& v1, const SRMath::vec2& v2,
-		const SRMath::vec3& n0_World, const SRMath::vec3& n1_World, const SRMath::vec3& n2_World,
-		float z0, float z1, float z2, const SRMath::vec2& uv0_clipped, const SRMath::vec2& uv1_clipped,
-		const SRMath::vec2& uv2_clipped, const SRMath::vec3& light_dir, const std::shared_ptr<Texture> texture);
+		float one_over_w0, float one_over_w1, float one_over_w2, const SRMath::vec3& n0_World, const SRMath::vec3& n1_World, const SRMath::vec3& n2_World,
+		const SRMath::vec2& uv0_clipped, const SRMath::vec2& uv1_clipped, const SRMath::vec2& uv2_clipped,
+		const SRMath::vec3& light_dir, const std::shared_ptr<Texture> texture);
 
 	void SetLineAlgorithm(ELineAlgorithm eLineAlgorithm);
 	void SetDebugNormal();

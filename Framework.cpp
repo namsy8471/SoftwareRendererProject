@@ -128,7 +128,7 @@ void Framework::Render()
     
 
     SRMath::mat4 projectionMatrix = 
-        SRMath::perspective(PI / 3.0f, aspectRatio, 0.01f, 100.f); // 60 FOV
+        SRMath::perspective(PI / 3.0f, aspectRatio, 0.1f, 100.f); // 60 FOV
     
     SRMath::vec3 light_dir = 
         SRMath::normalize(SRMath::vec3{ 0.0f, -0.5f, 1.0f });

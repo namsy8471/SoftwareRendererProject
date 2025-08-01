@@ -135,6 +135,7 @@
   <ItemGroup>
     <ClInclude Include="Framework.h" />
     <ClInclude Include="GameObject.h" />
+    <ClInclude Include="Octree.h" />
     <ClInclude Include="SRMath.h" />
     <ClInclude Include="Model.h" />
     <ClInclude Include="ModelLoader.h" />
@@ -153,6 +154,7 @@
     <ClCompile Include="GameObject.cpp" />
     <ClCompile Include="Model.cpp" />
     <ClCompile Include="ModelLoader.cpp" />
+    <ClCompile Include="Octree.cpp" />
     <ClCompile Include="PerformanceAnalyzer.cpp" />
     <ClCompile Include="Renderer.cpp" />
     <ClCompile Include="SoftrendererProject.cpp" />

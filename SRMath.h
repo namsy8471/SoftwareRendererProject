@@ -7,6 +7,7 @@
 constexpr float PI = 3.1415926535f;
 const float angle90 = PI / 2.0f;
 
+
 namespace SRMath {
 	// General Template
 
@@ -14,22 +15,6 @@ namespace SRMath {
 	using vec2 = Vector<2>;
 	using vec3 = Vector<3>;
 	using vec4 = Vector<4>;
-
-	template <size_t N>
-	struct alignas(16) Vector
-	{
-		// Check condition when instantiating it
-		static_assert(N == 2 || N == 3 || N == 4,
-			"Vector sturct only supports 2, 3, or 4 dimensions!");
-		union {
-			float data[N];
-			__m128 m128;
-		};
-
-		Vector(Vector<N>& v) : m128(v.m128) {}
-		float& operator[](size_t index) { return data[index]; }
-		const float& operator[](size_t index) const { return data[index]; }
-	};
 
 	// Vector2
 	template <>
@@ -62,6 +47,7 @@ namespace SRMath {
 		Vector(float x, float y, float z);
 		Vector(const SRMath::Vector<2>& v);
 		Vector(const SRMath::Vector<4>& v);
+
 		float& operator[](size_t index) { return data[index]; }
 		const float& operator[](size_t index) const { return data[index]; }
 	};
@@ -82,6 +68,7 @@ namespace SRMath {
 		Vector(const SRMath::Vector<2>& v);
 		Vector(const SRMath::Vector<3>& v, float w);
 		Vector(const SRMath::Vector<3>& v);
+
 		float& operator[](size_t index) { return data[index]; }
 		const float& operator[](size_t index) const { return data[index]; }
 	};
@@ -105,47 +92,54 @@ namespace SRMath {
 	template<size_t N>
 	inline Vector<N> operator+(const Vector<N>& a, const Vector<N>& b)
 	{
-		Vector<N> ret;
-		// Classic
-		/*for (size_t i = 0; i < N; i++)
-			ret[i] = a[i] + b[i];*/
+		Vector<N> ret = a;
 
-		// SIMD
-		ret.m128 = _mm_add_ps(a.m128, b.m128);
+		ret += b;
+
 		return ret;
+	}
+
+	template<size_t N>
+	inline Vector<N>& operator+=(Vector<N>& a, const Vector<N>& b)
+	{
+		// SIMD
+		a.m128 = _mm_add_ps(a.m128, b.m128);
+		return a;
 	}
 
 	template<size_t N>
 	inline Vector<N> operator-(const Vector<N>& a, const Vector<N>& b)
 	{
-		Vector<N> ret;
+		Vector<N> ret = a;
 
-		// Classic
-		/*for (size_t i = 0; i < N; i++)
-			ret[i] = a[i] - b[i];
-		*/
-
-		// SIMD
-		ret.m128 = _mm_sub_ps(a.m128, b.m128);
+		ret -= b;
 		return ret;
+	}
+
+	template<size_t N>
+	inline Vector<N>& operator-=(Vector<N>& a, const Vector<N>& b)
+	{
+		a.m128 = _mm_sub_ps(a.m128, b.m128);
+		return a;
 	}
 
 	template<size_t N>
 	inline Vector<N> operator*(const Vector<N>& v, float scalar)
 	{
-		Vector<N> ret;
+		Vector<N> ret = v;
 
-		// Classic
-		/*for (size_t i = 0; i < N; i++)
-			ret[i] = v[i] * scalar;*/
-		
-		if (scalar <= 1e-5f) return v;
-
-		__m128 s = _mm_set1_ps(scalar);
-		//SIMD
-		ret.m128 = _mm_mul_ps(v.m128, s);
+		ret *= scalar;
 
 		return ret;
+	}
+
+	template<size_t N>
+	inline Vector<N>& operator*=(Vector<N>& v, float scalar)
+	{
+		__m128 s = _mm_set1_ps(scalar);
+		v.m128 = _mm_mul_ps(v.m128, s);
+
+		return v;
 	}
 
 	template<size_t N>
@@ -157,22 +151,25 @@ namespace SRMath {
 	template<size_t N>
 	inline Vector<N> operator/(const Vector<N>& v, float scalar)
 	{
-		Vector<N> ret;
+		Vector<N> ret = v;
+		ret /= scalar;
 		
-		// Classic
-		/*for (size_t i = 0; i < N; i++)
-			ret[i] = v[i] / scalar;*/
-		
-		__m128 s = _mm_set1_ps(scalar);
-		ret.m128 = _mm_div_ps(v.m128, s);
-
 		return ret;
+	}
+
+	template<size_t N>
+	inline Vector<N>& operator/=(Vector<N>& v, float scalar)
+	{
+		float rcp_scalar = 1.0f / scalar;
+		__m128 r = _mm_set1_ps(rcp_scalar);
+		v.m128 = _mm_mul_ps(v.m128, r);
+
+		return v;
 	}
 
 	// -- Matrix 선언 및 정의
 	template <size_t N> struct alignas(16) Matrix;
-	using mat3 = Matrix<3>;
-	using mat4 = Matrix<4>;
+	
 
 	template<size_t N>
 	struct alignas(16) Matrix
@@ -206,7 +203,59 @@ namespace SRMath {
 		const Vector<N>& operator[](size_t index) const { return cols[index]; }
 	};
 
+	template<>
+	struct Matrix<3> { // 16바이트 정렬이 필수는 아님
 
+		union {
+			Vector<3> cols[3];
+			float data[3 * 3];
+		};
+
+		Vector<3>& operator[](size_t index) { return cols[index]; }
+		const Vector<3>& operator[](size_t index) const { return cols[index]; }
+	};
+
+	using mat3 = Matrix<3>;
+
+	template<>
+	struct alignas(16) Matrix<4>
+	{
+		union {
+			__m128 m128[4];
+			Vector<4> cols[4];
+			float data[4 * 4];
+		};
+
+		// 기본 생성자를 명시적으로 정의
+		Matrix() {
+			
+			Matrix(1.f);
+		}
+
+		// 대각선 값을 받는 생성자도 활성화
+		Matrix(float diagonal)
+		{
+			// union의 한 멤버를 선택하여 초기화
+			// 예를 들어 단위 행렬로 초기화
+			// 역순으로 넣어야 함
+			m128[0] = _mm_set_ps(0.0f, 0.0f, 0.0f, diagonal); // col 0
+			m128[1] = _mm_set_ps(0.0f, 0.0f, diagonal, 0.0f); // col 1
+			m128[2] = _mm_set_ps(0.0f, diagonal, 0.0f, 0.0f); // col 2
+			m128[3] = _mm_set_ps(diagonal, 0.0f, 0.0f, 0.0f); // col 3
+		}
+
+		static Matrix<4> identity()
+		{
+			// 이제 기본 생성자를 호출할 수 없으므로,
+			// 아래와 같이 명시적으로 생성자를 호출해야 함
+			return Matrix<4>(1.f);
+		}
+
+		Vector<4>& operator[](size_t index) { return cols[index]; }
+		const Vector<4>& operator[](size_t index) const { return cols[index]; }
+	};
+
+	using mat4 = Matrix<4>;
 
 	// inline operator overloading function
 
@@ -364,7 +413,7 @@ namespace SRMath {
 	}
 
 	// Rotate Mat4 (Right-handed Coordinate System)
-	static inline Matrix<4> rotate(const Vector<3>& rotationVector)
+	static inline Matrix<4> rotate(const vec3& rotationVector)
 	{
 		// 1. 벡터의 크기(length)를 회전 각도(angle)로 사용합니다.
 		float angleInRadians = length(rotationVector);
@@ -446,4 +495,110 @@ namespace SRMath {
 		result[3][2] = dot(f, eye);
 		return result;
 	}
+
+	// SIMD를 사용한 4x4 행렬 전치 함수
+	inline mat4 transpose(const mat4& m) {
+		mat4 result;
+
+		// 임시 변수로 두 열씩 묶어 처리
+		__m128 tmp0 = _mm_unpacklo_ps(m.m128[0], m.m128[1]); // {x0, x1, y0, y1}
+		__m128 tmp1 = _mm_unpackhi_ps(m.m128[0], m.m128[1]); // {z0, z1, w0, w1}
+		__m128 tmp2 = _mm_unpacklo_ps(m.m128[2], m.m128[3]); // {x2, x3, y2, y3}
+		__m128 tmp3 = _mm_unpackhi_ps(m.m128[2], m.m128[3]); // {z2, z3, w2, w3}
+
+		// 임시 변수들을 다시 섞어서 최종 행(row)을 만듭니다.
+		// 이 행들이 결과 행렬의 새로운 열(column)이 됩니다.
+		result.m128[0] = _mm_movelh_ps(tmp0, tmp2); // {x0, x1, x2, x3}
+		result.m128[1] = _mm_movehl_ps(tmp2, tmp0); // {y0, y1, y2, y3}
+		result.m128[2] = _mm_movelh_ps(tmp1, tmp3); // {z0, z1, z2, z3}
+		result.m128[3] = _mm_movehl_ps(tmp3, tmp1); // {w0, w1, w2, w3}
+
+		return result;
+	}
+
+	// SIMD를 사용한 4x4 행렬 역행렬 함수
+	// 행렬식이 0에 가까우면 역행렬이 존재하지 않으므로 false를 반환합니다.
+	inline bool inverse(const mat4& m, mat4& out_inverse) {
+		__m128 A = _mm_movelh_ps(m.m128[0], m.m128[1]);
+		__m128 B = _mm_movehl_ps(m.m128[1], m.m128[0]);
+		__m128 C = _mm_movelh_ps(m.m128[2], m.m128[3]);
+		__m128 D = _mm_movehl_ps(m.m128[3], m.m128[2]);
+
+		__m128 detSub = _mm_sub_ps(
+			_mm_mul_ps(_mm_shuffle_ps(m.m128[0], m.m128[2], 0x22110000), _mm_shuffle_ps(m.m128[1], m.m128[3], 0x33221100)),
+			_mm_mul_ps(_mm_shuffle_ps(m.m128[0], m.m128[2], 0x33221100), _mm_shuffle_ps(m.m128[1], m.m128[3], 0x22110000))
+		);
+
+		__m128 detA = _mm_shuffle_ps(detSub, detSub, 0x44);
+		__m128 detB = _mm_shuffle_ps(detSub, detSub, 0xEE);
+		__m128 detC = _mm_shuffle_ps(detSub, detSub, 0x55);
+		__m128 detD = _mm_shuffle_ps(detSub, detSub, 0xFF);
+
+		__m128 D_C = _mm_sub_ps(_mm_mul_ps(D, detA), _mm_mul_ps(C, detB));
+		__m128 A_B = _mm_sub_ps(_mm_mul_ps(A, detD), _mm_mul_ps(B, detC));
+
+		__m128 detM = _mm_mul_ps(_mm_shuffle_ps(A, A, 0x00), D_C);
+		detM = _mm_add_ps(detM, _mm_mul_ps(_mm_shuffle_ps(A, A, 0x55), D_C));
+		detM = _mm_add_ps(detM, _mm_mul_ps(_mm_shuffle_ps(A, A, 0xAA), D_C));
+		detM = _mm_add_ps(detM, _mm_mul_ps(_mm_shuffle_ps(A, A, 0xFF), D_C));
+
+		// 행렬식이 0에 가까운지 확인
+		if (_mm_cvtss_f32(detM) == 0.0f)
+		{
+			return false;
+		}
+
+		__m128 invDetM = _mm_div_ps(_mm_set1_ps(1.0f), detM);
+
+		D_C = _mm_mul_ps(D_C, invDetM);
+		A_B = _mm_mul_ps(A_B, invDetM);
+
+		__m128 X = _mm_shuffle_ps(A_B, A_B, 0xFF);
+		__m128 Y = _mm_shuffle_ps(D_C, D_C, 0xAA);
+		__m128 Z = _mm_shuffle_ps(A_B, A_B, 0x55);
+		__m128 W = _mm_shuffle_ps(D_C, D_C, 0x00);
+
+		__m128 R0 = _mm_shuffle_ps(Y, W, 0x77);
+		__m128 R1 = _mm_shuffle_ps(Y, W, 0x22);
+		__m128 R2 = _mm_shuffle_ps(X, Z, 0x77);
+		__m128 R3 = _mm_shuffle_ps(X, Z, 0x22);
+
+		out_inverse.m128[0] = _mm_shuffle_ps(R0, R1, 0x88);
+		out_inverse.m128[1] = _mm_shuffle_ps(R0, R1, 0xDD);
+		out_inverse.m128[2] = _mm_shuffle_ps(R2, R3, 0x88);
+		out_inverse.m128[3] = _mm_shuffle_ps(R2, R3, 0xDD);
+
+		return true;
+	}
+
+	inline mat4 inverse_transpose(const mat4& m) {
+
+		mat4 inverse_mat;
+		if (inverse(m, inverse_mat)) {
+			return transpose(inverse_mat);
+		}
+		// 역행렬이 없는 경우, 단위 행렬 등 적절한 값을 반환
+		return mat4(1);
+	}
+
 }
+
+struct Plane
+{
+	SRMath::vec3 normal; // 평면의 법선 벡터
+	float distance;      // 원점으로부터의 거리
+
+	// 점과 평면 사이의 부호 있는 거리를 계산하는 함수
+	// 결과 > 0: 점이 평면의 안쪽(법선이 가리키는 쪽)에 있음
+	// 결과 < 0: 점이 평면의 바깥쪽에 있음
+	// 결과 = 0: 점이 평면 위에 있음
+	float GetSignedDistance(const SRMath::vec3& point) const
+	{
+		return SRMath::dot(normal, point) + distance;
+	}
+};
+
+struct Frustum
+{
+	Plane planes[6]; // 0:Left, 1:Right, 2:Bottom, 3:Top, 4:Near, 5:Far
+};

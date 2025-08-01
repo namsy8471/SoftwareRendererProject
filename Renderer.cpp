@@ -6,6 +6,7 @@
 #include <cmath>
 #include "Model.h"
 #include "Texture.h"
+#include <omp.h>
 
 constexpr float FLOATINF = std::numeric_limits<float>::infinity();
 
@@ -77,7 +78,7 @@ bool Renderer::Initialize(HWND hWnd)
     PatBlt(m_hMemDC, 0, 0, m_width, m_height, WHITENESS);
 
     // Load Model
-    m_model = ModelLoader::LoadOBJ("assets/teapot.obj");
+    m_model = ModelLoader::LoadOBJ("assets/IronMan.obj");
 
     if (!m_model)
     {
@@ -86,6 +87,7 @@ bool Renderer::Initialize(HWND hWnd)
     }
 
     m_models.push_back(std::move(m_model));
+
 
     // Load Texture
     std::string texName = "assets/default.png";
@@ -227,8 +229,9 @@ void Renderer::DrawTriangle(const SRMath::vec2 v0, const SRMath::vec2 v1, const 
 
 // Using Barycentric Coordinates
 void Renderer::DrawFilledTriangle(const SRMath::vec2& v0, const SRMath::vec2& v1, const SRMath::vec2& v2,
+    const float one_over_w0, const float one_over_w1, const float one_over_w2, 
     const SRMath::vec3& n0_clipped, const SRMath::vec3& n1_clipped, const SRMath::vec3& n2_clipped,
-    const float one_over_w0, const float one_over_w1, const float one_over_w2, const SRMath::vec2& uv0_clipped, const SRMath::vec2& uv1_clipped, 
+    const SRMath::vec2& uv0_clipped, const SRMath::vec2& uv1_clipped, 
     const SRMath::vec2& uv2_clipped, const SRMath::vec3& light_dir, const std::shared_ptr<Texture> texture)
 {
     // 정점 좌표를 정수로 변환 (화면 픽셀 기준)
@@ -250,25 +253,25 @@ void Renderer::DrawFilledTriangle(const SRMath::vec2& v0, const SRMath::vec2& v1
 
     // --- 사전 계산 단계 ---
     // 각 변(edge)의 x, y 변화량을 미리 계산해 둡니다.
-    const int dx01 = p0.x - p1.x;
-    const int dy01 = p0.y - p1.y;
-    const int dx12 = p1.x - p2.x;
-    const int dy12 = p1.y - p2.y;
-    const int dx20 = p2.x - p0.x;
-    const int dy20 = p2.y - p0.y;
+    const float dx01 = p0.x - p1.x;
+    const float dy01 = p0.y - p1.y;
+    const float dx12 = p1.x - p2.x;
+    const float dy12 = p1.y - p2.y;
+    const float dx20 = p2.x - p0.x;
+    const float dy20 = p2.y - p0.y;
 
     // 경계 상자의 시작점(minX, minY)에서의 바리센트릭 좌표 값을 계산합니다.
-    int w0_row = dy12 * (minX - p1.x) - dx12 * (minY - p1.y);
-    int w1_row = dy20 * (minX - p2.x) - dx20 * (minY - p2.y);
-    int w2_row = dy01 * (minX - p0.x) - dx01 * (minY - p0.y);
+    float w0_row = dy12 * (minX - p1.x) - dx12 * (minY - p1.y);
+    float w1_row = dy20 * (minX - p2.x) - dx20 * (minY - p2.y);
+    float w2_row = dy01 * (minX - p0.x) - dx01 * (minY - p0.y);
 
     // --- 래스터화 루프 ---
     for (int y = minY; y <= maxY; ++y)
     {
         // 현재 행의 시작 값을 복사
-        int w0 = w0_row;
-        int w1 = w1_row;
-        int w2 = w2_row;
+        float w0 = w0_row;
+        float w1 = w1_row;
+        float w2 = w2_row;
 
         for (int x = minX; x <= maxX; ++x)
         {
@@ -296,10 +299,8 @@ void Renderer::DrawFilledTriangle(const SRMath::vec2& v0, const SRMath::vec2& v1
                     SRMath::vec2 uv_interpolated = uv_over_w_interpolated / interpolated_one_over_w;
 
                     //float intensity = std::max(0.0f, SRMath::dot(normal_interpolated, light_dir));
-                    float intensity = SRMath::dot(normal_interpolated, light_dir);
 
-                    /*unsigned int texel_color = texture->GetPixels(uv_interpolated.x, uv_interpolated.y);
-                    unsigned int final_color = texel_color * intensity;*/
+                    unsigned int texel_color = texture->GetPixels(uv_interpolated.x, uv_interpolated.y);
 
                     // 1. 난반사(diffuse) 조명을 계산합니다.
                     float diffuse_intensity = std::max(0.0f, dot(normal_interpolated, light_dir));
@@ -311,13 +312,15 @@ void Renderer::DrawFilledTriangle(const SRMath::vec2& v0, const SRMath::vec2& v1
                     float final_intensity = std::min(1.0f, diffuse_intensity + ambient_intensity);
 
                     SRMath::vec3 base_color = { 1.f, 1.f, 1.f };
-                    SRMath::vec3 color = base_color * intensity;
+                    SRMath::vec3 color = base_color * final_intensity;
 
                     unsigned int final_color = RGB(
                         color.x * 255.f,
                         color.y * 255.f,
                         color.z * 255.f
                     );
+
+                    unsigned int final_color2 = texel_color * final_intensity;
                     
                     m_depthBuffer[idx] = interpolated_one_over_w;
                     DrawPixel(x, y, final_color);
@@ -372,7 +375,7 @@ void Renderer::Clear()
                 {
                     int idx = x + rowOffset;
                     m_pPixelData[idx] = 0;
-                    m_depthBuffer[idx] = 0; // Z Buffer Clearing
+                    m_depthBuffer[idx] = std::numeric_limits<float>::lowest(); // Z Buffer Clearing
                 }
             }
         });
@@ -397,166 +400,397 @@ void Renderer::Present(HDC hScreenDC) const
         SRCCOPY);       // 복사 방식 (그대로 복사)
 }
 
+float x;
+
+// Vertex Shading
+struct ShadedVertex {
+    SRMath::vec3 pos_world;
+    SRMath::vec4 pos_clip;
+    SRMath::vec3 pos_view;
+    SRMath::vec3 normal_world;
+    SRMath::vec2 texcoord;
+};
+
+// --- 래스터화를 위한 최종 정점 데이터 준비 ---
+struct RasterizerVertex {
+    SRMath::vec2 screen_pos;          // 최종 화면 좌표
+    float one_over_w;                 // 원근 보간을 위한 1/w
+    SRMath::vec3 normal_world_over_w; // 원근 보정된 법선
+    SRMath::vec2 texcoord_over_w;     // 원근 보정된 UV
+};
+
 void Renderer::Render(SRMath::mat4& projectionMatrix, SRMath::mat4& viewMatrix, SRMath::vec3& light_dir)
 {
     // TODO: Draw something here
+    x += PI / 360;
+
+    // --- 1. 절두체 평면 추출 (프레임 당 한 번만) ---
+    Frustum frustum;
+    SRMath::mat4 vp = projectionMatrix * viewMatrix;
+    extractFrustumPlanes(vp, frustum);
 
     for(const auto& m_model : m_models)
     {
         SRMath::mat4 scaleMatrix = SRMath::scale({ 0.04f, 0.04f, 0.04f });
-        SRMath::mat4 rotationMatrix = SRMath::rotate({ 0.f, 0.f, 0.0f }); // 모델 뒤집기
+        SRMath::mat4 rotationMatrix = SRMath::rotate({ 0.f, x, 0.0f }); // 모델 뒤집기
         SRMath::mat4 translationMatrix = SRMath::translate({ 0.0f, -1.5f, 10.0f });
         SRMath::mat4 modelMatrix = translationMatrix * rotationMatrix * scaleMatrix;
 
+        SRMath::mat4 normal_matrix_world = rotationMatrix;
+
         // Final MVP Matrix
-        SRMath::mat4 vp = projectionMatrix * viewMatrix;
         SRMath::mat4 mv = viewMatrix * modelMatrix;
-        SRMath::mat4 mvp = vp * modelMatrix;
+        SRMath::mat4 mvp = projectionMatrix * mv;
 
-        const auto& positions = m_model->GetPositions();
-        const auto& pos_indices = m_model->GetPositionIndices();
-        const auto& normals = m_model->Getnormals();
-        const auto& nrm_indices = m_model->GetNormalIndices();
-        const auto& texcoords = m_model->GetTexcoords();
-        const auto& tex_indices = m_model->GetTextureIndices();
-
-        if (nrm_indices.size() != pos_indices.size()) continue;
-
-        for (size_t i = 0; i < pos_indices.size(); i += 3)
+        for (const auto& mesh : m_model->GetMeshes())
         {
-            SRMath::vec3 p_model[] = { positions[pos_indices[i]], positions[pos_indices[i + 1]], positions[pos_indices[i + 2]] };
-            SRMath::vec3 n_model[] = { normals[nrm_indices[i]], normals[nrm_indices[i + 1]] , normals[nrm_indices[i + 2]] };
-            SRMath::vec2 t_model[] = { texcoords[tex_indices[i]], texcoords[tex_indices[i + 1]], texcoords[tex_indices[i + 2]] };
+            const OctreeNode* rootNode = mesh.octree.GetRoot();
 
-            SRMath::vec3 v0_view = mv * p_model[0];
-            SRMath::vec3 v1_view = mv * p_model[1];
-            SRMath::vec3 v2_view = mv * p_model[2];
+            if (rootNode == nullptr) continue;
 
-            SRMath::vec3 face_normal = SRMath::normalize(SRMath::cross(v1_view - v0_view, v2_view - v0_view));
-            SRMath::vec3 view_dir = SRMath::normalize(v0_view * -1.f);
+            renderOctreeNode(rootNode, frustum, mesh, modelMatrix, mv, mvp, normal_matrix_world, light_dir);
 
-            // Back face culling
-            if (SRMath::dot(face_normal, view_dir) <= 0.f)
-            {
+//            // Vertex Shading
+//            const auto& vertices = mesh.vertices;
+//            const auto& indices = mesh.indices;
+//
+//            std::vector<ShadedVertex> shaded_vertices(vertices.size());
+//
+//            for (int i = 0; i < vertices.size(); ++i) {
+//                const auto& v = vertices[i];
+//                shaded_vertices[i].pos_world = modelMatrix * v.position;
+//                shaded_vertices[i].pos_clip = mvp * v.position;
+//                shaded_vertices[i].pos_view = mv * v.position;
+//                shaded_vertices[i].normal_world = normal_matrix_world * SRMath::vec4(v.normal, 0.f);
+//                shaded_vertices[i].texcoord = v.texcoord;
+//            }
+//
+//            // --- 4. Triangle Processing 단계 ---
+//#pragma omp parallel for
+//            for (int i = 0; i < indices.size(); i += 3)
+//            {
+//                // 미리 변환된 정점 데이터를 인덱스로 바로 가져옴
+//                const ShadedVertex& v0 = shaded_vertices[indices[i]];
+//                const ShadedVertex& v1 = shaded_vertices[indices[i + 1]];
+//                const ShadedVertex& v2 = shaded_vertices[indices[i + 2]];
+//
+//                // --- Back-face Culling (뷰 공간) ---
+//                SRMath::vec3 face_normal = SRMath::normalize(SRMath::cross(v1.pos_view - v0.pos_view, v2.pos_view - v0.pos_view));
+//                if (SRMath::dot(face_normal, v0.pos_view) <= 0.f) {
+//                    continue;
+//                }
+//
+//                // clipping
+//                std::vector<ShadedVertex> clipped_vertices = clipTriangle(v0, v1, v2);
+//                if (clipped_vertices.size() < 3) continue;
+//
+//                // Resterization 
+//                std::vector<RasterizerVertex> final_vertices(clipped_vertices.size());
+//                resterization(clipped_vertices, final_vertices, light_dir);
+//
+//                // DEBUG CODE
+//                if (m_isNrmDebug)
+//                {
+//                    DebugNormalVector(v0.pos_world, v1.pos_world, v2.pos_world,
+//                        v0.normal_world, v1.normal_world, v2.normal_world, vp);
+//                }
+//            }
+        }
+    }
+}
+
+void Renderer::renderOctreeNode(const OctreeNode* node, const Frustum& frustum, const Mesh& mesh, const SRMath::mat4& modelMatrix,
+    const SRMath::mat4& mv, const SRMath::mat4& mvp, const SRMath::mat4& normal_matrix, const SRMath::vec3& light_dir)
+{
+    // --- 1. 모델 공간 AABB를 월드 공간 AABB로 변환 ---
+    AABB world_aabb;
+    {
+        // AABB의 8개 꼭짓점을 만듭니다.
+        SRMath::vec3 corners[8] = {
+            {node->bounds.min.x, node->bounds.min.y, node->bounds.min.z},
+            {node->bounds.max.x, node->bounds.min.y, node->bounds.min.z},
+            {node->bounds.min.x, node->bounds.max.y, node->bounds.min.z},
+            {node->bounds.max.x, node->bounds.max.y, node->bounds.min.z},
+            {node->bounds.min.x, node->bounds.min.y, node->bounds.max.z},
+            {node->bounds.max.x, node->bounds.min.y, node->bounds.max.z},
+            {node->bounds.min.x, node->bounds.max.y, node->bounds.max.z},
+            {node->bounds.max.x, node->bounds.max.y, node->bounds.max.z}
+        };
+
+        // 8개 꼭짓점을 모두 월드 공간으로 변환합니다.
+        for (int i = 0; i < 8; ++i) {
+            corners[i] = modelMatrix * corners[i];
+        }
+
+        // 변환된 8개 꼭짓점을 모두 포함하는 새로운 AABB를 찾습니다.
+        world_aabb.min = SRMath::vec3(std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max());
+        world_aabb.max = SRMath::vec3(std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest());
+        for (int i = 0; i < 8; ++i) {
+            world_aabb.min.x = std::min(world_aabb.min.x, corners[i].x);
+            world_aabb.min.y = std::min(world_aabb.min.y, corners[i].y);
+            world_aabb.min.z = std::min(world_aabb.min.z, corners[i].z);
+            world_aabb.max.x = std::max(world_aabb.max.x, corners[i].x);
+            world_aabb.max.y = std::max(world_aabb.max.y, corners[i].y);
+            world_aabb.max.z = std::max(world_aabb.max.z, corners[i].z);
+        }
+    }
+
+    // 1. 현재 노드의 경계 상자가 절두체 밖에 있으면 즉시 반환 (컬링)
+    if (!isAABBInFrustum(frustum, world_aabb)) {
+        return;
+    }
+
+    // 2. 현재 노드가 리프 노드이면, 포함된 삼각형들을 렌더링
+    if (node->children[0] == nullptr) {
+        for (unsigned int triangle_index : node->triangleIndices) {
+            // 이 삼각형을 렌더링하는 로직 (Vertex Shading, Clipping, Rasterization...)
+            // --- A. 원본 정점 데이터 가져오기 ---
+
+            unsigned int i0 = mesh.indices[triangle_index];
+            unsigned int i1 = mesh.indices[triangle_index + 1];
+            unsigned int i2 = mesh.indices[triangle_index + 2];
+
+            const Vertex& v0_model = mesh.vertices[i0];
+            const Vertex& v1_model = mesh.vertices[i1];
+            const Vertex& v2_model = mesh.vertices[i2];
+
+            // --- B. Just-In-Time 정점 셰이딩 ---
+            // 이 삼각형을 구성하는 3개의 정점만 '즉시' 변환합니다.
+            ShadedVertex sv[3];
+
+            sv[0] = { modelMatrix * v0_model.position,  mvp * v0_model.position, mv * v0_model.position, normal_matrix * SRMath::vec4(v0_model.normal, 0.f), v0_model.texcoord };
+            sv[1] = { modelMatrix * v1_model.position, mvp * v1_model.position, mv * v1_model.position, normal_matrix * SRMath::vec4(v1_model.normal, 0.f), v1_model.texcoord };
+            sv[2] = { modelMatrix * v2_model.position, mvp * v2_model.position, mv * v2_model.position, normal_matrix * SRMath::vec4(v2_model.normal, 0.f), v2_model.texcoord };
+
+            // --- C. Back-face Culling ---
+            SRMath::vec3 face_normal = SRMath::normalize(SRMath::cross(sv[1].pos_view - sv[0].pos_view, sv[2].pos_view - sv[0].pos_view));
+            if (SRMath::dot(face_normal, sv[0].pos_view) <= 0.f) {
                 continue;
             }
 
-            // clipping
-            SRMath::vec4 p0_clip = mvp * p_model[0];
-            SRMath::vec4 p1_clip = mvp * p_model[1];
-            SRMath::vec4 p2_clip = mvp * p_model[2];
-            
-            SRMath::vec4 n0_world = SRMath::normalize(modelMatrix * SRMath::vec4(n_model[0], 0.f));
-            SRMath::vec4 n1_world = SRMath::normalize(modelMatrix * SRMath::vec4(n_model[1], 0.f));
-            SRMath::vec4 n2_world = SRMath::normalize(modelMatrix * SRMath::vec4(n_model[2], 0.f));
-
-            std::vector<SRMath::vec4> clipped_vertices;
-            std::vector<SRMath::vec4> clipped_vertices_nrm;
-            std::vector<SRMath::vec2> clipped_texcoords;    // No need MVP Matrics
-
-            SRMath::vec4 vertices[] = { p0_clip, p1_clip, p2_clip };
-            SRMath::vec4 vertices_nrm[] = { n0_world, n1_world, n2_world };
-
-            for (int j = 0; j < 3; j++)
-            {
-                const SRMath::vec4& start_v = vertices[j];
-                const SRMath::vec4& end_v = vertices[(j + 1) % 3];
-
-                const SRMath::vec4 start_normal = SRMath::vec4(vertices_nrm[j], 0.f);
-                const SRMath::vec4 end_normal = SRMath::vec4(vertices_nrm[(j + 1) % 3], 0.f);
-
-                const SRMath::vec2& start_uv = t_model[j];
-                const SRMath::vec2& end_uv = t_model[(j + 1) % 3];
-
-                bool isStartInside = start_v.w > 0.1f;
-                bool isEndInside = end_v.w > 0.1f;
-
-                if (isStartInside && isEndInside) {
-                    clipped_vertices.emplace_back(end_v);
-                    clipped_vertices_nrm.emplace_back(end_normal);
-                    clipped_texcoords.emplace_back(end_uv);
-                }
-                else if (isStartInside != isEndInside)
-                {
-                    float w_diff = start_v.w - end_v.w;
-                    if (std::abs(w_diff) > 1e-6f)
-                    {
-                        float t = (start_v.w - 0.1f) / (start_v.w - end_v.w);
-                        SRMath::vec4 intersection = start_v + (end_v - start_v) * t;
-                        SRMath::vec4 intersection_normal = SRMath::normalize(start_normal + (end_normal - start_normal) * t);
-                        SRMath::vec2 intersection_uv = start_uv + (end_uv - start_uv) * t;
-
-                        if (isStartInside){
-                            clipped_vertices.emplace_back(intersection);
-                            clipped_vertices_nrm.emplace_back(intersection_normal);
-                            clipped_texcoords.emplace_back(intersection_uv);
-                        }
-                        else {
-                            clipped_vertices.emplace_back(intersection);
-                            clipped_vertices.emplace_back(end_v);
-                            clipped_vertices_nrm.emplace_back(intersection_normal);
-                            clipped_vertices_nrm.emplace_back(end_normal);
-                            clipped_texcoords.emplace_back(intersection_uv);
-                            clipped_texcoords.emplace_back(end_uv);
-                        }
-                    }
-                }
+            // --- D. 클리핑 ---
+            std::vector<ShadedVertex> clipped_vertices = clipTriangle(sv[0], sv[1], sv[2]);
+            if (clipped_vertices.size() < 3) {
+                continue;
             }
 
-            if (clipped_vertices.size() < 3) continue;
-
-            // Resterization
-            // 클리핑된 최종 정점들을 담을 벡터들
-            std::vector<SRMath::vec4> final_vertices(clipped_vertices.size());
-            std::vector<SRMath::vec2> final_screen_coords(clipped_vertices.size());
-            std::vector<SRMath::vec3> final_view_normals(clipped_vertices.size());
-            std::vector<SRMath::vec2> final_uvs(clipped_vertices.size());
-            std::vector<float> final_one_over_w(clipped_vertices.size());
-
-            // 1. 모든 클리핑된 정점에 대해 원근 분할 및 뷰포트 변환을 먼저 수행합니다.
-            for (size_t j = 0; j < clipped_vertices.size(); ++j)
-            {
-                final_one_over_w[j] = 1.0f / clipped_vertices[j].w;
-
-                // 원근 분할
-                final_vertices[j] = clipped_vertices[j] * final_one_over_w[j];
-
-                // 뷰포트 변환
-                final_screen_coords[j].x = (final_vertices[j].x + 1.0f) * 0.5f * m_width;
-                final_screen_coords[j].y = (1.0f - final_vertices[j].y) * 0.5f * m_height;
-
-                // 속성들도 w로 나눠서 준비 (원근 보정용)
-                final_view_normals[j] = SRMath::vec3(clipped_vertices_nrm[j]) * final_one_over_w[j];
-                final_uvs[j] = clipped_texcoords[j] * final_one_over_w[j];
-            }
-
-            // 2. 변환된 정점들을 팬 삼각 분할하여 래스터라이저에 넘깁니다.
-            for (size_t j = 1; j < clipped_vertices.size() - 1; ++j)
-            {
-                DrawFilledTriangle(
-                    final_screen_coords[0], final_screen_coords[j], final_screen_coords[j + 1],
-                    final_view_normals[0], final_view_normals[j], final_view_normals[j + 1],
-                    final_one_over_w[0], final_one_over_w[j], final_one_over_w[j + 1],
-                    final_uvs[0], final_uvs[j], final_uvs[j + 1],
-                    light_dir, m_ptexture
-                );
-            }
-
-            // DEBUG CODE
-            if (m_isNrmDebug)
-            {
-                SRMath::vec3 v0_world = modelMatrix * p_model[0];
-                SRMath::vec3 v1_world = modelMatrix * p_model[1];
-                SRMath::vec3 v2_world = modelMatrix * p_model[2];
-
-                SRMath::vec3 n0_world = SRMath::normalize(modelMatrix * SRMath::vec4(n_model[0], 0.f));
-                SRMath::vec3 n1_world = SRMath::normalize(modelMatrix * SRMath::vec4(n_model[1], 0.f));
-                SRMath::vec3 n2_world = SRMath::normalize(modelMatrix * SRMath::vec4(n_model[2], 0.f));
-                DebugNormalVector(v0_world, v1_world, v2_world,
-                    n0_world, n1_world, n2_world, vp);
+            // Resterization 
+            std::vector<RasterizerVertex> final_vertices(clipped_vertices.size());
+            resterization(clipped_vertices, final_vertices, light_dir);
+        }
+    }
+    else // 리프 노드가 아니면, 자식 노드에 대해 재귀 호출
+    {
+        for (int i = 0; i < 8; ++i) {
+            if (node->children[i] != nullptr) {
+                renderOctreeNode(node->children[i].get(), frustum, mesh, modelMatrix, mv, mvp, normal_matrix, light_dir);
             }
         }
     }
+}
+
+void Renderer::resterization(const std::vector<ShadedVertex>& clipped_vertices, std::vector<RasterizerVertex>& final_vertices, const SRMath::vec3& light_dir)
+{
+    // 1. 모든 클리핑된 정점에 대해 원근 분할 및 뷰포트 변환을 먼저 수행합니다.
+    for (size_t j = 0; j < clipped_vertices.size(); ++j)
+    {
+        const auto& v_clip = clipped_vertices[j];
+        const float one_over_w = 1.0f / v_clip.pos_clip.w;
+
+        // 1. 원근 분할 (w로 나누기)
+        SRMath::vec3 pos_ndc = SRMath::vec3(v_clip.pos_clip) * one_over_w;
+
+        // 2. 뷰포트 변환 (NDC -> Screen)
+        final_vertices[j].screen_pos.x = (pos_ndc.x + 1.0f) * 0.5f * m_width;
+        final_vertices[j].screen_pos.y = (1.0f - pos_ndc.y) * 0.5f * m_height; // Y축 뒤집기
+
+        // 3. 원근 보정(Perspective Correction)을 위한 속성 준비
+        final_vertices[j].one_over_w = one_over_w;
+        final_vertices[j].normal_world_over_w = v_clip.normal_world * one_over_w;
+        final_vertices[j].texcoord_over_w = v_clip.texcoord * one_over_w;
+    }
+
+    // --- 래스터화 (Fan Triangulation) ---
+    // 클리핑된 폴리곤을 삼각형 팬으로 쪼개어 그립니다.
+    for (size_t j = 1; j < final_vertices.size() - 1; ++j)
+    {
+        const auto& rv0 = final_vertices[0];
+        const auto& rv1 = final_vertices[j];
+        const auto& rv2 = final_vertices[j + 1];
+
+        // 래스터라이저는 이제 화면 좌표와 원근 보정된 속성들을 받습니다.
+        DrawFilledTriangle(
+            rv0.screen_pos, rv1.screen_pos, rv2.screen_pos,
+            rv0.one_over_w, rv1.one_over_w, rv2.one_over_w,
+            rv0.normal_world_over_w, rv1.normal_world_over_w, rv2.normal_world_over_w,
+            rv0.texcoord_over_w, rv1.texcoord_over_w, rv2.texcoord_over_w,
+            light_dir, m_ptexture // (TODO: 재질에 맞는 텍스처 전달)
+        );
+    }
+}
+
+void Renderer::extractFrustumPlanes(const SRMath::mat4& vp, Frustum& out_frustum)
+{
+    const float* m = vp.data; // 행렬 데이터에 직접 접근
+
+    // Left Plane
+    out_frustum.planes[0].normal.x = m[3] + m[0];
+    out_frustum.planes[0].normal.y = m[7] + m[4];
+    out_frustum.planes[0].normal.z = m[11] + m[8];
+    out_frustum.planes[0].distance = m[15] + m[12];
+
+    // Right Plane
+    out_frustum.planes[1].normal.x = m[3] - m[0];
+    out_frustum.planes[1].normal.y = m[7] - m[4];
+    out_frustum.planes[1].normal.z = m[11] - m[8];
+    out_frustum.planes[1].distance = m[15] - m[12];
+
+    // Bottom Plane
+    out_frustum.planes[2].normal.x = m[3] + m[1];
+    out_frustum.planes[2].normal.y = m[7] + m[5];
+    out_frustum.planes[2].normal.z = m[11] + m[9];
+    out_frustum.planes[2].distance = m[15] + m[13];
+
+    // Top Plane
+    out_frustum.planes[3].normal.x = m[3] - m[1];
+    out_frustum.planes[3].normal.y = m[7] - m[5];
+    out_frustum.planes[3].normal.z = m[11] - m[9];
+    out_frustum.planes[3].distance = m[15] - m[13];
+
+    // Near Plane
+    out_frustum.planes[4].normal.x = m[3] + m[2];
+    out_frustum.planes[4].normal.y = m[7] + m[6];
+    out_frustum.planes[4].normal.z = m[11] + m[10];
+    out_frustum.planes[4].distance = m[15] + m[14];
+
+    // Far Plane
+    out_frustum.planes[5].normal.x = m[3] - m[2];
+    out_frustum.planes[5].normal.y = m[7] - m[6];
+    out_frustum.planes[5].normal.z = m[11] - m[10];
+    out_frustum.planes[5].distance = m[15] - m[14];
+
+    // 모든 평면의 법선을 정규화
+    for (int i = 0; i < 6; ++i)
+    {
+        float length = SRMath::length(out_frustum.planes[i].normal);
+        out_frustum.planes[i].normal /= length;
+        out_frustum.planes[i].distance /= length;
+    }
+}
+
+bool Renderer::isSphereInFrustum(const Frustum& frustum, const SRMath::vec3& sphere_center, float sphere_radius)
+{
+    for (int i = 0; i < 6; ++i)
+    {
+        // 평면과 구의 중심 사이의 거리를 계산
+        float dist = frustum.planes[i].GetSignedDistance(sphere_center);
+
+        // 만약 거리가 -반지름보다 작으면, 구는 평면의 '완전히 바깥쪽'에 있는 것임
+        if (dist < -sphere_radius)
+        {
+            // 6개 평면 중 하나라도 완전히 바깥에 있으면, 구는 절두체 밖에 있음
+            return false;
+        }
+    }
+    // 모든 평면 테스트를 통과하면, 구는 절두체 안에 있거나 걸쳐 있음
+    return true;
+}
+
+// AABB가 절두체 내부에 있는지 검사하는 함수
+bool Renderer::isAABBInFrustum(const Frustum& frustum, const AABB& aabb)
+{
+    // 절두체를 구성하는 6개의 평면에 대해 모두 검사
+    for (int i = 0; i < 6; ++i)
+    {
+        const Plane& plane = frustum.planes[i];
+
+        // 평면의 법선 방향으로 가장 멀리 있는 AABB의 꼭짓점(p-vertex)을 찾습니다.
+        SRMath::vec3 p_vertex;
+        p_vertex.x = (plane.normal.x > 0) ? aabb.max.x : aabb.min.x;
+        p_vertex.y = (plane.normal.y > 0) ? aabb.max.y : aabb.min.y;
+        p_vertex.z = (plane.normal.z > 0) ? aabb.max.z : aabb.min.z;
+
+        // 이 꼭짓점이 평면의 '바깥쪽'에 있다면, AABB 전체가 절두체 밖에 있는 것입니다.
+        if (plane.GetSignedDistance(p_vertex) < 0)
+        {
+            return false; // 컬링 대상
+        }
+    }
+
+    // 6개 평면 테스트를 모두 통과했다면, AABB는 절두체 안에 있거나 걸쳐 있습니다.
+    return true; // 렌더링 대상
+}
+
+
+
+// 속성(Attribute) 보간 함수
+ShadedVertex Renderer::interpolate(const ShadedVertex& v0, const ShadedVertex& v1, float t)
+{
+    ShadedVertex result;
+    // 모든 속성을 선형 보간합니다.
+    result.pos_clip = v0.pos_clip + (v1.pos_clip - v0.pos_clip) * t;
+    result.normal_world = v0.normal_world + (v1.normal_world - v0.normal_world) * t;
+    result.texcoord = v0.texcoord + (v1.texcoord - v0.texcoord) * t;
+    return result;
+}
+
+// 하나의 평면으로 폴리곤을 클리핑하는 함수
+std::vector<ShadedVertex> Renderer::clipPolygonAgainstPlane(const std::vector<ShadedVertex>& vertices, int plane_axis, int plane_sign)
+{
+    if (vertices.empty()) return {};
+
+    std::vector<ShadedVertex> clipped_vertices;
+
+    for (size_t i = 0; i < vertices.size(); ++i)
+    {
+        const ShadedVertex& current_v = vertices[i];
+        const ShadedVertex& prev_v = vertices[(i + vertices.size() - 1) % vertices.size()];
+
+        // 각 정점의 w 값에 plane_sign을 곱한 값과, 특정 축(axis) 값을 비교합니다.
+        // 예: Left Plane (w + x >= 0) -> axis=0(x), sign=1. dist = w + x
+        float current_dist = current_v.pos_clip.w + plane_sign * current_v.pos_clip.data[plane_axis];
+        float prev_dist    = prev_v.pos_clip.w    + plane_sign * prev_v.pos_clip.data[plane_axis];
+
+        bool is_current_inside = current_dist >= 0;
+        bool is_prev_inside = prev_dist >= 0;
+
+        if (is_current_inside != is_prev_inside)
+        {
+            // 두 정점이 평면을 기준으로 서로 다른 쪽에 있으면 교차점을 계산
+            float t = prev_dist / (prev_dist - current_dist);
+            ShadedVertex intersection = interpolate(prev_v, current_v, t);
+            clipped_vertices.push_back(intersection);
+        }
+
+        if (is_current_inside)
+        {
+            // 현재 정점이 평면 안쪽에 있으면 결과에 추가
+            clipped_vertices.push_back(current_v);
+        }
+    }
+    return clipped_vertices;
+}
+
+
+// 삼각형을 6개의 절두체 평면으로 클리핑하는 메인 함수
+std::vector<ShadedVertex> Renderer::clipTriangle(const ShadedVertex& v0, const ShadedVertex& v1, const ShadedVertex& v2)
+{
+    std::vector<ShadedVertex> vertices = { v0, v1, v2 };
+
+    // 1. Left Plane  ( w + x >= 0 )
+    vertices = clipPolygonAgainstPlane(vertices, 0, 1);
+    // 2. Right Plane ( w - x >= 0 )
+    vertices = clipPolygonAgainstPlane(vertices, 0, -1);
+    // 3. Bottom Plane( w + y >= 0 )
+    vertices = clipPolygonAgainstPlane(vertices, 1, 1);
+    // 4. Top Plane   ( w - y >= 0 )
+    vertices = clipPolygonAgainstPlane(vertices, 1, -1);
+    // 5. Near Plane  ( w + z >= 0 )  (OpenGL 기준)
+    vertices = clipPolygonAgainstPlane(vertices, 2, 1);
+    // 6. Far Plane   ( w - z >= 0 )  (OpenGL 기준)
+    vertices = clipPolygonAgainstPlane(vertices, 2, -1);
+
+    return vertices;
 }
 
 void Renderer::DebugNormalVector(const SRMath::vec3& v0_World, const SRMath::vec3& v1_World, const SRMath::vec3& v2_World, 
