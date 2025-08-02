@@ -10,6 +10,8 @@ private:
 	int			  m_frameCount = 0;
 	int			  m_avgfps = 0;
 
+	float deltaTime; // deltaTime for game logic
+
 	// TODO: Create CPU, GPU varibles
 public:
 	PerformanceAnalyzer();
@@ -18,5 +20,6 @@ public:
 	void Initialize();
 	void Update();
 	int GetAvgFPSForSecond() const { return m_avgfps; }
+	float GetDeltaTime() const { return deltaTime; }
 };
 

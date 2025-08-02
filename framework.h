@@ -1,13 +1,15 @@
 ﻿#pragma once
 
+#include <vector>
 #include "pch.h"
 #include "PerformanceAnalyzer.h"
-#include "Model.h"
-#include <vector>
+#include "SRMath.h"
+#include "Camera.h"
 
 #define MAX_LOADSTRING 100
 
 class Renderer;
+class GameObject;
 
 class Framework
 {
@@ -28,11 +30,12 @@ private:
 	bool m_isRightMouseDown = false;
 	POINT m_lastMousePos;
 
+	// Model Variables
+	std::shared_ptr<GameObject> m_gameobject; // 현재 모델
+	std::vector<std::shared_ptr<GameObject>> m_gameobjects; // 모델 리스트
+
 	// Camera Variables
-	SRMath::vec3 m_cameraPos = { 0.f, 0.f, 5.f };
-	SRMath::vec3 m_cameraforward;
-	float m_cameraYaw = 0.f;	// 좌우 회전 (Y축 기준)
-	float m_cameraPitch = 0.f;	// 상하 회전 (X축 기준)
+	Camera m_camera;
 
 public:
 	Framework();
@@ -40,8 +43,8 @@ public:
 
 	bool Initialize(HINSTANCE, int);
 	void Run();
-	void Update();
-	void Render();
+	void Update(float deltaTime);
+	void Render(float deltaTime);
 	void Shutdown();
 
 	LRESULT HandleMessage(HWND, UINT, WPARAM, LPARAM);

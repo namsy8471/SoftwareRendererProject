@@ -1,17 +1,14 @@
 #include "Framework.h"
+#include <omp.h>
 #include "Resource.h"
 #include "Renderer.h"
 #include "PerformanceAnalyzer.h"
-#include <omp.h>
+#include "ModelLoader.h"
+#include "GameObject.h"
+#include "Model.h"
 
-Framework::Framework() : m_hWnd(nullptr), m_hInstance(nullptr), m_pRenderer(nullptr), 
-m_perfAnalyzer(), m_szTitle(), m_szWindowClass()
-{
-}
-
-Framework::~Framework()
-{
-}
+Framework::Framework() = default;
+Framework::~Framework() = default;
 
 bool Framework::Initialize(HINSTANCE hInstance, int nCmdShow)
 {
@@ -63,6 +60,19 @@ bool Framework::Initialize(HINSTANCE hInstance, int nCmdShow)
 
     m_perfAnalyzer.Initialize();
 
+	m_gameobject = std::make_shared<GameObject>();
+    // Load Model
+    if (!m_gameobject->Initialize(SRMath::vec3(0.f, 0.f, 0.f), SRMath::vec3(0.f, 0.f, 0.0f)
+        , SRMath::vec3(0.04f, 0.04f, 0.04f), ModelLoader::LoadOBJ("assets/IronMan.obj")))
+    {
+        MessageBox(m_hWnd, L"Failed to load Model.", L"Model Load Error", MB_OK);
+        return false;
+    }
+
+    m_gameobjects.push_back(std::move(m_gameobject));
+
+	m_camera.Initialize(SRMath::vec3(0.f, 0.f, 5.f));
+
     return TRUE;
 }
 
@@ -95,8 +105,8 @@ void Framework::Run()
             SetWindowText(m_hWnd, buffer);
         }
 
-        Framework::Update();
-        Framework::Render();
+        Framework::Update(m_perfAnalyzer.GetDeltaTime());
+        Framework::Render(m_perfAnalyzer.GetDeltaTime());
 
         HDC hdc = GetDC(m_hWnd);
         if (m_pRenderer)
@@ -109,7 +119,7 @@ void Framework::Run()
     }
 }
 
-void Framework::Render()
+void Framework::Render(float deltaTime)
 {
     if (!m_pRenderer) return;
 
@@ -123,51 +133,37 @@ void Framework::Render()
     // Calculate aspect ratio
     float aspectRatio = static_cast<float>(width) / height;
 
-    SRMath::mat4 viewMatrix = SRMath::lookAt(m_cameraPos,
-        m_cameraPos + m_cameraforward, SRMath::vec3(0.f, 1.f, 0.f));
-    
+	SRMath::vec3 camPos = m_camera.GetCameraPos();
+	SRMath::vec3 camForward = m_camera.GetCameraForward();
 
+    SRMath::mat4 viewMatrix = SRMath::lookAt(camPos, camPos + camForward,
+        SRMath::vec3(0.f, 1.f, 0.f));
+    
     SRMath::mat4 projectionMatrix = 
         SRMath::perspective(PI / 3.0f, aspectRatio, 0.1f, 100.f); // 60 FOV
     
     SRMath::vec3 light_dir = 
         SRMath::normalize(SRMath::vec3{ 0.0f, -0.5f, 1.0f });
 
-    m_pRenderer->Render(projectionMatrix, viewMatrix, light_dir);
+    m_pRenderer->Render(projectionMatrix, viewMatrix, light_dir, deltaTime);
 }
 
 // Framework Logic Update(For Game)
-void Framework::Update()
+void Framework::Update(float deltaTime)
 {
     //TODO Logic Update
-        // 매 프레임 시간(deltaTime)을 구해서 곱해주어야 일정한 속도로 움직입니다.
-    // 여기서는 간단히 고정된 속도로 움직입니다.
-    const float moveSpeed = .1f;
-
-    // --- 카메라의 실제 방향 벡터 계산 ---
-    // Yaw와 Pitch를 모두 사용하여 3D 방향 벡터를 계산합니다.
-    m_cameraforward = {
-        cos(m_cameraPitch) * sin(m_cameraYaw),
-        sin(m_cameraPitch),
-        cos(m_cameraPitch) * cos(m_cameraYaw)
-    };
-    m_cameraforward = SRMath::normalize(m_cameraforward); // 정규화하여 길이를 1로 만듦
-
-    // 월드의 '위쪽' 방향 벡터
-    SRMath::vec3 worldUp = { 0.0f, 1.0f, 0.0f };
-    // forward 벡터와 worldUp 벡터를 외적하여 카메라의 '오른쪽' 방향 벡터를 구합니다.
-    SRMath::vec3 right = SRMath::normalize(SRMath::cross(m_cameraforward, worldUp));
-
-    if (m_keys['W']) m_cameraPos = m_cameraPos + m_cameraforward * moveSpeed;
-    if (m_keys['S']) m_cameraPos = m_cameraPos - m_cameraforward * moveSpeed;
-    if (m_keys['A']) m_cameraPos = m_cameraPos - right * moveSpeed;
-    if (m_keys['D']) m_cameraPos = m_cameraPos + right * moveSpeed;
+	m_camera.Update(deltaTime, m_keys);
+    for(const auto& gameObject : m_gameobjects)
+    {
+        if (gameObject)
+        {
+            gameObject->Update(deltaTime);
+        }
+	}
 }
 
 void Framework::Shutdown()
 {
-    //m_models.clear();
-
     m_pRenderer->Shutdown();
 }
 
@@ -220,7 +216,7 @@ LRESULT Framework::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
         {
             m_pRenderer->OnResize(hWnd);
 
-            Render();
+            Render(m_perfAnalyzer.GetDeltaTime());
 
             HDC hdc = GetDC(hWnd);
             m_pRenderer->Present(hdc);
@@ -253,11 +249,15 @@ LRESULT Framework::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
             float deltaX = currentMousePos.x - m_lastMousePos.x;
             float deltaY = currentMousePos.y - m_lastMousePos.y;
 
-            m_cameraYaw -= deltaX * 0.005f;
-            m_cameraPitch -= deltaY * 0.005f;
+            float newYaw = m_camera.GetCameraYaw() - deltaX * 0.005f;
+            float newPitch = m_camera.GetCameraPitch() - deltaY * 0.005f;
 
-            if (m_cameraPitch > PI / 2.0f - 0.01f) m_cameraPitch = PI / 2.0f - 0.01f;
-            if (m_cameraPitch < -PI / 2.0f + 0.01f) m_cameraPitch = -PI / 2.0f + 0.01f;
+            m_camera.SetCameraYaw(newYaw);
+            m_camera.SetCameraPitch(newPitch);
+
+
+            if (m_camera.GetCameraPitch() > PI / 2.0f - 0.01f) m_camera.SetCameraPitch(PI / 2.0f - 0.01f);
+            if (m_camera.GetCameraPitch() < -PI / 2.0f + 0.01f) m_camera.SetCameraPitch(-PI / 2.0f + 0.01f);
 
             m_lastMousePos = currentMousePos;
         }

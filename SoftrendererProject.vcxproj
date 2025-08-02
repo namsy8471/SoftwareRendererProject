@@ -133,9 +133,14 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="AABB.h" />
+    <ClInclude Include="Camera.h" />
     <ClInclude Include="Framework.h" />
     <ClInclude Include="GameObject.h" />
+    <ClInclude Include="Mesh.h" />
     <ClInclude Include="Octree.h" />
+    <ClInclude Include="RenderCommand.h" />
+    <ClInclude Include="RenderQueue.h" />
     <ClInclude Include="SRMath.h" />
     <ClInclude Include="Model.h" />
     <ClInclude Include="ModelLoader.h" />
@@ -150,8 +155,11 @@
     <ClInclude Include="Texture.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="AABB.cpp" />
+    <ClCompile Include="Camera.cpp" />
     <ClCompile Include="Framework.cpp" />
     <ClCompile Include="GameObject.cpp" />
+    <ClCompile Include="Mesh.cpp" />
     <ClCompile Include="Model.cpp" />
     <ClCompile Include="ModelLoader.cpp" />
     <ClCompile Include="Octree.cpp" />

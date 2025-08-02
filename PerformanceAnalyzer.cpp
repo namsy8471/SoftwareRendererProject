@@ -25,7 +25,7 @@ void PerformanceAnalyzer::Update()
     QueryPerformanceCounter(&currentTime);
 
     // 이전 프레임과의 시간차(delta time)를 계산합니다.
-    float deltaTime = static_cast<float>(currentTime.QuadPart - m_prevTime.QuadPart) / m_frequency.QuadPart;
+    deltaTime = static_cast<float>(currentTime.QuadPart - m_prevTime.QuadPart) / m_frequency.QuadPart;
     m_prevTime = currentTime;
 
     m_frameCount++;

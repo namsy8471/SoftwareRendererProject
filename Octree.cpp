@@ -1,27 +1,23 @@
+#include <vector>
 #include "Octree.h"
-#include "Model.h"
+#include "SRMath.h"
+#include "Mesh.h"
+#include "AABB.h"
+#include "RenderQueue.h"
 
-OctreeNode::OctreeNode(const AABB& bounds) : bounds(bounds) {
+class Octree::OctreeNode {
+public:
+	AABB bounds;
+	std::unique_ptr<OctreeNode> children[8];
+	std::vector<unsigned int> triangleIndices;
+
+	OctreeNode(const AABB& bounds);
+};
+
+Octree::OctreeNode::OctreeNode(const AABB& bounds) : bounds(bounds) {
 	for (int i = 0; i < 8; ++i) {
 		children[i] = nullptr;
 	}
-}
-
-// 두 AABB가 겹치는지(교차하는지) 확인하는 함수
-bool AABBIntersects(const AABB& a, const AABB& b)
-{
-	// X, Y, Z 모든 축에서 겹치는 부분이 있는지 확인합니다.
-	// 어느 한 축이라도 완전히 분리되어 있다면 두 상자는 겹치지 않습니다.
-	return (a.min.x <= b.max.x && a.max.x >= b.min.x) &&
-		(a.min.y <= b.max.y && a.max.y >= b.min.y) &&
-		(a.min.z <= b.max.z && a.max.z >= b.min.z);
-}
-
-bool AABBContains(const AABB& a, const AABB& b)
-{
-	return (a.min.x <= b.min.x && a.max.x >= b.max.x) &&
-		(a.min.y <= b.min.y && a.max.y >= b.max.y) &&
-		(a.min.z <= b.min.z && a.max.z >= b.max.z);
 }
 
 void Octree::subdivide(OctreeNode* node)
@@ -67,7 +63,7 @@ void Octree::insert(OctreeNode* node, unsigned int triangleIndex)
 		// 삼각형이 어떤 자식 노드 하나에 '완전히' 포함되는지 확인
 		for (int i = 0; i < 8; ++i)
 		{
-			if (AABBContains(node->children[i]->bounds, triBounds))
+			if (AABB::AABBContains(node->children[i]->bounds, triBounds))
 			{
 				insert(node->children[i].get(), triangleIndex);
 				return; // 자식에게 삽입했으므로 현재 노드에서의 역할은 끝남
@@ -86,6 +82,11 @@ void Octree::insert(OctreeNode* node, unsigned int triangleIndex)
 		subdivide(node);
 	}
 }
+
+
+
+Octree::Octree() = default;
+Octree::~Octree() = default;
 
 void Octree::Build(const Mesh& mesh)
 {
@@ -111,5 +112,29 @@ void Octree::Build(const Mesh& mesh)
 	for (size_t i = 0; i < mesh.indices.size(); i += 3)
 	{
 		insert(root.get(), i);
+	}
+}
+
+void Octree::SubmitDebugToRenderQueue(RenderQueue& renderQueue, const SRMath::mat4& modelMatrix)
+{
+	if(root)
+		submitNodeRecursive(renderQueue, modelMatrix, root.get());
+	
+}
+
+void Octree::submitNodeRecursive(RenderQueue& renderQueue, const SRMath::mat4& modelMatrix, const OctreeNode* node)
+{
+	// 절두체 컬링은 여기서 생략 (필요 시 추가)
+
+	DebugAABBRenderCommand cmd;
+	cmd.bounds = node->bounds;
+	cmd.worldTransform = modelMatrix;
+	cmd.color = { 1.0f, 1.0f, 0.0f, 1.0f }; // 노란색
+	renderQueue.Submit(cmd);
+
+	if (node->children[0]) {
+		for (int i = 0; i < 8; ++i) {
+			submitNodeRecursive(renderQueue, modelMatrix, node->children[i].get());
+		}
 	}
 }

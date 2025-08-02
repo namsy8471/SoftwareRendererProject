@@ -1,6 +1,7 @@
 #pragma once
 
 #include <vector>
+#include <memory>
 #include "pch.h"
 #include "SRMath.h"
 
@@ -22,9 +23,16 @@ private:
 public:
 
 	GameObject();
-	GameObject(std::unique_ptr<GameObject> parent);
-	GameObject(GameObject&&);
 	~GameObject();
+
+	GameObject(GameObject&&) noexcept;
+	GameObject& operator=(GameObject&&) noexcept;
+	GameObject(const GameObject&) = delete;
+	GameObject& operator=(const GameObject&) = delete;
+
+
+	bool Initialize(const SRMath::vec3& position, const SRMath::vec3& rotation, const SRMath::vec3& scale, std::unique_ptr<Model> model);
+	void Update(float deltaTime);
 
 	const SRMath::vec3 GetPosition() const;
 	const SRMath::vec3 GetRotation() const;

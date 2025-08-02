@@ -1,38 +1,32 @@
 #pragma once
 #include <memory>
-#include <vector>
 #include "SRMath.h"
 
+class RenderQueue;
 struct Mesh;
-
-struct AABB {
-	SRMath::vec3 min;
-	SRMath::vec3 max;
-};
-
-class OctreeNode {
-public:
-	AABB bounds;
-	std::unique_ptr<OctreeNode> children[8];
-	std::vector<unsigned int> triangleIndices;
-
-	OctreeNode(const AABB& bounds);
-};
-
 
 class Octree
 {
 private:
+	friend class Renderer; // Renderer.h에서 OctreeNode를 사용하기 때문에 필요
+	class OctreeNode;
+
 	void subdivide(OctreeNode* node);
 	void insert(OctreeNode* node, unsigned int triangleIndex);
 
 	std::unique_ptr<OctreeNode> root;
 	const Mesh* sourceMesh = nullptr;
 
-	const int MAX_TRIANGLES_PER_NODE = 16;
-	const int MAX_DEPTH = 8;
+	void submitNodeRecursive(RenderQueue& renderQueue, const SRMath::mat4& modelMatrix, const OctreeNode* node);
+
+	static const int MAX_TRIANGLES_PER_NODE = 16;
+	static const int MAX_DEPTH = 8;
 public:
+	Octree();
+	~Octree();
+
 	void Build(const Mesh& mesh);
 	const OctreeNode* GetRoot() const { return root.get(); }
+	void SubmitDebugToRenderQueue(RenderQueue& renderQueue, const SRMath::mat4& modelMatrix);
 };
 

@@ -1,24 +1,31 @@
 #include "GameObject.h"
 #include "Model.h"
 
-GameObject::GameObject()
-	: m_position(SRMath::vec3()), m_rotation(SRMath::vec3()), m_scale(SRMath::vec3()),
-	m_model(nullptr), m_parent(), m_sons()
+GameObject::GameObject() = default;
+GameObject::~GameObject() = default;
+
+GameObject::GameObject(GameObject&& move) noexcept = default;
+GameObject& GameObject::operator=(GameObject&&) noexcept = default;
+
+
+bool GameObject::Initialize(const SRMath::vec3& position, const SRMath::vec3& rotation, const SRMath::vec3& scale, std::unique_ptr<Model> model)
 {
+	m_position = position;
+	m_rotation = rotation;
+	m_scale = scale;
+	m_model = std::move(model);
+	if (!m_model)
+	{
+		// Handle error: model is null
+		return false;
+	}
+
+	return true;
 }
 
-GameObject::GameObject(std::unique_ptr<GameObject> parent)
+void GameObject::Update(float deltaTime)
 {
-	GameObject();
-}
 
-GameObject::GameObject(GameObject&& move)
-{
-	
-}
-
-GameObject::~GameObject()
-{
 }
 
 const SRMath::vec3 const GameObject::GetPosition() const

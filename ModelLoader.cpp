@@ -4,6 +4,7 @@
 #include "Model.h"
 #include <map>
 #include <queue>
+#include "Octree.h"
 
 struct VertexKey
 {
@@ -39,6 +40,10 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filepath)
     // 현재 처리 중인 메시 그룹을 가리키는 포인터
     Mesh* currentMesh = nullptr;
     std::string currentMaterialName;
+
+    // 정점 중복 제거를 위한 맵
+    // Key: v/vt/vn 인덱스 조합, Value: 최종 정점 버퍼의 인덱스
+    std::map<VertexKey, unsigned int> vertexCache;
 
     std::string line;
     while (std::getline(file, line))
@@ -77,6 +82,9 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filepath)
                 ss >> currentMaterialName;
             }
 
+            // 새로운 메시 그룹이 시작될 때 vertexCache 초기화 ---
+            vertexCache.clear();
+
             // 모델에 새로운 메시 추가 및 currentMesh 포인터 갱신
             outModel->m_meshes.emplace_back();
             currentMesh = &outModel->m_meshes.back();
@@ -87,10 +95,6 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filepath)
         else if(prefix == "f")
         {
             if (currentMesh == nullptr) continue; // 그룹이 없으면 무시
-
-            // 2. 정점 중복 제거를 위한 맵
-            // Key: v/vt/vn 인덱스 조합, Value: 최종 정점 버퍼의 인덱스
-            std::map<VertexKey, unsigned int> vertexCache;
 
             std::string face_data;
             int vertex_count_in_face = 0;
@@ -151,68 +155,47 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filepath)
         }
     }
 
-    // If there is no Normal vector in OBJ File
-    if (temp_normals.empty())
+
+    for (auto& mesh : outModel->m_meshes)
     {
-        for (auto& mesh : outModel->m_meshes)
+        // If there is no Normal vector in OBJ File
+        if (temp_normals.empty())
         {
-            // 각 정점의 법선을 0으로 초기화
-            std::vector<SRMath::vec3> face_normals(mesh.vertices.size(), { 0.0f, 0.0f, 0.0f });
-
-            // 모든 면을 순회하며 면의 법선을 계산하고, 면을 구성하는 정점들에 더해줌
-            for (size_t i = 0; i < mesh.indices.size(); i += 3)
+            for (auto& mesh : outModel->m_meshes)
             {
-                unsigned int i0 = mesh.indices[i];
-                unsigned int i1 = mesh.indices[i + 1];
-                unsigned int i2 = mesh.indices[i + 2];
+                // 각 정점의 법선을 0으로 초기화
+                std::vector<SRMath::vec3> face_normals(mesh.vertices.size(), { 0.0f, 0.0f, 0.0f });
 
-                const SRMath::vec3& v0 = mesh.vertices[i0].position;
-                const SRMath::vec3& v1 = mesh.vertices[i1].position;
-                const SRMath::vec3& v2 = mesh.vertices[i2].position;
-
-                SRMath::vec3 face_normal = SRMath::normalize(SRMath::cross(v1 - v0, v2 - v0));
-
-                mesh.vertices[i0].normal = mesh.vertices[i0].normal + face_normal;
-                mesh.vertices[i1].normal = mesh.vertices[i1].normal + face_normal;
-                mesh.vertices[i2].normal = mesh.vertices[i2].normal + face_normal;
-            }
-
-            // 각 정점의 법선을 정규화하여 부드러운 법선(Smooth Normal) 생성
-            for (auto& vertex : mesh.vertices)
-            {
-                vertex.normal = SRMath::normalize(vertex.normal);
-            }
-        }
-
-        
-
-        /*if (!outModel->m_meshes.empty())
-        {
-            SRMath::vec3 min_cornor(std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max());
-            SRMath::vec3 max_cornor(std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest());
-        
-            for (const auto& mesh : outModel->m_meshes)
-            {
-                for (const auto& vertex : mesh.vertices)
+                // 모든 면을 순회하며 면의 법선을 계산하고, 면을 구성하는 정점들에 더해줌
+                for (size_t i = 0; i < mesh.indices.size(); i += 3)
                 {
-                    min_cornor.x = std::min(min_cornor.x, vertex.position.x);
-                    min_cornor.y = std::min(min_cornor.y, vertex.position.y);
-                    min_cornor.z = std::min(min_cornor.z, vertex.position.z);
+                    unsigned int i0 = mesh.indices[i];
+                    unsigned int i1 = mesh.indices[i + 1];
+                    unsigned int i2 = mesh.indices[i + 2];
 
-                    max_cornor.x = std::max(max_cornor.x, vertex.position.x);
-                    max_cornor.y = std::max(max_cornor.y, vertex.position.y);
-                    max_cornor.z = std::max(max_cornor.z, vertex.position.z);
+                    const SRMath::vec3& v0 = mesh.vertices[i0].position;
+                    const SRMath::vec3& v1 = mesh.vertices[i1].position;
+                    const SRMath::vec3& v2 = mesh.vertices[i2].position;
+
+                    SRMath::vec3 face_normal = SRMath::normalize(SRMath::cross(v1 - v0, v2 - v0));
+
+                    mesh.vertices[i0].normal = mesh.vertices[i0].normal + face_normal;
+                    mesh.vertices[i1].normal = mesh.vertices[i1].normal + face_normal;
+                    mesh.vertices[i2].normal = mesh.vertices[i2].normal + face_normal;
+                }
+
+                // 각 정점의 법선을 정규화하여 부드러운 법선(Smooth Normal) 생성
+                for (auto& vertex : mesh.vertices)
+                {
+                    vertex.normal = SRMath::normalize(vertex.normal);
                 }
             }
 
-            outModel->m_boundingSphereCenter = (min_cornor + max_cornor) * 0.5f;
+        }
 
-            outModel->m_boundingSphereRadius = SRMath::length(max_cornor - outModel->m_boundingSphereCenter);
-        }*/
-    }
-
-    for (auto& mesh : outModel->m_meshes) {
-        mesh.octree.Build(mesh);
+        // 2. Octree를 '생성'하고 '빌드'합니다. (가장 중요한 부분)
+        mesh.octree = std::make_unique<Octree>();
+        mesh.octree->Build(mesh);
     }
 
     file.close();
