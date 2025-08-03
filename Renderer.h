@@ -50,7 +50,6 @@ private:
 	std::vector<ShadedVertex> clipTriangle(const ShadedVertex& v0, const ShadedVertex& v1, const ShadedVertex& v2);
 	void resterization(const std::vector<ShadedVertex>& clipped_vertices, std::vector<RasterizerVertex>& final_vertices, const SRMath::vec3& light_dir);
 
-	void extractFrustumPlanes(const SRMath::mat4& vp, Frustum& out_frustum);
 	bool isSphereInFrustum(const Frustum& frustum, const SRMath::vec3& sphere_center, float sphere_radius);
 	//void renderOctreeNode(const OctreeNode* node, const Frustum& frustum, const Mesh& mesh, const SRMath::mat4& 
 	// Matrix,const SRMath::mat4& mv, const SRMath::mat4& vp, const SRMath::mat4& mvp, const SRMath::mat4& normal_matrix, const SRMath::vec3& light_dir);
@@ -77,7 +76,7 @@ public:
 
 	void Clear();
 	void Present(HDC hScreenDC) const;
-	void Render(SRMath::mat4& projectionMatrix, SRMath::mat4& viewMatrix, SRMath::vec3& light_dir, const float deltaTime);
+	void Render(const SRMath::mat4& projectionMatrix, const SRMath::mat4& viewMatrix, SRMath::vec3& light_dir);
 
 	void DebugNormalVector(const SRMath::vec3& v0_World, const SRMath::vec3& v1_World, const SRMath::vec3& v2_World, const SRMath::vec3& n0_World, const SRMath::vec3& n1_World, const SRMath::vec3& n2_World, const SRMath::mat4& vp);
 

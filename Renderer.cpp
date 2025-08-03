@@ -415,7 +415,7 @@ struct RasterizerVertex {
     SRMath::vec2 texcoord_over_w;     // 원근 보정된 UV
 };
 
-void Renderer::Render(SRMath::mat4& projectionMatrix, SRMath::mat4& viewMatrix, SRMath::vec3& light_dir, const float deltaTime)
+void Renderer::Render(const SRMath::mat4& projectionMatrix, const SRMath::mat4& viewMatrix, SRMath::vec3& light_dir)
 {
     // TODO: Draw something here
     x += PI / 360;
@@ -423,7 +423,6 @@ void Renderer::Render(SRMath::mat4& projectionMatrix, SRMath::mat4& viewMatrix, 
     // --- 1. 절두체 평면 추출 (프레임 당 한 번만) ---
     Frustum frustum;
     SRMath::mat4 vp = projectionMatrix * viewMatrix;
-    extractFrustumPlanes(vp, frustum);
 
 //    for(const auto& m_model : m_models)
 //    {
@@ -633,54 +632,6 @@ void Renderer::resterization(const std::vector<ShadedVertex>& clipped_vertices, 
     }
 }
 
-void Renderer::extractFrustumPlanes(const SRMath::mat4& vp, Frustum& out_frustum)
-{
-    const float* m = vp.data; // 행렬 데이터에 직접 접근
-
-    // Left Plane
-    out_frustum.planes[0].normal.x = m[3] + m[0];
-    out_frustum.planes[0].normal.y = m[7] + m[4];
-    out_frustum.planes[0].normal.z = m[11] + m[8];
-    out_frustum.planes[0].distance = m[15] + m[12];
-
-    // Right Plane
-    out_frustum.planes[1].normal.x = m[3] - m[0];
-    out_frustum.planes[1].normal.y = m[7] - m[4];
-    out_frustum.planes[1].normal.z = m[11] - m[8];
-    out_frustum.planes[1].distance = m[15] - m[12];
-
-    // Bottom Plane
-    out_frustum.planes[2].normal.x = m[3] + m[1];
-    out_frustum.planes[2].normal.y = m[7] + m[5];
-    out_frustum.planes[2].normal.z = m[11] + m[9];
-    out_frustum.planes[2].distance = m[15] + m[13];
-
-    // Top Plane
-    out_frustum.planes[3].normal.x = m[3] - m[1];
-    out_frustum.planes[3].normal.y = m[7] - m[5];
-    out_frustum.planes[3].normal.z = m[11] - m[9];
-    out_frustum.planes[3].distance = m[15] - m[13];
-
-    // Near Plane
-    out_frustum.planes[4].normal.x = m[3] + m[2];
-    out_frustum.planes[4].normal.y = m[7] + m[6];
-    out_frustum.planes[4].normal.z = m[11] + m[10];
-    out_frustum.planes[4].distance = m[15] + m[14];
-
-    // Far Plane
-    out_frustum.planes[5].normal.x = m[3] - m[2];
-    out_frustum.planes[5].normal.y = m[7] - m[6];
-    out_frustum.planes[5].normal.z = m[11] - m[10];
-    out_frustum.planes[5].distance = m[15] - m[14];
-
-    // 모든 평면의 법선을 정규화
-    for (int i = 0; i < 6; ++i)
-    {
-        float length = SRMath::length(out_frustum.planes[i].normal);
-        out_frustum.planes[i].normal /= length;
-        out_frustum.planes[i].distance /= length;
-    }
-}
 
 bool Renderer::isSphereInFrustum(const Frustum& frustum, const SRMath::vec3& sphere_center, float sphere_radius)
 {

@@ -20,6 +20,9 @@ Octree::OctreeNode::OctreeNode(const AABB& bounds) : bounds(bounds) {
 	}
 }
 
+Octree::Octree() = default;
+Octree::~Octree() = default;
+
 void Octree::subdivide(OctreeNode* node)
 {
 	SRMath::vec3 center = (node->bounds.min + node->bounds.max) * 0.5f;
@@ -83,10 +86,6 @@ void Octree::insert(OctreeNode* node, unsigned int triangleIndex)
 	}
 }
 
-
-
-Octree::Octree() = default;
-Octree::~Octree() = default;
 
 void Octree::Build(const Mesh& mesh)
 {

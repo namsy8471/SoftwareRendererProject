@@ -5,6 +5,7 @@
 #include "PerformanceAnalyzer.h"
 #include "SRMath.h"
 #include "Camera.h"
+#include "RenderQueue.h"
 
 #define MAX_LOADSTRING 100
 
@@ -23,6 +24,7 @@ private:
 
 	// Framework Variables
 	std::unique_ptr<Renderer> m_pRenderer;	// It is for Rendering
+	RenderQueue m_renderQueue;				// It is for Render Queue
 	PerformanceAnalyzer m_perfAnalyzer;		// It is for counting FPS/CPU/GPU
 
 	// Key Input Variables
@@ -31,11 +33,15 @@ private:
 	POINT m_lastMousePos;
 
 	// Model Variables
-	std::shared_ptr<GameObject> m_gameobject; // 현재 모델
-	std::vector<std::shared_ptr<GameObject>> m_gameobjects; // 모델 리스트
+	std::shared_ptr<GameObject> m_gameobject;				// 현재 게임오브젝트
+	std::vector<std::shared_ptr<GameObject>> m_gameobjects; // 게임오브젝트 리스트
 
 	// Camera Variables
 	Camera m_camera;
+
+	// Load Gameobject
+	bool initializeGameobject(const SRMath::vec3& pos, const SRMath::vec3& rotation, 
+		const SRMath::vec3& scale, const std::string modelName);
 
 public:
 	Framework();
@@ -44,7 +50,7 @@ public:
 	bool Initialize(HINSTANCE, int);
 	void Run();
 	void Update(float deltaTime);
-	void Render(float deltaTime);
+	void Render();
 	void Shutdown();
 
 	LRESULT HandleMessage(HWND, UINT, WPARAM, LPARAM);

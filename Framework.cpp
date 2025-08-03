@@ -60,20 +60,31 @@ bool Framework::Initialize(HINSTANCE hInstance, int nCmdShow)
 
     m_perfAnalyzer.Initialize();
 
-	m_gameobject = std::make_shared<GameObject>();
+    
+    if (!initializeGameobject(SRMath::vec3(0.f, 0.f, 0.f), SRMath::vec3(0.f, 0.f, 0.0f),
+        SRMath::vec3(0.04f, 0.04f, 0.04f), "IronMan.obj"))
+        return false;
+
+	m_camera.Initialize(SRMath::vec3(0.f, 0.f, 5.f));
+
+    return TRUE;
+}
+
+bool Framework::initializeGameobject(const SRMath::vec3& pos, const SRMath::vec3& rotation, const SRMath::vec3& scale, const std::string modelName)
+{
+    m_gameobject = std::make_shared<GameObject>();
+    std::string modelPath = "assets/" + modelName;
+
     // Load Model
     if (!m_gameobject->Initialize(SRMath::vec3(0.f, 0.f, 0.f), SRMath::vec3(0.f, 0.f, 0.0f)
-        , SRMath::vec3(0.04f, 0.04f, 0.04f), ModelLoader::LoadOBJ("assets/IronMan.obj")))
+        , SRMath::vec3(0.04f, 0.04f, 0.04f), ModelLoader::LoadOBJ(modelPath)))
     {
         MessageBox(m_hWnd, L"Failed to load Model.", L"Model Load Error", MB_OK);
         return false;
     }
 
     m_gameobjects.push_back(std::move(m_gameobject));
-
-	m_camera.Initialize(SRMath::vec3(0.f, 0.f, 5.f));
-
-    return TRUE;
+    return true;
 }
 
 void Framework::Run()
@@ -106,7 +117,7 @@ void Framework::Run()
         }
 
         Framework::Update(m_perfAnalyzer.GetDeltaTime());
-        Framework::Render(m_perfAnalyzer.GetDeltaTime());
+        Framework::Render();
 
         HDC hdc = GetDC(m_hWnd);
         if (m_pRenderer)
@@ -119,47 +130,37 @@ void Framework::Run()
     }
 }
 
-void Framework::Render(float deltaTime)
+// Framework Logic Update(For Game)
+void Framework::Update(const float deltaTime)
 {
-    if (!m_pRenderer) return;
-
-    // Buffer Clear
-    m_pRenderer->Clear();
-
-    // Transform Matrix(MVP);
     int width = m_pRenderer->GetWidth();
     int height = m_pRenderer->GetHeight();
 
     // Calculate aspect ratio
     float aspectRatio = static_cast<float>(width) / height;
 
-	SRMath::vec3 camPos = m_camera.GetCameraPos();
-	SRMath::vec3 camForward = m_camera.GetCameraForward();
-
-    SRMath::mat4 viewMatrix = SRMath::lookAt(camPos, camPos + camForward,
-        SRMath::vec3(0.f, 1.f, 0.f));
-    
-    SRMath::mat4 projectionMatrix = 
-        SRMath::perspective(PI / 3.0f, aspectRatio, 0.1f, 100.f); // 60 FOV
-    
-    SRMath::vec3 light_dir = 
-        SRMath::normalize(SRMath::vec3{ 0.0f, -0.5f, 1.0f });
-
-    m_pRenderer->Render(projectionMatrix, viewMatrix, light_dir, deltaTime);
-}
-
-// Framework Logic Update(For Game)
-void Framework::Update(float deltaTime)
-{
     //TODO Logic Update
-	m_camera.Update(deltaTime, m_keys);
-    for(const auto& gameObject : m_gameobjects)
+    m_camera.Update(deltaTime, m_keys, aspectRatio);
+    for (const auto& gameObject : m_gameobjects)
     {
         if (gameObject)
         {
             gameObject->Update(deltaTime);
         }
-	}
+    }
+}
+
+void Framework::Render()
+{
+    if (!m_pRenderer) return;
+
+    // Buffer Clear
+    m_pRenderer->Clear();
+
+    SRMath::vec3 light_dir = 
+        SRMath::normalize(SRMath::vec3{ 0.0f, -0.5f, 1.0f });
+
+    m_pRenderer->Render(m_camera.GetProjectionMatrix(), m_camera.GetViewMatrix(), light_dir);
 }
 
 void Framework::Shutdown()
