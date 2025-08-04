@@ -18,6 +18,7 @@ private:
 	const Mesh* sourceMesh = nullptr;
 
 	void submitNodeRecursive(RenderQueue& renderQueue, const SRMath::mat4& modelMatrix, const OctreeNode* node);
+	void submitNodeRecursive(RenderQueue& renderQueue, const Frustum& frustum, const SRMath::mat4& worldTransform, const OctreeNode* node);
 
 	static const int MAX_TRIANGLES_PER_NODE = 16;
 	static const int MAX_DEPTH = 8;
@@ -28,5 +29,6 @@ public:
 	void Build(const Mesh& mesh);
 	const OctreeNode* GetRoot() const { return root.get(); }
 	void SubmitDebugToRenderQueue(RenderQueue& renderQueue, const SRMath::mat4& modelMatrix);
+	void SubmitVisibleNodes(RenderQueue& renderQueue, const Frustum& frustum, const SRMath::mat4& worldTransform);
 };
 

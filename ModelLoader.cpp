@@ -5,6 +5,7 @@
 #include <map>
 #include <queue>
 #include "Octree.h"
+#include "AABB.h"
 
 struct VertexKey
 {
@@ -154,49 +155,55 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filepath)
             }
         }
     }
-
+ 
+    AABB modelAABB;
+    modelAABB.min = SRMath::vec3(std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max());
+    modelAABB.max = SRMath::vec3(std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest());
 
     for (auto& mesh : outModel->m_meshes)
     {
         // If there is no Normal vector in OBJ File
         if (temp_normals.empty())
         {
-            for (auto& mesh : outModel->m_meshes)
+            // 각 정점의 법선을 0으로 초기화
+            std::vector<SRMath::vec3> face_normals(mesh.vertices.size(), { 0.0f, 0.0f, 0.0f });
+
+            // 모든 면을 순회하며 면의 법선을 계산하고, 면을 구성하는 정점들에 더해줌
+            for (size_t i = 0; i < mesh.indices.size(); i += 3)
             {
-                // 각 정점의 법선을 0으로 초기화
-                std::vector<SRMath::vec3> face_normals(mesh.vertices.size(), { 0.0f, 0.0f, 0.0f });
+                unsigned int i0 = mesh.indices[i];
+                unsigned int i1 = mesh.indices[i + 1];
+                unsigned int i2 = mesh.indices[i + 2];
 
-                // 모든 면을 순회하며 면의 법선을 계산하고, 면을 구성하는 정점들에 더해줌
-                for (size_t i = 0; i < mesh.indices.size(); i += 3)
-                {
-                    unsigned int i0 = mesh.indices[i];
-                    unsigned int i1 = mesh.indices[i + 1];
-                    unsigned int i2 = mesh.indices[i + 2];
+                const SRMath::vec3& v0 = mesh.vertices[i0].position;
+                const SRMath::vec3& v1 = mesh.vertices[i1].position;
+                const SRMath::vec3& v2 = mesh.vertices[i2].position;
 
-                    const SRMath::vec3& v0 = mesh.vertices[i0].position;
-                    const SRMath::vec3& v1 = mesh.vertices[i1].position;
-                    const SRMath::vec3& v2 = mesh.vertices[i2].position;
+                SRMath::vec3 face_normal = SRMath::normalize(SRMath::cross(v1 - v0, v2 - v0));
 
-                    SRMath::vec3 face_normal = SRMath::normalize(SRMath::cross(v1 - v0, v2 - v0));
-
-                    mesh.vertices[i0].normal = mesh.vertices[i0].normal + face_normal;
-                    mesh.vertices[i1].normal = mesh.vertices[i1].normal + face_normal;
-                    mesh.vertices[i2].normal = mesh.vertices[i2].normal + face_normal;
-                }
-
-                // 각 정점의 법선을 정규화하여 부드러운 법선(Smooth Normal) 생성
-                for (auto& vertex : mesh.vertices)
-                {
-                    vertex.normal = SRMath::normalize(vertex.normal);
-                }
+                mesh.vertices[i0].normal = mesh.vertices[i0].normal + face_normal;
+                mesh.vertices[i1].normal = mesh.vertices[i1].normal + face_normal;
+                mesh.vertices[i2].normal = mesh.vertices[i2].normal + face_normal;
             }
 
+            // 각 정점의 법선을 정규화하여 부드러운 법선(Smooth Normal) 생성
+            for (auto& vertex : mesh.vertices)
+            {
+                vertex.normal = SRMath::normalize(vertex.normal);
+            }
         }
 
-        // 2. Octree를 '생성'하고 '빌드'합니다. (가장 중요한 부분)
+        // 메시 AABB 계산 및 모델 전체 통합
+        AABB meshAABB = AABB::CreateFromMesh(mesh);
+        modelAABB.Encapsulate(meshAABB);
+
+        // Octree 생성 및 빌드
         mesh.octree = std::make_unique<Octree>();
         mesh.octree->Build(mesh);
     }
+
+    // 최종 계산된 AABB 모델에 저장
+    outModel->m_localAABB = modelAABB;
 
     file.close();
     return outModel;

@@ -76,8 +76,7 @@ bool Framework::initializeGameobject(const SRMath::vec3& pos, const SRMath::vec3
     std::string modelPath = "assets/" + modelName;
 
     // Load Model
-    if (!m_gameobject->Initialize(SRMath::vec3(0.f, 0.f, 0.f), SRMath::vec3(0.f, 0.f, 0.0f)
-        , SRMath::vec3(0.04f, 0.04f, 0.04f), ModelLoader::LoadOBJ(modelPath)))
+    if (!m_gameobject->Initialize(pos, rotation, scale, ModelLoader::LoadOBJ(modelPath)))
     {
         MessageBox(m_hWnd, L"Failed to load Model.", L"Model Load Error", MB_OK);
         return false;
@@ -143,7 +142,9 @@ void Framework::Update(const float deltaTime)
     m_camera.Update(deltaTime, m_keys, aspectRatio);
     for (const auto& gameObject : m_gameobjects)
     {
-        if (gameObject)
+		const Frustum& frustum = m_camera.GetFrustum();
+
+        if (frustum.IsAABBInFrustum(gameObject->GetWorldAABB()))
         {
             gameObject->Update(deltaTime);
         }
@@ -217,7 +218,7 @@ LRESULT Framework::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
         {
             m_pRenderer->OnResize(hWnd);
 
-            Render(m_perfAnalyzer.GetDeltaTime());
+            Render();
 
             HDC hdc = GetDC(hWnd);
             m_pRenderer->Present(hdc);

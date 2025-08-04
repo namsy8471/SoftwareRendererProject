@@ -13,11 +13,12 @@ class Model
 	friend std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filepath);
 
 private:
-
 	std::vector<Mesh> m_meshes;
+	AABB m_localAABB; // <-- 모델 전체의 로컬 AABB 멤버 추가
 
 public:
 	const std::vector<Mesh>& GetMeshes() const { return m_meshes; }
-	void SubmitToRenderQueue(RenderQueue& renderQueue, const SRMath::mat4& worldTransform);
+	const AABB& GetLocalAABB() const { return m_localAABB; }
 
+	void SubmitToRenderQueue(RenderQueue& renderQueue, const SRMath::mat4& worldTransform);
 };

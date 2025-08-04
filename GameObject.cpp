@@ -1,12 +1,15 @@
 #include "GameObject.h"
 #include "Model.h"
+#include "RenderQueue.h"
+#include "Frustum.h"
+#include "AABB.h"
+#include "Octree.h"
 
 GameObject::GameObject() = default;
 GameObject::~GameObject() = default;
 
 GameObject::GameObject(GameObject&& move) noexcept = default;
 GameObject& GameObject::operator=(GameObject&&) noexcept = default;
-
 
 bool GameObject::Initialize(const SRMath::vec3& position, const SRMath::vec3& rotation, const SRMath::vec3& scale, std::unique_ptr<Model> model)
 {
@@ -25,7 +28,19 @@ bool GameObject::Initialize(const SRMath::vec3& position, const SRMath::vec3& ro
 
 void GameObject::Update(float deltaTime)
 {
+	UpdateTransform();
+}
 
+void GameObject::UpdateTransform()
+{
+	// World Transform
+	SRMath::mat4 scaleMatrix = SRMath::scale(m_scale);
+	SRMath::mat4 rotationMatrix = SRMath::rotate(m_rotation);
+	SRMath::mat4 translationMatrix = SRMath::translate(m_position);
+	m_worldMatrix = translationMatrix * rotationMatrix * scaleMatrix;
+
+	const AABB& localAABB = m_model->GetLocalAABB();
+	m_worldAABB = AABB::TransformAABB(localAABB, m_worldMatrix);
 }
 
 const SRMath::vec3 const GameObject::GetPosition() const
@@ -48,6 +63,11 @@ const std::unique_ptr<Model>& GameObject::GetModel() const
 	return m_model;
 }
 
+const AABB& GameObject::GetWorldAABB() const
+{
+	return m_worldAABB;
+}
+
 const std::weak_ptr<GameObject>& GameObject::Getparent() const
 {
 	return m_parent;
@@ -63,6 +83,20 @@ void GameObject::SetSon(std::shared_ptr<GameObject> son)
 {
 	//son->m_parent = this->shared_from_this();
 	m_sons.emplace_back(std::move(son));
+}
+
+void GameObject::SubmitToRenderQueue(RenderQueue& renderQueue, const Frustum& frustum)
+{
+	if (!frustum.IsAABBInFrustum(m_worldAABB)) return;
+	if (!m_model) return;
+
+	for (const auto& mesh : m_model->GetMeshes())
+	{
+		if (mesh.octree)
+		{
+			mesh.octree->SubmitVisibleNodes(renderQueue, frustum, m_worldMatrix);
+		}
+	}
 }
 
 

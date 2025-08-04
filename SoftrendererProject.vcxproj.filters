@@ -19,42 +19,30 @@
     <Filter Include="소스 파일\ModelSource">
       <UniqueIdentifier>{321a4e8e-02bf-4c85-8159-bf9559554830}</UniqueIdentifier>
     </Filter>
+    <Filter Include="헤더 파일\Framework">
+      <UniqueIdentifier>{c354d8a8-43aa-4c51-81a3-051a77cc0088}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="소스 파일\Framework">
+      <UniqueIdentifier>{ada4e094-7009-4745-8faf-9c9f2f28b65a}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="헤더 파일\HelperHeader">
+      <UniqueIdentifier>{ebcb4d30-1b02-4d51-9ab1-f3d883339965}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="Framework.h">
-      <Filter>헤더 파일</Filter>
-    </ClInclude>
     <ClInclude Include="targetver.h">
       <Filter>헤더 파일</Filter>
     </ClInclude>
     <ClInclude Include="Resource.h">
       <Filter>헤더 파일</Filter>
     </ClInclude>
-    <ClInclude Include="SoftrendererProject.h">
-      <Filter>헤더 파일</Filter>
-    </ClInclude>
-    <ClInclude Include="Renderer.h">
-      <Filter>헤더 파일</Filter>
-    </ClInclude>
     <ClInclude Include="pch.h">
-      <Filter>헤더 파일</Filter>
-    </ClInclude>
-    <ClInclude Include="SRMath.h">
       <Filter>헤더 파일</Filter>
     </ClInclude>
     <ClInclude Include="PerformanceAnalyzer.h">
       <Filter>헤더 파일</Filter>
     </ClInclude>
     <ClInclude Include="GameObject.h">
-      <Filter>헤더 파일</Filter>
-    </ClInclude>
-    <ClInclude Include="stb_image.h">
-      <Filter>헤더 파일</Filter>
-    </ClInclude>
-    <ClInclude Include="RenderCommand.h">
-      <Filter>헤더 파일</Filter>
-    </ClInclude>
-    <ClInclude Include="RenderQueue.h">
       <Filter>헤더 파일</Filter>
     </ClInclude>
     <ClInclude Include="Camera.h">
@@ -84,17 +72,29 @@
     <ClInclude Include="TextureLoader.h">
       <Filter>헤더 파일\ModelSource</Filter>
     </ClInclude>
+    <ClInclude Include="Framework.h">
+      <Filter>헤더 파일\Framework</Filter>
+    </ClInclude>
+    <ClInclude Include="Renderer.h">
+      <Filter>헤더 파일\Framework</Filter>
+    </ClInclude>
+    <ClInclude Include="SoftrendererProject.h">
+      <Filter>헤더 파일\Framework</Filter>
+    </ClInclude>
+    <ClInclude Include="SRMath.h">
+      <Filter>헤더 파일\HelperHeader</Filter>
+    </ClInclude>
+    <ClInclude Include="stb_image.h">
+      <Filter>헤더 파일\HelperHeader</Filter>
+    </ClInclude>
+    <ClInclude Include="RenderCommand.h">
+      <Filter>헤더 파일\Framework</Filter>
+    </ClInclude>
+    <ClInclude Include="RenderQueue.h">
+      <Filter>헤더 파일\Framework</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="SoftrendererProject.cpp">
-      <Filter>소스 파일</Filter>
-    </ClCompile>
-    <ClCompile Include="Framework.cpp">
-      <Filter>소스 파일</Filter>
-    </ClCompile>
-    <ClCompile Include="Renderer.cpp">
-      <Filter>소스 파일</Filter>
-    </ClCompile>
     <ClCompile Include="PerformanceAnalyzer.cpp">
       <Filter>소스 파일</Filter>
     </ClCompile>
@@ -127,6 +127,15 @@
     </ClCompile>
     <ClCompile Include="TextureLoader.cpp">
       <Filter>소스 파일\ModelSource</Filter>
+    </ClCompile>
+    <ClCompile Include="Framework.cpp">
+      <Filter>소스 파일\Framework</Filter>
+    </ClCompile>
+    <ClCompile Include="SoftrendererProject.cpp">
+      <Filter>소스 파일\Framework</Filter>
+    </ClCompile>
+    <ClCompile Include="Renderer.cpp">
+      <Filter>소스 파일\Framework</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

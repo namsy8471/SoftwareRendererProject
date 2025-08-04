@@ -2,17 +2,20 @@
 
 #include "SRMath.h"
 #include "AABB.h"
+#include <vector>
 
 struct Mesh;
 
-struct MeshRenderCommand{
-	const Mesh* mesh;          // 렌더링할 메쉬
-	SRMath::mat4 modelMatrix;  // 모델 변환 행렬
-	SRMath::mat4 mvp;          // 모델-뷰-프로젝션 행렬
-	SRMath::mat4 mv;           // 모델-뷰 행렬
-	SRMath::mat4 normal_matrix; // 법선 변환 행렬
-	SRMath::vec3 light_dir;    // 조명 방향 벡터
-	AABB aabb;                 // 메쉬의 AABB (Axis-Aligned Bounding Box)
+// 메시 렌더링을 위한 요청서
+struct MeshRenderCommand {
+	const Mesh* sourMesh;			// '무엇을' 그릴 것인가?
+	SRMath::mat4 worldTransform;	// '어디에' 그릴 것인가?
+};
+
+struct MeshPartRenderCommand {
+	const Mesh* sourceMesh;
+	const std::vector<unsigned int>* indicesToDraw; // '이 인덱스들만 그려줘'
+	SRMath::mat4 worldTransform;
 };
 
 // 디버그용 AABB 렌더링을 위한 요청서

@@ -4,6 +4,7 @@
 #include "Mesh.h"
 #include "AABB.h"
 #include "RenderQueue.h"
+#include "Frustum.h"
 
 class Octree::OctreeNode {
 public:
@@ -66,7 +67,7 @@ void Octree::insert(OctreeNode* node, unsigned int triangleIndex)
 		// 삼각형이 어떤 자식 노드 하나에 '완전히' 포함되는지 확인
 		for (int i = 0; i < 8; ++i)
 		{
-			if (AABB::AABBContains(node->children[i]->bounds, triBounds))
+			if (triBounds.AABBIntersects(node->children[i]->bounds))
 			{
 				insert(node->children[i].get(), triangleIndex);
 				return; // 자식에게 삽입했으므로 현재 노드에서의 역할은 끝남
@@ -91,20 +92,7 @@ void Octree::Build(const Mesh& mesh)
 {
 	this->sourceMesh = &mesh;
 
-	AABB rootBounds;
-	rootBounds.min = SRMath::vec3(std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max());
-	rootBounds.max = SRMath::vec3(std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest());
-
-	for (const auto& vertex : mesh.vertices)
-	{
-		rootBounds.min.x = std::min(rootBounds.min.x, vertex.position.x);
-		rootBounds.min.y = std::min(rootBounds.min.y, vertex.position.y);
-		rootBounds.min.z = std::min(rootBounds.min.z, vertex.position.z);
-
-		rootBounds.max.x = std::max(rootBounds.max.x, vertex.position.x);
-		rootBounds.max.y = std::max(rootBounds.max.y, vertex.position.y);
-		rootBounds.max.z = std::max(rootBounds.max.z, vertex.position.z);
-	}
+	AABB rootBounds = AABB::CreateFromMesh(mesh);
 
 	root = std::make_unique<OctreeNode>(rootBounds);
 
@@ -114,12 +102,7 @@ void Octree::Build(const Mesh& mesh)
 	}
 }
 
-void Octree::SubmitDebugToRenderQueue(RenderQueue& renderQueue, const SRMath::mat4& modelMatrix)
-{
-	if(root)
-		submitNodeRecursive(renderQueue, modelMatrix, root.get());
-	
-}
+
 
 void Octree::submitNodeRecursive(RenderQueue& renderQueue, const SRMath::mat4& modelMatrix, const OctreeNode* node)
 {
@@ -136,4 +119,41 @@ void Octree::submitNodeRecursive(RenderQueue& renderQueue, const SRMath::mat4& m
 			submitNodeRecursive(renderQueue, modelMatrix, node->children[i].get());
 		}
 	}
+}
+
+void Octree::SubmitDebugToRenderQueue(RenderQueue& renderQueue, const SRMath::mat4& modelMatrix)
+{
+	if (root) submitNodeRecursive(renderQueue, modelMatrix, root.get());
+
+}
+
+void Octree::submitNodeRecursive(RenderQueue& renderQueue, const Frustum& frustum, const SRMath::mat4& worldTransform, const OctreeNode* node)
+{
+	const AABB worldNodeAABB = AABB::TransformAABB(node->bounds, worldTransform);
+	if(!frustum.IsAABBInFrustum(worldNodeAABB)) return; // 절두체 밖에 있으면 컬링
+
+	if (node->children[0] == nullptr) // 리프 노드인 경우
+	{
+		if(!node->triangleIndices.empty())
+		{
+			MeshPartRenderCommand cmd;
+			cmd.sourceMesh = this->sourceMesh;
+			cmd.indicesToDraw = &node->triangleIndices;
+			cmd.worldTransform = worldTransform;
+			renderQueue.Submit(cmd);
+		}
+		return;
+	}
+
+	for(const auto & child : node->children)
+	{
+		if (child) submitNodeRecursive(renderQueue, frustum, worldTransform, child.get());
+	}
+}
+
+
+
+void Octree::SubmitVisibleNodes(RenderQueue& renderQueue, const Frustum& frustum, const SRMath::mat4& worldTransform)
+{
+	if (root) submitNodeRecursive(renderQueue, frustum, worldTransform, root.get());
 }
