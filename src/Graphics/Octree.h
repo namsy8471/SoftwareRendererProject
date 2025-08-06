@@ -1,9 +1,10 @@
 #pragma once
 #include <memory>
-#include "SRMath.h"
+#include "Math/SRMath.h"
 
 class RenderQueue;
 struct Mesh;
+class Frustum;
 
 class Octree
 {

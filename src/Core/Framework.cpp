@@ -1,11 +1,11 @@
 #include "Framework.h"
+#include "Core/Resource.h"
+#include "Renderer/Renderer.h"
+#include "Math/Frustum.h"
+#include "Scene/GameObject.h"
+#include "Graphics/ModelLoader.h"
+#include "Graphics/Model.h"
 #include <omp.h>
-#include "Resource.h"
-#include "Renderer.h"
-#include "PerformanceAnalyzer.h"
-#include "ModelLoader.h"
-#include "GameObject.h"
-#include "Model.h"
 
 Framework::Framework() = default;
 Framework::~Framework() = default;
@@ -124,8 +124,6 @@ void Framework::Run()
             m_pRenderer->Present(hdc);
         }
         ReleaseDC(m_hWnd, hdc);
-        
-
     }
 }
 
@@ -140,13 +138,20 @@ void Framework::Update(const float deltaTime)
 
     //TODO Logic Update
     m_camera.Update(deltaTime, m_keys, aspectRatio);
+
+	m_renderQueue.Clear();
+
+    const Frustum& frustum = m_camera.GetFrustum();
     for (const auto& gameObject : m_gameobjects)
     {
-		const Frustum& frustum = m_camera.GetFrustum();
-
-        if (frustum.IsAABBInFrustum(gameObject->GetWorldAABB()))
+        if (gameObject)
         {
             gameObject->Update(deltaTime);
+
+            if (frustum.IsAABBInFrustum(gameObject->GetWorldAABB()))
+            {
+                gameObject->SubmitToRenderQueue(m_renderQueue, frustum);
+            }
         }
     }
 }
@@ -206,9 +211,10 @@ LRESULT Framework::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
     case WM_PAINT:
     {
         //It is not used anymore
-        PAINTSTRUCT ps;
+        
+        /*PAINTSTRUCT ps;
         HDC hdc = BeginPaint(hWnd, &ps);
-        EndPaint(hWnd, &ps);
+        EndPaint(hWnd, &ps);*/
     }
     break;
 

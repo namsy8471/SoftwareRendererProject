@@ -1,6 +1,6 @@
 #pragma once
-#include "SRMath.h"
-#include "Frustum.h"
+#include "Math/SRMath.h"
+#include "Math/Frustum.h"
 
 class Camera
 {

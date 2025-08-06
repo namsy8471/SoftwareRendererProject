@@ -1,9 +1,9 @@
 #pragma once
 #include <vector>
-#include "ModelLoader.h"
-#include "SRMath.h"
-#include "Mesh.h"
-
+#include "Graphics/ModelLoader.h"
+#include "Math/SRMath.h"
+#include "Graphics/Mesh.h"
+#include "Math/AABB.h"
 
 class RenderQueue; // 전방 선언
 

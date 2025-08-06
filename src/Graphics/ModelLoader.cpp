@@ -1,11 +1,11 @@
-#include "ModelLoader.h"
+#include "Graphics/ModelLoader.h"
 #include <fstream>
 #include <sstream>
-#include "Model.h"
+#include "Graphics/Model.h"
 #include <map>
 #include <queue>
-#include "Octree.h"
-#include "AABB.h"
+#include "Graphics/Octree.h"
+#include "Math/AABB.h"
 
 struct VertexKey
 {

@@ -1,5 +1,5 @@
 #include "AABB.h"
-#include "Mesh.h"
+#include "Graphics/Mesh.h"
 #include "Frustum.h"
 
 void AABB::Encapsulate(const AABB& other)

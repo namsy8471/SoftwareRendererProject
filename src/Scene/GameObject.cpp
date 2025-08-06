@@ -1,9 +1,9 @@
+
 #include "GameObject.h"
-#include "Model.h"
-#include "RenderQueue.h"
-#include "Frustum.h"
-#include "AABB.h"
-#include "Octree.h"
+#include "Graphics/Model.h"
+#include "Renderer/RenderQueue.h"
+#include "Math/Frustum.h"
+#include "Graphics/Octree.h"
 
 GameObject::GameObject() = default;
 GameObject::~GameObject() = default;
@@ -29,6 +29,14 @@ bool GameObject::Initialize(const SRMath::vec3& position, const SRMath::vec3& ro
 void GameObject::Update(float deltaTime)
 {
 	UpdateTransform();
+
+	for(const auto& son : m_sons)
+	{
+		if (son)
+		{
+			son->Update(deltaTime);
+		}
+	}
 }
 
 void GameObject::UpdateTransform()
@@ -43,17 +51,17 @@ void GameObject::UpdateTransform()
 	m_worldAABB = AABB::TransformAABB(localAABB, m_worldMatrix);
 }
 
-const SRMath::vec3 const GameObject::GetPosition() const
+const SRMath::vec3 GameObject::GetPosition() const
 {
 	return m_position;
 }
 
-const SRMath::vec3 const GameObject::GetRotation() const
+const SRMath::vec3 GameObject::GetRotation() const
 {
 	return m_rotation;
 }
 
-const SRMath::vec3 const GameObject::GetScale() const
+const SRMath::vec3 GameObject::GetScale() const
 {
 	return m_scale;
 }
@@ -95,6 +103,22 @@ void GameObject::SubmitToRenderQueue(RenderQueue& renderQueue, const Frustum& fr
 		if (mesh.octree)
 		{
 			mesh.octree->SubmitVisibleNodes(renderQueue, frustum, m_worldMatrix);
+		}
+		else
+		{
+			MeshRenderCommand cmd;
+			cmd.sourceMesh = &mesh;
+			cmd.indicesToDraw = &mesh.indices;
+			cmd.worldTransform = m_worldMatrix;
+			renderQueue.Submit(cmd);
+		}
+	}
+
+	for (const auto& son : m_sons)
+	{
+		if (son)
+		{
+			son->SubmitToRenderQueue(renderQueue, frustum);
 		}
 	}
 }

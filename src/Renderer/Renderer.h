@@ -2,15 +2,14 @@
 #include <vector>
 #include <unordered_map>
 #include <string>
-#include "pch.h"
-#include "SRMath.h"
-#include "Mesh.h"
+#include "Core/pch.h"
+#include "Math/SRMath.h"
+#include "Graphics/Mesh.h"
 
 class Texture;
 struct ShadedVertex;
 struct RasterizerVertex;
-struct Frustum;
-class OctreeNode;
+class Frustum;
 
 enum class ELineAlgorithm
 {

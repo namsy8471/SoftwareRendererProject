@@ -1,10 +1,10 @@
-#include <vector>
 #include "Octree.h"
-#include "SRMath.h"
-#include "Mesh.h"
-#include "AABB.h"
-#include "RenderQueue.h"
-#include "Frustum.h"
+#include <vector>
+#include "Math/SRMath.h"
+#include "Graphics/Mesh.h"
+#include "Math/AABB.h"
+#include "Renderer/RenderQueue.h"
+#include "Math/Frustum.h"
 
 class Octree::OctreeNode {
 public:
@@ -108,11 +108,11 @@ void Octree::submitNodeRecursive(RenderQueue& renderQueue, const SRMath::mat4& m
 {
 	// 절두체 컬링은 여기서 생략 (필요 시 추가)
 
-	DebugAABBRenderCommand cmd;
-	cmd.bounds = node->bounds;
-	cmd.worldTransform = modelMatrix;
-	cmd.color = { 1.0f, 1.0f, 0.0f, 1.0f }; // 노란색
-	renderQueue.Submit(cmd);
+	//DebugPrimitiveCommand cmd;
+	//cmd.vertices = node->bounds;
+	//cmd.worldTransform = modelMatrix;
+	//cmd.color = { 1.0f, 1.0f, 0.0f, 1.0f }; // 노란색
+	//renderQueue.Submit(cmd);
 
 	if (node->children[0]) {
 		for (int i = 0; i < 8; ++i) {
@@ -136,7 +136,7 @@ void Octree::submitNodeRecursive(RenderQueue& renderQueue, const Frustum& frustu
 	{
 		if(!node->triangleIndices.empty())
 		{
-			MeshPartRenderCommand cmd;
+			MeshRenderCommand cmd;
 			cmd.sourceMesh = this->sourceMesh;
 			cmd.indicesToDraw = &node->triangleIndices;
 			cmd.worldTransform = worldTransform;
@@ -150,7 +150,6 @@ void Octree::submitNodeRecursive(RenderQueue& renderQueue, const Frustum& frustu
 		if (child) submitNodeRecursive(renderQueue, frustum, worldTransform, child.get());
 	}
 }
-
 
 
 void Octree::SubmitVisibleNodes(RenderQueue& renderQueue, const Frustum& frustum, const SRMath::mat4& worldTransform)

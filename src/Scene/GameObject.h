@@ -1,10 +1,10 @@
 #pragma once
 
+#include "Core/pch.h"
 #include <vector>
 #include <memory>
-#include "pch.h"
-#include "AABB.h"
-#include "SRMath.h"
+#include "Math/AABB.h"
+#include "Math/SRMath.h"
 
 class Model;
 class RenderQueue;

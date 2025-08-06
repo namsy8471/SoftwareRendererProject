@@ -1,8 +1,7 @@
 #pragma once
-#include "SRMath.h"
+#include "Math/SRMath.h"
 
 struct Mesh;
-struct Frustum;
 
 struct AABB
 {

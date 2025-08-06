@@ -1,11 +1,12 @@
 ﻿#pragma once
 
 #include <vector>
-#include "pch.h"
-#include "PerformanceAnalyzer.h"
-#include "SRMath.h"
-#include "Camera.h"
-#include "RenderQueue.h"
+#include <string>
+#include "Core/pch.h"
+#include "Utils/PerformanceAnalyzer.h"
+#include "Math/SRMath.h"
+#include "Scene/Camera.h"
+#include "Renderer/RenderQueue.h"
 
 #define MAX_LOADSTRING 100
 

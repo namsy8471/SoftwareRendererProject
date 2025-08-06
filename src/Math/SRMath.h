@@ -582,23 +582,3 @@ namespace SRMath {
 	}
 
 }
-
-struct Plane
-{
-	SRMath::vec3 normal; // 평면의 법선 벡터
-	float distance;      // 원점으로부터의 거리
-
-	// 점과 평면 사이의 부호 있는 거리를 계산하는 함수
-	// 결과 > 0: 점이 평면의 안쪽(법선이 가리키는 쪽)에 있음
-	// 결과 < 0: 점이 평면의 바깥쪽에 있음
-	// 결과 = 0: 점이 평면 위에 있음
-	float GetSignedDistance(const SRMath::vec3& point) const
-	{
-		return SRMath::dot(normal, point) + distance;
-	}
-};
-
-struct Frustum
-{
-	Plane planes[6]; // 0:Left, 1:Right, 2:Bottom, 3:Top, 4:Near, 5:Far
-};

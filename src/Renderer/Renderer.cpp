@@ -5,10 +5,11 @@
 #include <limits>
 #include <cmath>
 #include <omp.h>
-#include "Mesh.h"
-#include "Texture.h"
-#include "AABB.h"
-#include "Octree.h"
+#include "Graphics/Mesh.h"
+#include "Graphics/Texture.h"
+#include "Math/AABB.h"
+#include "Graphics/Octree.h"
+#include "Math/Frustum.h"
 
 constexpr float FLOATINF = std::numeric_limits<float>::infinity();
 
@@ -638,7 +639,7 @@ bool Renderer::isSphereInFrustum(const Frustum& frustum, const SRMath::vec3& sph
     for (int i = 0; i < 6; ++i)
     {
         // 평면과 구의 중심 사이의 거리를 계산
-        float dist = frustum.planes[i].GetSignedDistance(sphere_center);
+        float dist = frustum.planes[i].GetSignedDistanceToPoint(sphere_center);
 
         // 만약 거리가 -반지름보다 작으면, 구는 평면의 '완전히 바깥쪽'에 있는 것임
         if (dist < -sphere_radius)

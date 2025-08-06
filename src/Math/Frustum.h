@@ -1,6 +1,6 @@
 #pragma once
-#include "SRMath.h"
-#include "AABB.h"
+#include "Math/SRMath.h"
+#include "Math/AABB.h"
 
 struct Plane
 {
