@@ -37,25 +37,28 @@ private:
 	ELineAlgorithm m_currentLineAlgorithm = 
 		ELineAlgorithm::Bresenham;	// 선 그리기 알고리즘
 
+	// 선 그리기 알고리즘 셀렉터
 	void drawLineByBresenham(int x0, int y0, int x1, int y1, unsigned int color);
 	void drawLineByDDA(int x0, int y0, int x1, int y1, unsigned int color);
 
-	void drawDebugPrimitive(const DebugPrimitiveCommand& cmd, const Camera& camera);
-	void drawMesh(const MeshRenderCommand& cmd, const SRMath::mat4& viewMatrix, const SRMath::mat4& projectionMatrix, const SRMath::vec3& camPos, const std::vector<DirectionalLight> lights);
+	// 그리기 함수
+	void drawPixel(int x, int y, unsigned int color);
+	void drawLine(int x0, int y0, int x1, int y1, unsigned int color);
+	void drawTriangle(int x0, int y0, int x1, int y1, int x2, int y2, unsigned int color);
+	void drawTriangle(const SRMath::vec2 v0, const SRMath::vec2 v1, const SRMath::vec2 v2, unsigned int color);
 
 	void drawFilledTriangle(const RasterizerVertex& v0, const RasterizerVertex& v1, const RasterizerVertex& v2,
 		const Material* material, const std::vector<DirectionalLight>& lights, const SRMath::vec3& camPos);
+	
+	void resterization(const std::vector<ShadedVertex>& clipped_vertices,
+		const Material* material, const std::vector<DirectionalLight>& lights, const SRMath::vec3 camPos, const MeshRenderCommand& cmd);
+
+	void drawMesh(const MeshRenderCommand& cmd, const SRMath::mat4& viewMatrix, const SRMath::mat4& projectionMatrix, const SRMath::vec3& camPos, const std::vector<DirectionalLight> lights);
+	void drawDebugPrimitive(const DebugPrimitiveCommand& cmd, const SRMath::mat4& vp, const Camera& camera);
 
 	ShadedVertex interpolate(const ShadedVertex& v0, const ShadedVertex& v1, float t);
 	std::vector<ShadedVertex> clipPolygonAgainstPlane(const std::vector<ShadedVertex>& vertices, int plane_axis, int plane_sign);
 	std::vector<ShadedVertex> clipTriangle(const ShadedVertex& v0, const ShadedVertex& v1, const ShadedVertex& v2);
-	void resterization(const std::vector<ShadedVertex>& clipped_vertices,
-		const Material* material, const std::vector<DirectionalLight>& lights, const SRMath::vec3 camPos, const MeshRenderCommand& cmd);
-
-
-	//bool isSphereInFrustum(const Frustum& frustum, const SRMath::vec3& sphere_center, float sphere_radius);
-	//void renderOctreeNode(const OctreeNode* node, const Frustum& frustum, const Mesh& mesh, const SRMath::mat4& 
-	// Matrix,const SRMath::mat4& mv, const SRMath::mat4& vp, const SRMath::mat4& mvp, const SRMath::mat4& normal_matrix, const SRMath::vec3& light_dir);
 
 public:
 	Renderer();
@@ -63,16 +66,6 @@ public:
 
 	bool Initialize(HWND hWnd);
 	void Shutdown() const;
-
-	void DrawPixel(int x, int y, unsigned int color);
-	void DrawLine(int x0, int y0, int x1, int y1, unsigned int color);
-	void DrawTriangle(int x0, int y0, int x1, int y1, int x2, int y2, unsigned int color);
-	void DrawTriangle(const SRMath::vec2 v0, const SRMath::vec2 v1, const SRMath::vec2 v2, unsigned int color);
-
-	void DrawFilledTriangle(const SRMath::vec2& v0, const SRMath::vec2& v1, const SRMath::vec2& v2,
-		float one_over_w0, float one_over_w1, float one_over_w2, const SRMath::vec3& n0_World, const SRMath::vec3& n1_World, const SRMath::vec3& n2_World,
-		const SRMath::vec2& uv0_clipped, const SRMath::vec2& uv1_clipped, const SRMath::vec2& uv2_clipped,
-		const SRMath::vec3& light_dir);
 
 	void SetLineAlgorithm(ELineAlgorithm eLineAlgorithm);
 
