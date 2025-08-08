@@ -7,6 +7,8 @@
 #include "Math/SRMath.h"
 #include "Scene/Camera.h"
 #include "Renderer/RenderQueue.h"
+#include "Graphics/Light.h"
+#include "Utils/DebugUtils.h"
 
 #define MAX_LOADSTRING 100
 
@@ -27,6 +29,9 @@ private:
 	std::unique_ptr<Renderer> m_pRenderer;	// It is for Rendering
 	RenderQueue m_renderQueue;				// It is for Render Queue
 	PerformanceAnalyzer m_perfAnalyzer;		// It is for counting FPS/CPU/GPU
+	std::vector<DirectionalLight> m_lights; // It is for Directional Lights
+
+	DebugFlags m_debugFlags;				// It is for Debug Flags
 
 	// Key Input Variables
 	bool m_keys[256];
@@ -55,6 +60,8 @@ public:
 	void Shutdown();
 
 	LRESULT HandleMessage(HWND, UINT, WPARAM, LPARAM);
+
+	void CheckMenuBox(bool isOn, const int& retFlag);
 
 public:
 	static LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);

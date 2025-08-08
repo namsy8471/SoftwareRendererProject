@@ -5,6 +5,7 @@
 class RenderQueue;
 struct Mesh;
 class Frustum;
+struct DebugFlags;
 
 class Octree
 {
@@ -13,13 +14,12 @@ private:
 	class OctreeNode;
 
 	void subdivide(OctreeNode* node);
-	void insert(OctreeNode* node, unsigned int triangleIndex);
+	void insert(OctreeNode* node, unsigned int i0, unsigned int i1, unsigned int i2);
 
 	std::unique_ptr<OctreeNode> root;
 	const Mesh* sourceMesh = nullptr;
 
-	void submitNodeRecursive(RenderQueue& renderQueue, const SRMath::mat4& modelMatrix, const OctreeNode* node);
-	void submitNodeRecursive(RenderQueue& renderQueue, const Frustum& frustum, const SRMath::mat4& worldTransform, const OctreeNode* node);
+	void submitNodeRecursive(RenderQueue& renderQueue, const Frustum& frustum, const SRMath::mat4& worldTransform, const DebugFlags& debugFlags, const OctreeNode* node);
 
 	static const int MAX_TRIANGLES_PER_NODE = 16;
 	static const int MAX_DEPTH = 8;
@@ -29,7 +29,6 @@ public:
 
 	void Build(const Mesh& mesh);
 	const OctreeNode* GetRoot() const { return root.get(); }
-	void SubmitDebugToRenderQueue(RenderQueue& renderQueue, const SRMath::mat4& modelMatrix);
-	void SubmitVisibleNodes(RenderQueue& renderQueue, const Frustum& frustum, const SRMath::mat4& worldTransform);
+	void SubmitNodesToRenderQueue(RenderQueue& renderQueue, const Frustum& frustum, const SRMath::mat4& worldTransform, const DebugFlags& debugFlags);
 };
 

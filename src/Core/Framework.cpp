@@ -1,5 +1,5 @@
 #include "Framework.h"
-#include "Core/Resource.h"
+#include "resource.h"
 #include "Renderer/Renderer.h"
 #include "Math/Frustum.h"
 #include "Scene/GameObject.h"
@@ -66,6 +66,8 @@ bool Framework::Initialize(HINSTANCE hInstance, int nCmdShow)
         return false;
 
 	m_camera.Initialize(SRMath::vec3(0.f, 0.f, 5.f));
+
+    m_lights.push_back(DirectionalLight());
 
     return TRUE;
 }
@@ -150,7 +152,7 @@ void Framework::Update(const float deltaTime)
 
             if (frustum.IsAABBInFrustum(gameObject->GetWorldAABB()))
             {
-                gameObject->SubmitToRenderQueue(m_renderQueue, frustum);
+                gameObject->SubmitToRenderQueue(m_renderQueue, frustum, m_debugFlags);
             }
         }
     }
@@ -163,10 +165,7 @@ void Framework::Render()
     // Buffer Clear
     m_pRenderer->Clear();
 
-    SRMath::vec3 light_dir = 
-        SRMath::normalize(SRMath::vec3{ 0.0f, -0.5f, 1.0f });
-
-    m_pRenderer->Render(m_camera.GetProjectionMatrix(), m_camera.GetViewMatrix(), light_dir);
+    m_pRenderer->RenderScene(m_renderQueue, m_camera, m_lights);
 }
 
 void Framework::Shutdown()
@@ -193,13 +192,23 @@ LRESULT Framework::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
             m_pRenderer->SetLineAlgorithm(ELineAlgorithm::DDA);
             break;
         case ID_DEBUG_NORMALVECTOR:
-            m_pRenderer->SetDebugNormal();
+            m_debugFlags.bShowNormal = !m_debugFlags.bShowNormal;
+			CheckMenuBox(m_debugFlags.bShowNormal, ID_DEBUG_NORMALVECTOR);
             break;
-
+        
+        case ID_DEBUG_AABB: 
+            m_debugFlags.bShowAABB = !m_debugFlags.bShowAABB;
+			CheckMenuBox(m_debugFlags.bShowAABB, ID_DEBUG_AABB);
+            break;
+        
+        case ID_DEBUG_WIREFRAME: 
+            m_debugFlags.bShowWireframe = !m_debugFlags.bShowWireframe;
+			CheckMenuBox(m_debugFlags.bShowWireframe, ID_DEBUG_WIREFRAME);
+            break;
+        
         case IDM_ABOUT:
             DialogBox(m_hInstance, MAKEINTRESOURCE(IDD_ABOUTBOX), hWnd, Framework::About);
             break;
-        
         case IDM_EXIT:
             DestroyWindow(hWnd);
             break;
@@ -254,8 +263,8 @@ LRESULT Framework::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
         if (m_isRightMouseDown)
         {
             POINT currentMousePos = { LOWORD(lParam), HIWORD(lParam) };
-            float deltaX = currentMousePos.x - m_lastMousePos.x;
-            float deltaY = currentMousePos.y - m_lastMousePos.y;
+            auto deltaX = currentMousePos.x - m_lastMousePos.x;
+            auto deltaY = currentMousePos.y - m_lastMousePos.y;
 
             float newYaw = m_camera.GetCameraYaw() - deltaX * 0.005f;
             float newPitch = m_camera.GetCameraPitch() - deltaY * 0.005f;
@@ -278,6 +287,25 @@ LRESULT Framework::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
         return DefWindowProc(hWnd, message, wParam, lParam);
     }
     return 0;
+}
+
+void Framework::CheckMenuBox(bool isOn, const int& retFlag)
+{
+    
+    HMENU hMenu = GetMenu(m_hWnd);
+
+    // CheckMenuItem 함수를 호출하여 체크 표시를 업데이트합니다.
+    if (isOn)
+    {
+        // 상태가 true이면, MF_CHECKED 플래그로 체크 표시를 추가합니다.
+        CheckMenuItem(hMenu, retFlag, MF_BYCOMMAND | MF_CHECKED);
+    }
+    else
+    {
+        // 상태가 false이면, MF_UNCHECKED 플래그로 체크 표시를 제거합니다.
+        CheckMenuItem(hMenu, retFlag, MF_BYCOMMAND | MF_UNCHECKED);
+    }
+
 }
 
 // 메시지 처리기

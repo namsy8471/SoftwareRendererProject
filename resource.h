@@ -17,6 +17,8 @@
 #define ID_ALGORITHMS_LINEDRAWING       32773
 #define ID_LINEALGORITHM_BRESENHAM      32774
 #define ID_DEBUG_NORMALVECTOR           32775
+#define ID_DEBUG_AABB		            32776
+#define ID_DEBUG_WIREFRAME              32777
 #define IDC_STATIC                      -1
 
 // Next default values for new objects

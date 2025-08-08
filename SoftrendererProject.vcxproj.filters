@@ -46,9 +46,6 @@
     <ClCompile Include="src\Core\Framework.cpp">
       <Filter>소스 파일</Filter>
     </ClCompile>
-    <ClCompile Include="src\Core\SoftrendererProject.cpp">
-      <Filter>소스 파일</Filter>
-    </ClCompile>
     <ClCompile Include="src\Graphics\Mesh.cpp">
       <Filter>소스 파일</Filter>
     </ClCompile>
@@ -85,21 +82,15 @@
     <ClCompile Include="src\Utils\PerformanceAnalyzer.cpp">
       <Filter>소스 파일</Filter>
     </ClCompile>
+    <ClCompile Include="SoftrendererProject.cpp">
+      <Filter>소스 파일</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\Core\Framework.h">
       <Filter>헤더 파일</Filter>
     </ClInclude>
     <ClInclude Include="src\Core\pch.h">
-      <Filter>헤더 파일</Filter>
-    </ClInclude>
-    <ClInclude Include="src\Core\resource.h">
-      <Filter>헤더 파일</Filter>
-    </ClInclude>
-    <ClInclude Include="src\Core\SoftrendererProject.h">
-      <Filter>헤더 파일</Filter>
-    </ClInclude>
-    <ClInclude Include="src\Core\targetver.h">
       <Filter>헤더 파일</Filter>
     </ClInclude>
     <ClInclude Include="src\Graphics\Mesh.h">
@@ -151,6 +142,21 @@
       <Filter>헤더 파일</Filter>
     </ClInclude>
     <ClInclude Include="src\Utils\stb_image.h">
+      <Filter>헤더 파일</Filter>
+    </ClInclude>
+    <ClInclude Include="resource.h">
+      <Filter>헤더 파일</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Graphics\Material.h">
+      <Filter>헤더 파일</Filter>
+    </ClInclude>
+    <ClInclude Include="SoftrendererProject.h">
+      <Filter>헤더 파일</Filter>
+    </ClInclude>
+    <ClInclude Include="targetver.h">
+      <Filter>헤더 파일</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Graphics\Light.h">
       <Filter>헤더 파일</Filter>
     </ClInclude>
   </ItemGroup>

@@ -19,6 +19,4 @@ private:
 public:
 	const std::vector<Mesh>& GetMeshes() const { return m_meshes; }
 	const AABB& GetLocalAABB() const { return m_localAABB; }
-
-	void SubmitToRenderQueue(RenderQueue& renderQueue, const SRMath::mat4& worldTransform);
 };

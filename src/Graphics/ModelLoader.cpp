@@ -76,26 +76,29 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filepath)
             
         }
 
-        else if (prefix == "usemtl" || prefix == "g" || (currentMesh == nullptr && prefix == "f"))
+        else if (prefix == "usemtl")
         {
-            // 새로운 메시 그룹 시작 (usemtl, g 키워드를 만나거나, 첫 f를 만났을 때)
-            if (prefix == "usemtl") {
-                ss >> currentMaterialName;
-            }
+            ss >> currentMaterialName;
+        }
 
-            // 새로운 메시 그룹이 시작될 때 vertexCache 초기화 ---
-            vertexCache.clear();
-
-            // 모델에 새로운 메시 추가 및 currentMesh 포인터 갱신
-            outModel->m_meshes.emplace_back();
-            currentMesh = &outModel->m_meshes.back();
-            currentMesh->materialName = currentMaterialName;
-            // 여기서부터 파싱되는 면(face)들은 이 메시 그룹에 속하게 됨
+        else if (prefix == "g")
+        {
+            // 그룹 이름은 아직 없음
         }
 
         else if(prefix == "f")
         {
-            if (currentMesh == nullptr) continue; // 그룹이 없으면 무시
+            if (currentMesh == nullptr || currentMesh->materialName != currentMaterialName)
+            {
+                // 새로운 메시 그룹이 시작될 때 vertexCache 초기화 ---
+                vertexCache.clear();
+
+                // 모델에 새로운 메시 추가 및 currentMesh 포인터 갱신
+                outModel->m_meshes.emplace_back();
+                currentMesh = &outModel->m_meshes.back();
+                currentMesh->materialName = currentMaterialName;
+                // 여기서부터 파싱되는 면(face)들은 이 메시 그룹에 속하게 됨
+            }
 
             std::string face_data;
             int vertex_count_in_face = 0;
@@ -134,9 +137,15 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filepath)
                 {
                     // 새로운 정점 조합: 최종 정점 버퍼에 새로 추가
                     Vertex new_vertex;
-                    if (key.pos_idx != -1) new_vertex.position = temp_positions[key.pos_idx];
-                    if (key.tex_idx != -1) new_vertex.texcoord = temp_texcoords[key.tex_idx];
-                    if (key.nrm_idx != -1) new_vertex.normal = temp_normals[key.nrm_idx];
+                    if(key.pos_idx >= 0 && key.pos_idx < temp_positions.size()) {
+                        new_vertex.position = temp_positions[key.pos_idx];
+                    }
+                    if (key.tex_idx >= 0 && key.tex_idx < temp_texcoords.size()) {
+                        new_vertex.texcoord = temp_texcoords[key.tex_idx];
+                    }
+                    if (key.nrm_idx >= 0 && key.nrm_idx < temp_normals.size()) {
+                        new_vertex.normal = temp_normals[key.nrm_idx];
+                    }
 
                     currentMesh->vertices.push_back(new_vertex);
                     unsigned int new_index = currentMesh->vertices.size() - 1;

@@ -2,7 +2,7 @@
 //
 
 #include "Core/pch.h"
-#include "Core/SoftrendererProject.h"
+#include "SoftrendererProject.h"
 #include "Core/Framework.h"
 
 int APIENTRY wWinMain(_In_ HINSTANCE hInstance,

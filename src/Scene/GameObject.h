@@ -9,6 +9,7 @@
 class Model;
 class RenderQueue;
 class Frustum;
+struct DebugFlags;
 
 class GameObject
 {
@@ -47,12 +48,12 @@ public:
 	const SRMath::vec3 GetScale() const;
 	const std::unique_ptr<Model>& GetModel() const;
 	const AABB& GetWorldAABB() const;
-	const std::weak_ptr<GameObject>& Getparent() const;
-	const std::vector<std::shared_ptr<GameObject>>& Getsons() const;
+	const std::weak_ptr<GameObject>& GetParent() const;
+	const std::vector<std::shared_ptr<GameObject>>& GetSons() const;
 
 	void SetSon(std::shared_ptr<GameObject> son);
 
 	// Rendering
-	void SubmitToRenderQueue(RenderQueue& renderQueue, const Frustum& frustum);
+	void SubmitToRenderQueue(RenderQueue& renderQueue, const Frustum& frustum, const DebugFlags& debugFlags);
 };
 

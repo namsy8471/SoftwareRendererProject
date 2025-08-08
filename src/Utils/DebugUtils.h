@@ -17,3 +17,10 @@ struct DebugVertex
 	SRMath::vec3 position; // 위치
 	SRMath::vec4 color;    // 색상
 };
+
+struct DebugFlags
+{
+	bool bShowNormal = false; // 법선 벡터 표시 여부
+	bool bShowAABB = false;   // AABB 표시 여부
+	bool bShowWireframe = false; // 와이어프레임 표시 여부
+};

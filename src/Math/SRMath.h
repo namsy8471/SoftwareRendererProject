@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cmath>
+#include <optional>
 #include <xmmintrin.h> // SSE Header
 #include <smmintrin.h> // SSE4.1
 
@@ -518,15 +519,15 @@ namespace SRMath {
 
 	// SIMD를 사용한 4x4 행렬 역행렬 함수
 	// 행렬식이 0에 가까우면 역행렬이 존재하지 않으므로 false를 반환합니다.
-	inline bool inverse(const mat4& m, mat4& out_inverse) {
+	inline std::optional<mat4> inverse(const mat4& m) {
 		__m128 A = _mm_movelh_ps(m.m128[0], m.m128[1]);
 		__m128 B = _mm_movehl_ps(m.m128[1], m.m128[0]);
 		__m128 C = _mm_movelh_ps(m.m128[2], m.m128[3]);
 		__m128 D = _mm_movehl_ps(m.m128[3], m.m128[2]);
 
 		__m128 detSub = _mm_sub_ps(
-			_mm_mul_ps(_mm_shuffle_ps(m.m128[0], m.m128[2], 0x22110000), _mm_shuffle_ps(m.m128[1], m.m128[3], 0x33221100)),
-			_mm_mul_ps(_mm_shuffle_ps(m.m128[0], m.m128[2], 0x33221100), _mm_shuffle_ps(m.m128[1], m.m128[3], 0x22110000))
+			_mm_mul_ps(_mm_shuffle_ps(m.m128[0], m.m128[2], 0x88), _mm_shuffle_ps(m.m128[1], m.m128[3], 0xE4)),
+			_mm_mul_ps(_mm_shuffle_ps(m.m128[0], m.m128[2], 0xE4), _mm_shuffle_ps(m.m128[1], m.m128[3], 0x88))
 		);
 
 		__m128 detA = _mm_shuffle_ps(detSub, detSub, 0x44);
@@ -545,7 +546,7 @@ namespace SRMath {
 		// 행렬식이 0에 가까운지 확인
 		if (_mm_cvtss_f32(detM) == 0.0f)
 		{
-			return false;
+			return std::nullopt;
 		}
 
 		__m128 invDetM = _mm_div_ps(_mm_set1_ps(1.0f), detM);
@@ -563,22 +564,24 @@ namespace SRMath {
 		__m128 R2 = _mm_shuffle_ps(X, Z, 0x77);
 		__m128 R3 = _mm_shuffle_ps(X, Z, 0x22);
 
+		// out_inverse 행렬에 결과를 저장합니다.
+		mat4 out_inverse;
+
 		out_inverse.m128[0] = _mm_shuffle_ps(R0, R1, 0x88);
 		out_inverse.m128[1] = _mm_shuffle_ps(R0, R1, 0xDD);
 		out_inverse.m128[2] = _mm_shuffle_ps(R2, R3, 0x88);
 		out_inverse.m128[3] = _mm_shuffle_ps(R2, R3, 0xDD);
 
-		return true;
+		return out_inverse;
 	}
 
-	inline mat4 inverse_transpose(const mat4& m) {
+	inline std::optional<mat4> inverse_transpose(const mat4& m) {
 
-		mat4 inverse_mat;
-		if (inverse(m, inverse_mat)) {
-			return transpose(inverse_mat);
+		if (auto inverse_mat = inverse(m)) {
+			return transpose(*inverse_mat);
 		}
 		// 역행렬이 없는 경우, 단위 행렬 등 적절한 값을 반환
-		return mat4(1);
+		return std::nullopt;
 	}
 
 }

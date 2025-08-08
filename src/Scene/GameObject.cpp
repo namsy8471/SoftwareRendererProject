@@ -1,9 +1,9 @@
-
 #include "GameObject.h"
 #include "Graphics/Model.h"
 #include "Renderer/RenderQueue.h"
 #include "Math/Frustum.h"
 #include "Graphics/Octree.h"
+#include "Utils/DebugUtils.h"
 
 GameObject::GameObject() = default;
 GameObject::~GameObject() = default;
@@ -76,12 +76,12 @@ const AABB& GameObject::GetWorldAABB() const
 	return m_worldAABB;
 }
 
-const std::weak_ptr<GameObject>& GameObject::Getparent() const
+const std::weak_ptr<GameObject>& GameObject::GetParent() const
 {
 	return m_parent;
 }
 
-const std::vector<std::shared_ptr<GameObject>>& GameObject::Getsons() const
+const std::vector<std::shared_ptr<GameObject>>& GameObject::GetSons() const
 {
 	return m_sons;
 }
@@ -93,7 +93,7 @@ void GameObject::SetSon(std::shared_ptr<GameObject> son)
 	m_sons.emplace_back(std::move(son));
 }
 
-void GameObject::SubmitToRenderQueue(RenderQueue& renderQueue, const Frustum& frustum)
+void GameObject::SubmitToRenderQueue(RenderQueue& renderQueue, const Frustum& frustum, const DebugFlags& debugFlags)
 {
 	if (!frustum.IsAABBInFrustum(m_worldAABB)) return;
 	if (!m_model) return;
@@ -102,7 +102,7 @@ void GameObject::SubmitToRenderQueue(RenderQueue& renderQueue, const Frustum& fr
 	{
 		if (mesh.octree)
 		{
-			mesh.octree->SubmitVisibleNodes(renderQueue, frustum, m_worldMatrix);
+			mesh.octree->SubmitNodesToRenderQueue(renderQueue, frustum, m_worldMatrix, debugFlags);
 		}
 		else
 		{
@@ -110,7 +110,48 @@ void GameObject::SubmitToRenderQueue(RenderQueue& renderQueue, const Frustum& fr
 			cmd.sourceMesh = &mesh;
 			cmd.indicesToDraw = &mesh.indices;
 			cmd.worldTransform = m_worldMatrix;
+
+			if(debugFlags.bShowWireframe)
+			{
+				cmd.rasterizeMode = ERasterizeMode::Wireframe;
+			}
+			else
+			{
+				cmd.rasterizeMode = ERasterizeMode::Fill;
+			}
+
 			renderQueue.Submit(cmd);
+		}
+
+		if (debugFlags.bShowNormal)
+		{
+			std::vector<DebugVertex> normalLines;
+
+			SRMath::mat4 normalMatrix = SRMath::inverse_transpose(m_worldMatrix).value_or(SRMath::mat4(1.f));
+
+			for (const auto& vertex : mesh.vertices)
+			{
+				// 1. 위치(position)는 월드 행렬(m_worldMatrix)로 변환하여 월드 공간의 시작점 계산
+				SRMath::vec3 startPoint_world = m_worldMatrix * vertex.position;
+
+				// 2. 방향(normal)은 법선 행렬(normalMatrix)로 변환하여 월드 공간의 법선 방향 계산
+				SRMath::vec3 normalDir_world = normalMatrix * SRMath::vec4(vertex.normal, 0.f);
+
+				// 3. 월드 공간의 시작점에 월드 공간의 법선 방향을 더하여 끝점 계산
+				SRMath::vec3 endPoint_world = startPoint_world + SRMath::normalize(normalDir_world) * 0.1f;
+				
+				normalLines.push_back({ startPoint_world, SRMath::vec4(1.0f, 1.0f, 0.0f, 1.0f) });
+				normalLines.push_back({ endPoint_world, SRMath::vec4(1.0f, 1.0f, 0.0f, 1.0f) });
+			}
+
+			if (!normalLines.empty()) {
+
+				DebugPrimitiveCommand cmd;
+				cmd.vertices = std::move(normalLines);
+				cmd.worldTransform = SRMath::mat4(1.f);
+				cmd.type = DebugPrimitiveType::Line;
+				renderQueue.Submit(cmd);
+			}
 		}
 	}
 
@@ -118,7 +159,7 @@ void GameObject::SubmitToRenderQueue(RenderQueue& renderQueue, const Frustum& fr
 	{
 		if (son)
 		{
-			son->SubmitToRenderQueue(renderQueue, frustum);
+			son->SubmitToRenderQueue(renderQueue, frustum, debugFlags);
 		}
 	}
 }

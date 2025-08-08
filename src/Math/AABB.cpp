@@ -38,6 +38,29 @@ const bool AABB::AABBIntersects(const AABB& other) const
         (min.z <= other.max.z && max.z >= other.min.z);
 }
 
+const bool AABB::AABBContains(const AABB& other) const
+{
+    // 다른 AABB가 현재 AABB에 완전히 포함되는지 확인합니다.
+    return (min.x <= other.min.x && max.x >= other.max.x) &&
+           (min.y <= other.min.y && max.y >= other.max.y) &&
+           (min.z <= other.min.z && max.z >= other.max.z);
+}
+
+const std::array<SRMath::vec3, 8> AABB::GetVertice() const
+{
+    std::array<SRMath::vec3, 8> array; // 8개의 꼭짓점
+    array[0] = { min.x, min.y, min.z };
+    array[1] = { max.x, min.y, min.z };
+    array[2] = { min.x, max.y, min.z };
+    array[3] = { max.x, max.y, min.z };
+    array[4] = { min.x, min.y, max.z };
+    array[5] = { max.x, min.y, max.z };
+    array[6] = { min.x, max.y, max.z };
+    array[7] = { max.x, max.y, max.z };
+
+    return array;
+}
+
 AABB AABB::CreateFromMesh(const Mesh& mesh)
 {
     if(mesh.vertices.empty())
