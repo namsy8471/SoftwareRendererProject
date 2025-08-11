@@ -121,6 +121,7 @@ void Octree::submitNodeRecursive(RenderQueue& renderQueue, const Frustum& frustu
 		cmd.sourceMesh = this->sourceMesh;
 		cmd.indicesToDraw = &node->triangleIndices;
 		cmd.worldTransform = worldTransform;
+		cmd.material = &this->sourceMesh->material; // 메시의 재질을 사용
 			
 		if(debugFlags.bShowWireframe)
 		{

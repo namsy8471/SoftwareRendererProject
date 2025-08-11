@@ -62,7 +62,11 @@ bool Framework::Initialize(HINSTANCE hInstance, int nCmdShow)
 
     
     if (!initializeGameobject(SRMath::vec3(0.f, 0.f, 0.f), SRMath::vec3(0.f, 0.f, 0.0f),
-        SRMath::vec3(0.04f, 0.04f, 0.04f), "IronMan.obj"))
+        SRMath::vec3(0.04f, 0.04f, 0.04f), "IronMan"))
+        return false;
+
+    if (!initializeGameobject(SRMath::vec3(-10.f, 0.f, 0.f), SRMath::vec3(0.f, 0.f, 0.0f),
+        SRMath::vec3(0.04f, 0.04f, 0.04f), "teapot"))
         return false;
 
 	m_camera.Initialize(SRMath::vec3(0.f, 0.f, 5.f));
@@ -289,7 +293,7 @@ LRESULT Framework::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
     return 0;
 }
 
-void Framework::CheckMenuBox(bool isOn, const int& retFlag)
+void Framework::CheckMenuBox(bool isOn, const int& menuID)
 {
     
     HMENU hMenu = GetMenu(m_hWnd);
@@ -298,12 +302,12 @@ void Framework::CheckMenuBox(bool isOn, const int& retFlag)
     if (isOn)
     {
         // 상태가 true이면, MF_CHECKED 플래그로 체크 표시를 추가합니다.
-        CheckMenuItem(hMenu, retFlag, MF_BYCOMMAND | MF_CHECKED);
+        CheckMenuItem(hMenu, menuID, MF_BYCOMMAND | MF_CHECKED);
     }
     else
     {
         // 상태가 false이면, MF_UNCHECKED 플래그로 체크 표시를 제거합니다.
-        CheckMenuItem(hMenu, retFlag, MF_BYCOMMAND | MF_UNCHECKED);
+        CheckMenuItem(hMenu, menuID, MF_BYCOMMAND | MF_UNCHECKED);
     }
 
 }

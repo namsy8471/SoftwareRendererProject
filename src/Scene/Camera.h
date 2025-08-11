@@ -5,7 +5,7 @@
 class Camera
 {
 private:
-	float moveSpeed = 100.f; // 카메라 이동 속도
+	float moveSpeed = 10.f; // 카메라 이동 속도
 
 	SRMath::vec3 m_cameraPos = { 0.f, 0.f, 5.f };
 	SRMath::vec3 m_cameraforward;

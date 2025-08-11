@@ -1,11 +1,11 @@
 ﻿#include "Renderer.h"
-#include <thread>
 #include <vector>
 #include <algorithm>
 #include <limits>
 #include <cmath>
 #include <omp.h>
 #include <optional>
+
 #include "Graphics/Mesh.h"
 #include "Graphics/Texture.h"
 #include "Math/AABB.h"
@@ -245,40 +245,8 @@ void Renderer::SetLineAlgorithm(ELineAlgorithm eLineAlgorithm)
 
 void Renderer::Clear()
 {
-    // 1. Get Thread
-    const unsigned int numThreads = std::thread::hardware_concurrency();
-    std::vector<std::thread> threads;
-
-    // 2. divide height by Threads.
-    const int linesPerThread = m_height / numThreads;
-
-    for (unsigned int i = 0; i < numThreads; ++i)
-    {
-        // 3. calculate line for height.
-        const int startY = i * linesPerThread;
-        const int endY = (i == numThreads - 1) ? m_height : startY + linesPerThread;
-
-        // 4. Call the DrawPixel in each Thread
-        threads.emplace_back([this, startY, endY]() {
-
-            for (int y = startY; y < endY; y++)
-            {
-                int rowOffset = y * m_width;
-                for (int x = 0; x < m_width; x++)
-                {
-                    int idx = x + rowOffset;
-                    m_pPixelData[idx] = 0;
-                    m_depthBuffer[idx] = std::numeric_limits<float>::lowest(); // Z Buffer Clearing
-                }
-            }
-        });
-    }
-
-    // 5. await for complete
-    for (auto& t : threads)
-    {
-        t.join();
-    }
+	memset(m_pPixelData, 0, m_width * m_height * sizeof(unsigned int));
+	std::fill(m_depthBuffer.begin(), m_depthBuffer.end(), std::numeric_limits<float>::lowest());   
 }
 
 void Renderer::Present(HDC hScreenDC) const
@@ -335,6 +303,7 @@ void Renderer::drawFilledTriangle(const RasterizerVertex& v0, const RasterizerVe
         float w1 = w1_row;
         float w2 = w2_row;
 
+
         for (int x = minX; x <= maxX; ++x)
         {
             // 바리센트릭 좌표가 모두 양수이면 삼각형 내부에 있는 것입니다.
@@ -360,29 +329,37 @@ void Renderer::drawFilledTriangle(const RasterizerVertex& v0, const RasterizerVe
                     SRMath::vec2 uv_over_w_interpolated = v0.texcoord_over_w * w_bary + v1.texcoord_over_w * u_bary + v2.texcoord_over_w * v_bary;
                     SRMath::vec2 uv_interpolated = uv_over_w_interpolated / interpolated_one_over_w;
 
-                    //float intensity = std::max(0.0f, SRMath::dot(normal_interpolated, light_dir));
+                    SRMath::vec3 base_color;
 
-                    //unsigned int texel_color = texture->GetPixels(uv_interpolated.x, uv_interpolated.y);
+                    if (material->diffuseTexture)
+                    {
+                        //base_color = material->diffuseTexture->GetPixels(uv_interpolated.x, uv_interpolated.y);
+                    }
+                    else {
+                        base_color = material->kd; // 재질의 기본 난반사 색상
+                    }
 
-                    // 1. 난반사(diffuse) 조명을 계산합니다.
+                    // 주변광 조명 계산
+                    SRMath::vec3 ambient_color = material->ka; // 재질의 기본 주변광 색상
+
+                    // 난반사 조명 계산
                     float diffuse_intensity = std::max(0.0f, dot(normal_interpolated, lights[0].direction));
+                    SRMath::vec3 diffuse_color = base_color * diffuse_intensity;
 
-                    // 2. 💡 아주 작은 값의 주변광(ambient)을 추가합니다.
-                    float ambient_intensity = 0.1f; // 10%의 주변광
+                    // 정반사 조명 계산
+                    SRMath::vec3 interpolated_world_pos = (v0.world_pos_over_w * w_bary + v1.world_pos_over_w * u_bary + v2.world_pos_over_w * v_bary) / interpolated_one_over_w;
+                    SRMath::vec3 view_dir = SRMath::normalize(camPos - interpolated_world_pos);
+                    SRMath::vec3 reflect_dir = SRMath::reflect(-1 * lights[0].direction, normal_interpolated);
+                    float spec_factor = std::pow(std::max(0.0f, SRMath::dot(view_dir, reflect_dir)), material->Ns);
+                    SRMath::vec3 specular_color = material->ks * spec_factor;
 
-                    // 3. 최종 빛의 세기는 난반사 + 주변광입니다. (최대 1.0을 넘지 않도록)
-                    float final_intensity = std::min(1.0f, diffuse_intensity + ambient_intensity);
-
-                    SRMath::vec3 base_color = { 1.f, 1.f, 1.f };
-                    SRMath::vec3 color = base_color * final_intensity;
-
+                    SRMath::vec3 color = ambient_color + diffuse_color + specular_color;
+                    
                     unsigned int final_color = RGB(
                         color.x * 255.f,
                         color.y * 255.f,
                         color.z * 255.f
                     );
-
-                    //unsigned int final_color2 = texel_color * final_intensity;
 
                     m_depthBuffer[idx] = interpolated_one_over_w;
                     drawPixel(x, y, final_color);
@@ -537,7 +514,7 @@ void Renderer::drawMesh(const MeshRenderCommand& cmd, const SRMath::mat4& viewMa
             continue;
         }
 
-        // 3. ✅ 컬링을 통과한 후에만 나머지 속성들을 계산합니다.
+        // 3. 컬링을 통과한 후에만 나머지 속성들을 계산합니다.
         sv[0].pos_world = modelMatrix * v0_model.position;
         sv[0].normal_world = SRMath::normalize(normal_matrix_world * SRMath::vec4(v0_model.normal, 0.f));
         sv[0].texcoord = v0_model.texcoord;
@@ -636,9 +613,7 @@ void Renderer::RenderScene(const RenderQueue& queue, const Camera& camera, const
 {
     const SRMath::mat4& viewMatrix = camera.GetViewMatrix();
     const SRMath::mat4& projectionMatrix = camera.GetProjectionMatrix();
-
 	const SRMath::mat4& vp = projectionMatrix * viewMatrix;
-
 
     for (const auto& cmd : queue.GetRenderCommands())
     {

@@ -584,4 +584,11 @@ namespace SRMath {
 		return std::nullopt;
 	}
 
+	inline vec3 reflect (const vec3& I, const vec3& N)
+	{
+		// I - 2 * dot(N, I) * N
+		float dotNI = dot(N, I);
+		return I - (N * (2.0f * dotNI));
+	}
+
 }

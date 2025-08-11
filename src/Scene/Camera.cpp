@@ -29,8 +29,6 @@ void Camera::Update(const float deltaTime, const bool* keyInput, const float asp
 
 void Camera::Move(const float deltaTime, const bool* keyInput)
 {
-    moveSpeed *= deltaTime; // 프레임 시간에 따라 이동 속도를 조정합니다.
-
     // --- 카메라의 실제 방향 벡터 계산 ---
     // Yaw와 Pitch를 모두 사용하여 3D 방향 벡터를 계산합니다.
     m_cameraforward = {
@@ -45,6 +43,4 @@ void Camera::Move(const float deltaTime, const bool* keyInput)
     if (keyInput['D']) MoveRight(deltaTime);
     if (keyInput['A']) MoveLeft(deltaTime);
 
-    // 카메라 위치를 업데이트한 후, moveSpeed를 원래 값으로 되돌립니다.
-    moveSpeed /= deltaTime;
 }

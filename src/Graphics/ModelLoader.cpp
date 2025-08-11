@@ -1,10 +1,14 @@
 #include "Graphics/ModelLoader.h"
 #include <fstream>
 #include <sstream>
-#include "Graphics/Model.h"
 #include <map>
-#include <queue>
+#include <unordered_map>
+#include <omp.h>
+
+#include "Graphics/TextureLoader.h"
+#include "Graphics/Model.h"
 #include "Graphics/Octree.h"
+#include "Graphics/Material.h"
 #include "Math/AABB.h"
 
 struct VertexKey
@@ -24,14 +28,20 @@ struct VertexKey
     }
 };
 
-
-std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filepath)
+std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
 {
     std::unique_ptr<Model> outModel = std::make_unique<Model>();
 
-    std::ifstream file(filepath);
-    
+    std::ifstream file(filename + ".obj");
     if (!file.is_open()) return nullptr;
+
+    // 이 'directoryPath'가 모든 상대 경로의 기준이 됩니다.
+    std::string directoryPath = "";
+    size_t last_slash_idx = filename.find_last_of("/\\");
+    if (std::string::npos != last_slash_idx)
+    {
+        directoryPath = filename.substr(0, last_slash_idx + 1);
+    }
 
     // 1. 파일에서 모든 속성(v, vt, vn)을 임시 버퍼에 읽어들입니다.
     std::vector<SRMath::vec3> temp_positions;
@@ -40,13 +50,17 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filepath)
 
     // 현재 처리 중인 메시 그룹을 가리키는 포인터
     Mesh* currentMesh = nullptr;
+    std::unordered_map<std::string, Material> materials;
     std::string currentMaterialName;
 
+	bool newGroupStarted = false; // 새로운 g 태그가 시작되었는지 여부
+    
     // 정점 중복 제거를 위한 맵
     // Key: v/vt/vn 인덱스 조합, Value: 최종 정점 버퍼의 인덱스
     std::map<VertexKey, unsigned int> vertexCache;
 
     std::string line;
+    
     while (std::getline(file, line))
     {
         std::stringstream ss(line);
@@ -76,6 +90,12 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filepath)
             
         }
 
+        else if (prefix == "mtllib")
+        {
+            std::string mtlFilename;
+            ss >> mtlFilename;
+            materials = TextureLoader::LoadMTLFile(directoryPath + mtlFilename);
+        }
         else if (prefix == "usemtl")
         {
             ss >> currentMaterialName;
@@ -83,23 +103,61 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filepath)
 
         else if (prefix == "g")
         {
-            // 그룹 이름은 아직 없음
+            // 새로운 g 태그를 만나면 플래그를 설정
+            newGroupStarted = true;
         }
 
         else if(prefix == "f")
         {
-            if (currentMesh == nullptr || currentMesh->materialName != currentMaterialName)
+            if (currentMesh == nullptr
+                || currentMesh->material.name != currentMaterialName
+                || newGroupStarted)
             {
-                // 새로운 메시 그룹이 시작될 때 vertexCache 초기화 ---
+				newGroupStarted = false; // 새로운 그룹 시작 플래그 초기화
+                // 새로운 메시 그룹이 시작될 때 vertexCache 초기화 --- 
                 vertexCache.clear();
 
                 // 모델에 새로운 메시 추가 및 currentMesh 포인터 갱신
                 outModel->m_meshes.emplace_back();
                 currentMesh = &outModel->m_meshes.back();
-                currentMesh->materialName = currentMaterialName;
-                // 여기서부터 파싱되는 면(face)들은 이 메시 그룹에 속하게 됨
+
+                if(materials.find(currentMaterialName) != materials.end())
+                {
+                    currentMesh->material = materials[currentMaterialName];
+                }
+                else
+                {
+                    size_t colon_pos = currentMaterialName.find_last_of(":");
+
+                    if (colon_pos != std::string::npos)
+                    {
+                        // 콜론 뒤의 부분 문자열을 잘라냅니다. (예: "Iron_man_leg:red" -> "red")
+                        std::string baseMaterialName = currentMaterialName.substr(colon_pos + 1);
+
+                        auto fallback_it = materials.find(baseMaterialName);
+                        if (fallback_it != materials.end())
+                        {
+                            // 2차 시도 성공: 잘라낸 이름으로 찾은 재질을 할당합니다.
+                            currentMesh->material = fallback_it->second;
+                        }
+                        else
+                        {
+                            // 최종 실패: 기본 재질을 할당합니다.
+                            currentMesh->material = Material{};
+                        }
+                    }
+                    else
+                    {
+                        // 재질이 정의되지 않은 경우 기본 재질을 사용
+                        currentMesh->material = Material();
+                    }
+                }
+
+                // 최근 머테리얼 이름을 현재 매시의 머테리얼 이름으로 변경
+				currentMesh->material.name = currentMaterialName;
             }
 
+            // 여기서부터 파싱되는 면(face)들은 이 메시 그룹에 속하게 됨
             std::string face_data;
             int vertex_count_in_face = 0;
             unsigned int face_indices[4]; // 쿼드까지 지원한다고 가정
@@ -169,8 +227,11 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filepath)
     modelAABB.min = SRMath::vec3(std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max());
     modelAABB.max = SRMath::vec3(std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest());
 
-    for (auto& mesh : outModel->m_meshes)
+#pragma omp parallel for
+    for (int i = 0 ; i < outModel->m_meshes.size(); i++)
     {
+        auto& mesh = outModel->m_meshes[i];
+
         // If there is no Normal vector in OBJ File
         if (temp_normals.empty())
         {
@@ -204,7 +265,11 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filepath)
 
         // 메시 AABB 계산 및 모델 전체 통합
         AABB meshAABB = AABB::CreateFromMesh(mesh);
-        modelAABB.Encapsulate(meshAABB);
+        
+        #pragma omp critical
+        {
+            modelAABB.Encapsulate(meshAABB);
+        }
 
         // Octree 생성 및 빌드
         mesh.octree = std::make_unique<Octree>();

@@ -110,6 +110,7 @@ void GameObject::SubmitToRenderQueue(RenderQueue& renderQueue, const Frustum& fr
 			cmd.sourceMesh = &mesh;
 			cmd.indicesToDraw = &mesh.indices;
 			cmd.worldTransform = m_worldMatrix;
+			cmd.material = &mesh.material;
 
 			if(debugFlags.bShowWireframe)
 			{
