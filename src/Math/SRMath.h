@@ -559,7 +559,7 @@ namespace SRMath {
 		}
 
 		// 3. 벡터를 정규화하여 회전 축을 구합니다.
-		Vector<3> axis = rotationVector / angleInRadians;
+		vec3 axis = rotationVector / angleInRadians;
 
 		// 4. 기존의 로드리게스 회전 공식 코드를 그대로 사용합니다.
 		const float c = std::cos(angleInRadians);
@@ -569,25 +569,16 @@ namespace SRMath {
 		Matrix<4> result(1); // 단위 행렬로 초기화할 필요 없음. 모든 요소를 직접 설정.
 
 		// 오른손 좌표계 열 우선 회전 행렬
-		result[0][0] = c + axis.x * axis.x * t;
-		result[0][1] = axis.y * axis.x * t + axis.z * s;
-		result[0][2] = axis.z * axis.x * t - axis.y * s;
-		result[0][3] = 0.0f;
+		result[0].m128 = _mm_set_ps(0.0f, axis.z * axis.x * t - axis.y * s,
+			axis.y* axis.x* t + axis.z * s, c + axis.x * axis.x * t); // SIMD 최적화
 
-		result[1][0] = axis.x * axis.y * t - axis.z * s;
-		result[1][1] = c + axis.y * axis.y * t;
-		result[1][2] = axis.z * axis.y * t + axis.x * s;
-		result[1][3] = 0.0f;
+		result[1].m128 = _mm_set_ps(0.0f, axis.z * axis.y * t + axis.x * s,
+			c + axis.y * axis.y * t, axis.x * axis.y * t - axis.z * s); // SIMD 최적화
 
-		result[2][0] = axis.x * axis.z * t + axis.y * s;
-		result[2][1] = axis.y * axis.z * t - axis.x * s;
-		result[2][2] = c + axis.z * axis.z * t;
-		result[2][3] = 0.0f;
+		result[2].m128 = _mm_set_ps(0.0f, c + axis.z * axis.z * t,
+			axis.y * axis.z * t - axis.x * s, axis.x * axis.z * t + axis.y * s); // SIMD 최적화
 
-		result[3][0] = 0.0f;
-		result[3][1] = 0.0f;
-		result[3][2] = 0.0f;
-		result[3][3] = 1.0f;
+		result[3].m128 = _mm_set_ps(1.0f, 0.0f, 0.0f, 0.0f); // 마지막 행은 단위 행렬의 마지막 행
 
 		return result;
 	}
@@ -615,18 +606,30 @@ namespace SRMath {
 		vec3 u = cross(s, f);
 
 		mat4 result(1.0f);
-		result[0][0] = s.x;
-		result[1][0] = s.y;
-		result[2][0] = s.z;
+		/*result[0][0] = s.x;
 		result[0][1] = u.x;
+		result[0][2] = -f.x;*/
+
+		result[0].m128 = _mm_set_ps(0.0f, -f.x, u.x, s.x); // SIMD 최적화
+
+		/*result[1][0] = s.y;
 		result[1][1] = u.y;
+		result[1][2] = -f.y;*/
+
+		result[1].m128 = _mm_set_ps(0.0f, -f.y, u.y, s.y); // SIMD 최적화
+
+		/*result[2][0] = s.z;
 		result[2][1] = u.z;
-		result[0][2] = -f.x;
-		result[1][2] = -f.y;
-		result[2][2] = -f.z;
-		result[3][0] = -dot(s, eye);
+		result[2][2] = -f.z;*/
+
+		result[2].m128 = _mm_set_ps(0.0f, -f.z, u.z, s.z); // SIMD 최적화
+
+		/*result[3][0] = -dot(s, eye);
 		result[3][1] = -dot(u, eye);
-		result[3][2] = dot(f, eye);
+		result[3][2] = dot(f, eye);*/
+		
+		result[3].m128 = _mm_set_ps(1.0f, dot(f, eye), -dot(u, eye), -dot(s, eye));
+		
 		return result;
 	}
 
@@ -730,10 +733,6 @@ namespace SRMath {
 		const __m128 min_vec = _mm_set1_ps(min);
 		const __m128 max_vec = _mm_set1_ps(max);
 
-		__m128 clamped = _mm_max_ps(min_vec, _mm_min_ps(max_vec, v.m128));
-		Vector<N> clamped_vec;
-		clamped_vec.m128 = clamped;
-
-		return clamped_vec;
+		return v.clamp(min, max);
 	}
 }
