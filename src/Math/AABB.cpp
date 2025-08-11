@@ -46,6 +46,11 @@ const bool AABB::AABBContains(const AABB& other) const
            (min.z <= other.min.z && max.z >= other.max.z);
 }
 
+const SRMath::vec3 AABB::GetCenter() const
+{
+    return { (min.x + max.x) * 0.5f, (min.y + max.y) * 0.5f, (min.z + max.z) * 0.5f };
+}
+
 const std::array<SRMath::vec3, 8> AABB::GetVertice() const
 {
     std::array<SRMath::vec3, 8> array; // 8개의 꼭짓점

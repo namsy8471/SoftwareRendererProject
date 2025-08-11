@@ -12,6 +12,8 @@ struct AABB
 	void Encapsulate(const SRMath::vec3& point); // 점 하나를 포함하도록 확장하는 함수
 	const bool AABBIntersects(const AABB& other) const;
 	const bool AABBContains(const AABB& other) const;
+
+	const SRMath::vec3 GetCenter() const; // 중심점을 반환하는 함수
 	const std::array<SRMath::vec3, 8> GetVertice() const; // 8개의 꼭짓점을 반환하는 함수
 
 	static AABB CreateFromMesh(const Mesh& mesh);

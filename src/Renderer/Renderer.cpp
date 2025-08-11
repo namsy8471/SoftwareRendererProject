@@ -342,19 +342,32 @@ void Renderer::drawFilledTriangle(const RasterizerVertex& v0, const RasterizerVe
                     // 주변광 조명 계산
                     SRMath::vec3 ambient_color = material->ka; // 재질의 기본 주변광 색상
 
-                    // 난반사 조명 계산
-                    float diffuse_intensity = std::max(0.0f, dot(normal_interpolated, lights[0].direction));
-                    SRMath::vec3 diffuse_color = base_color * diffuse_intensity;
+                    // 2. 여러 빛의 난반사/정반사 효과를 누적할 변수를 0으로 초기화합니다.
+                    SRMath::vec3 total_diffuse_color = { 0.0f, 0.0f, 0.0f };
+                    SRMath::vec3 total_specular_color = { 0.0f, 0.0f, 0.0f };
 
-                    // 정반사 조명 계산
-                    SRMath::vec3 interpolated_world_pos = (v0.world_pos_over_w * w_bary + v1.world_pos_over_w * u_bary + v2.world_pos_over_w * v_bary) / interpolated_one_over_w;
+                    SRMath::vec3 interpolated_world_pos = 
+                        (v0.world_pos_over_w * w_bary + v1.world_pos_over_w * u_bary + v2.world_pos_over_w * v_bary) / interpolated_one_over_w;
                     SRMath::vec3 view_dir = SRMath::normalize(camPos - interpolated_world_pos);
-                    SRMath::vec3 reflect_dir = SRMath::reflect(-1 * lights[0].direction, normal_interpolated);
-                    float spec_factor = std::pow(std::max(0.0f, SRMath::dot(view_dir, reflect_dir)), material->Ns);
-                    SRMath::vec3 specular_color = material->ks * spec_factor;
 
-                    SRMath::vec3 color = ambient_color + diffuse_color + specular_color;
+                    for (const auto& light : lights)
+                    {
+                        // 난반사 조명 계산
+                        float diffuse_intensity = std::max(0.0f, dot(normal_interpolated, light.direction));
+                        total_diffuse_color += base_color * diffuse_intensity * light.color;
+
+                        // 정반사 조명 계산
+                        SRMath::vec3 reflect_dir = SRMath::reflect(-1 * light.direction, normal_interpolated);
+                        float spec_dot = SRMath::dot(view_dir, reflect_dir);
+                        float spec_factor = std::pow(std::max(0.0f, spec_dot), material->Ns);
+                        total_specular_color += material->ks * spec_factor * light.color;
+                    }
+
+                    SRMath::vec3 color = ambient_color + total_diffuse_color + total_specular_color;
                     
+                    // 최종 색상의 각 채널(R, G, B)을 0.0과 1.0 사이로 클램핑합니다.
+					color = color.clamp(0.f, 1.0f);
+
                     unsigned int final_color = RGB(
                         color.x * 255.f,
                         color.y * 255.f,

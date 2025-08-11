@@ -11,6 +11,9 @@
 #include "Graphics/Material.h"
 #include "Math/AABB.h"
 
+int face_lines_read = 0; // 디버깅용: 읽은 면(face) 라인 수
+int triangles_generated = 0; // 디버깅용: 생성된 삼각형 수
+
 struct VertexKey
 {
     int pos_idx = -1;	// v
@@ -48,10 +51,8 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
     std::vector<SRMath::vec2> temp_texcoords;
     std::vector<SRMath::vec3> temp_normals;
 
-    // 현재 처리 중인 메시 그룹을 가리키는 포인터
-    Mesh* currentMesh = nullptr;
-    std::unordered_map<std::string, Material> materials;
-    std::string currentMaterialName;
+	std::unordered_map<std::string, Material> materials;    // MTL 파일에서 읽은 재질들
+	std::string currentMaterialName;                        // 현재 사용 중인 재질 이름
 
 	bool newGroupStarted = false; // 새로운 g 태그가 시작되었는지 여부
     
@@ -109,8 +110,9 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
 
         else if(prefix == "f")
         {
-            if (currentMesh == nullptr
-                || currentMesh->material.name != currentMaterialName
+			// 새로운 메시 그룹이 시작되었거나, 현재 메시가 없을 때
+            if (outModel->m_meshes.empty()
+                || outModel->m_meshes.back().material.name != currentMaterialName
                 || newGroupStarted)
             {
 				newGroupStarted = false; // 새로운 그룹 시작 플래그 초기화
@@ -119,11 +121,11 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
 
                 // 모델에 새로운 메시 추가 및 currentMesh 포인터 갱신
                 outModel->m_meshes.emplace_back();
-                currentMesh = &outModel->m_meshes.back();
+                auto& newMesh = outModel->m_meshes.back();
 
                 if(materials.find(currentMaterialName) != materials.end())
                 {
-                    currentMesh->material = materials[currentMaterialName];
+                    newMesh.material = materials[currentMaterialName];
                 }
                 else
                 {
@@ -138,25 +140,26 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
                         if (fallback_it != materials.end())
                         {
                             // 2차 시도 성공: 잘라낸 이름으로 찾은 재질을 할당합니다.
-                            currentMesh->material = fallback_it->second;
+                            newMesh.material = fallback_it->second;
                         }
                         else
                         {
                             // 최종 실패: 기본 재질을 할당합니다.
-                            currentMesh->material = Material{};
+                            newMesh.material = Material{};
                         }
                     }
                     else
                     {
                         // 재질이 정의되지 않은 경우 기본 재질을 사용
-                        currentMesh->material = Material();
+                        newMesh.material = Material();
                     }
                 }
 
                 // 최근 머테리얼 이름을 현재 매시의 머테리얼 이름으로 변경
-				currentMesh->material.name = currentMaterialName;
+                newMesh.material.name = currentMaterialName;
             }
 
+			auto& meshToAddTo = outModel->m_meshes.back();
             // 여기서부터 파싱되는 면(face)들은 이 메시 그룹에 속하게 됨
             std::string face_data;
             int vertex_count_in_face = 0;
@@ -165,25 +168,47 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
             while (ss >> face_data && vertex_count_in_face < 4)
             {
                 VertexKey key;
-                std::stringstream face_ss(face_data);
-                std::string token;
+                try {
+                    // 슬래시('/')의 위치를 찾아서 형식을 판별합니다.
+                    size_t first_slash = face_data.find('/');
+                    size_t second_slash = face_data.find('/', first_slash + 1);
 
-                // "v/vt/vn" form parcing
-                // Position indice
-                std::getline(face_ss, token, '/');
-                key.pos_idx = std::stoi(token) - 1; // 1 based -> 0 based
+                    if (first_slash == std::string::npos)
+                    {
+                        // 형식: "v" (예: "123")
+                        key.pos_idx = std::stoi(face_data) - 1;
+                    }
+                    else
+                    {
+                        // v 인덱스는 항상 첫 슬래시 앞에 있습니다.
+                        key.pos_idx = std::stoi(face_data.substr(0, first_slash)) - 1;
 
-                if (std::getline(face_ss, token, '/'))
-                {
-                    if (!token.empty())
-                        key.tex_idx = std::stoi(token) - 1;
+                        if (second_slash == std::string::npos)
+                        {
+                            // 형식: "v/vt" (예: "123/456")
+                            key.tex_idx = std::stoi(face_data.substr(first_slash + 1)) - 1;
+                        }
+                        else
+                        {
+                            // 두 번째 슬래시가 첫 슬래시 바로 뒤에 있다면 "v//vn" 형식입니다.
+                            if (second_slash == first_slash + 1)
+                            {
+                                // 형식: "v//vn" (예: "123//789")
+                                key.nrm_idx = std::stoi(face_data.substr(second_slash + 1)) - 1;
+                            }
+                            else
+                            {
+                                // 형식: "v/vt/vn" (예: "123/456/789")
+                                key.tex_idx = std::stoi(face_data.substr(first_slash + 1, second_slash - first_slash - 1)) - 1;
+                                key.nrm_idx = std::stoi(face_data.substr(second_slash + 1)) - 1;
+                            }
+                        }
+                    }
                 }
-
-                // vn parcer
-                if (std::getline(face_ss, token, '/'))
-                {
-                    if (!token.empty())
-                        key.nrm_idx = std::stoi(token) - 1;
+                catch (const std::exception& e) {
+                    // stoi 변환 중 오류가 발생하면 (예: 파일 손상), 해당 면은 건너뜁니다.
+                    // std::cerr << "Face parse error: " << e.what() << " on data: " << face_vertex_str << std::endl;
+                    continue;
                 }
 
                 auto it = vertexCache.find(key);
@@ -205,8 +230,8 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
                         new_vertex.normal = temp_normals[key.nrm_idx];
                     }
 
-                    currentMesh->vertices.push_back(new_vertex);
-                    unsigned int new_index = currentMesh->vertices.size() - 1;
+                    meshToAddTo.vertices.push_back(new_vertex);
+                    unsigned int new_index = meshToAddTo.vertices.size() - 1;
                     vertexCache[key] = new_index;
                     face_indices[vertex_count_in_face] = new_index;
                 }
@@ -214,11 +239,12 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
             }
 
             // 4. 삼각 분할(Triangulation)하여 최종 인덱스 버퍼에 추가
+            // CCW 방향
             for (int i = 0; i < vertex_count_in_face - 2; ++i)
             {
-                currentMesh->indices.push_back(face_indices[0]);
-                currentMesh->indices.push_back(face_indices[i + 1]);
-                currentMesh->indices.push_back(face_indices[i + 2]);
+                meshToAddTo.indices.push_back(face_indices[0]);
+                meshToAddTo.indices.push_back(face_indices[i + 2]);
+                meshToAddTo.indices.push_back(face_indices[i + 1]);
             }
         }
     }
@@ -232,24 +258,48 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
     {
         auto& mesh = outModel->m_meshes[i];
 
+        bool hasNormals = false;
+        for(const auto& vertex : mesh.vertices)
+        {
+            if (vertex.normal != SRMath::vec3(0.0f, 0.0f, 0.0f))
+            {
+                hasNormals = true;
+                break;
+            }
+		}
+
         // If there is no Normal vector in OBJ File
-        if (temp_normals.empty())
+        if (!hasNormals || true)
         {
             // 각 정점의 법선을 0으로 초기화
-            std::vector<SRMath::vec3> face_normals(mesh.vertices.size(), { 0.0f, 0.0f, 0.0f });
+            for (auto& vertex : mesh.vertices)
+            {
+                vertex.normal = SRMath::vec3(0.0f, 0.0f, 0.0f);
+            }
 
             // 모든 면을 순회하며 면의 법선을 계산하고, 면을 구성하는 정점들에 더해줌
-            for (size_t i = 0; i < mesh.indices.size(); i += 3)
+            for (size_t idx = 0; idx < mesh.indices.size(); idx += 3)
             {
-                unsigned int i0 = mesh.indices[i];
-                unsigned int i1 = mesh.indices[i + 1];
-                unsigned int i2 = mesh.indices[i + 2];
+                unsigned int i0 = mesh.indices[idx];
+                unsigned int i1 = mesh.indices[idx + 1];
+                unsigned int i2 = mesh.indices[idx + 2];
 
                 const SRMath::vec3& v0 = mesh.vertices[i0].position;
                 const SRMath::vec3& v1 = mesh.vertices[i1].position;
                 const SRMath::vec3& v2 = mesh.vertices[i2].position;
 
-                SRMath::vec3 face_normal = SRMath::normalize(SRMath::cross(v1 - v0, v2 - v0));
+                SRMath::vec3 face_normal = SRMath::cross(v1 - v0, v2 - v0);
+
+                float length = SRMath::length(face_normal);
+                if (length > 1e-6f) // 0벡터 방지
+                {
+                    face_normal = SRMath::normalize(face_normal);
+                }
+                else
+                {
+                    face_normal = SRMath::vec3(0.0f, 0.0f, 0.0f);
+                }
+
 
                 mesh.vertices[i0].normal = mesh.vertices[i0].normal + face_normal;
                 mesh.vertices[i1].normal = mesh.vertices[i1].normal + face_normal;
@@ -259,7 +309,11 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
             // 각 정점의 법선을 정규화하여 부드러운 법선(Smooth Normal) 생성
             for (auto& vertex : mesh.vertices)
             {
-                vertex.normal = SRMath::normalize(vertex.normal);
+                float length = SRMath::length(vertex.normal);
+                if (length > 1e-6f)
+                    vertex.normal = SRMath::normalize(vertex.normal);
+                else
+                    vertex.normal = SRMath::vec3(0.0f, 1.0f, 0.0f); // 기본 위쪽 방향
             }
         }
 

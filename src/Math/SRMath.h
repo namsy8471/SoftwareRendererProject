@@ -13,9 +13,10 @@ namespace SRMath {
 	// General Template
 
 	template <size_t N>	struct alignas(16) Vector;
-	using vec2 = Vector<2>;
-	using vec3 = Vector<3>;
+	
 	using vec4 = Vector<4>;
+	using vec3 = Vector<3>;
+	using vec2 = Vector<2>;
 
 	// Vector2
 	template <>
@@ -27,11 +28,65 @@ namespace SRMath {
 			__m128 m128;
 		};
 
-		Vector();
-		Vector(float x, float y);
+		Vector() : m128(_mm_setzero_ps()) {}
+		Vector(const __m128 v) : m128(v) {}
+		Vector(float x, float y) : m128(_mm_set_ps(0.0f, 0.0f, y, x)) {}
 
 		float& operator[](size_t index) { return data[index]; }
 		const float& operator[](size_t index) const { return data[index]; }
+
+		Vector<2>& operator+=(const Vector<2>& other) {
+			// SIMD
+			this->m128 = _mm_add_ps(this->m128, other.m128);
+			return *this;
+		}
+
+		Vector<2>& operator-=(const Vector<2>& other) {
+			this->m128 = _mm_sub_ps(this->m128, other.m128);
+			return *this;
+		}
+
+		Vector<2>& operator*=(float scalar) {
+			__m128 s = _mm_set1_ps(scalar);
+			this->m128 = _mm_mul_ps(this->m128, s);
+			return *this;
+		}
+
+		Vector<2>& operator*=(const Vector<2>& other) {
+			this->m128 = _mm_mul_ps(this->m128, other.m128);
+			return *this;
+		}
+
+		Vector<2>& operator/=(float scalar) {
+			float rcp_scalar = 1.0f / scalar;
+			__m128 r = _mm_set1_ps(rcp_scalar);
+			this->m128 = _mm_mul_ps(this->m128, r);
+			return *this;
+		}
+
+		bool operator==(const Vector<2>& other)
+		{
+			// Compare each component of the vectors
+			__m128 cmp = _mm_cmpeq_ps(this->m128, other.m128);
+
+			// Check if all components are equal
+			return _mm_movemask_ps(cmp) == 0x3; // All bits set means all components are equal
+		}
+
+		bool operator!=(const Vector<2>& other)
+		{
+			return *this == other ? false : true; // All bits set means all components are equal
+		}
+
+		Vector<2> clamp(float min, float max)
+		{
+			const __m128 min_vec = _mm_set1_ps(min);
+			const __m128 max_vec = _mm_set1_ps(max);
+
+			this->m128 = _mm_max_ps(min_vec, _mm_min_ps(max_vec, this->m128));
+
+			return *this;
+		}
 	};
 
 	// Vector3
@@ -44,13 +99,69 @@ namespace SRMath {
 			__m128 m128;
 		};
 
-		Vector();
-		Vector(float x, float y, float z);
-		Vector(const SRMath::Vector<2>& v);
+		Vector() : m128(_mm_setzero_ps()) {}
+		Vector(const __m128 v) : m128(v) {}
+		Vector(float x, float y, float z) : m128(_mm_set_ps(0.0f, z, y, x)) {}
+		Vector(const SRMath::Vector<2>& v) : m128(_mm_set_ps(0.0f, 0.0f, v.y, v.x)) {}
+		Vector(const SRMath::Vector<2>& v, float z) : m128(_mm_set_ps(0.0f, z, v.y, v.x)) {}
+		Vector(const SRMath::Vector<3>& v) : m128(_mm_set_ps(0.0f, v.z, v.y, v.x)) {}
 		Vector(const SRMath::Vector<4>& v);
 
 		float& operator[](size_t index) { return data[index]; }
 		const float& operator[](size_t index) const { return data[index]; }
+
+		Vector& operator+=(const Vector<3>& other) {
+			// SIMD
+			this->m128 = _mm_add_ps(this->m128, other.m128);
+			return *this;
+		}
+
+		Vector& operator-=(const Vector<3>& other) {
+			this->m128 = _mm_sub_ps(this->m128, other.m128);
+			return *this;
+		}
+
+		Vector& operator*=(float scalar) {
+			__m128 s = _mm_set1_ps(scalar);
+			this->m128 = _mm_mul_ps(this->m128, s);
+			return *this;
+		}
+
+		Vector& operator*=(const Vector<3>& other) {
+			this->m128 = _mm_mul_ps(this->m128, other.m128);
+			return *this;
+		}
+
+		Vector& operator/=(float scalar) {
+			float rcp_scalar = 1.0f / scalar;
+			__m128 r = _mm_set1_ps(rcp_scalar);
+			this->m128 = _mm_mul_ps(this->m128, r);
+			return *this;
+		}
+
+		bool operator==(const Vector& other)
+		{
+			// Compare each component of the vectors
+			__m128 cmp = _mm_cmpeq_ps(this->m128, other.m128);
+
+			// Check if all components are equal
+			return _mm_movemask_ps(cmp) == 0x7; // All bits set means all components are equal
+		}
+
+		bool operator!=(const Vector& other)
+		{
+			return *this == other ? false : true; // All bits set means all components are equal
+		}
+
+		Vector clamp(float min, float max)
+		{
+			const __m128 min_vec = _mm_set1_ps(min);
+			const __m128 max_vec = _mm_set1_ps(max);
+
+			this->m128 = _mm_max_ps(min_vec, _mm_min_ps(max_vec, this->m128));
+
+			return *this;
+		}
 	};
 
 	// Vector4
@@ -63,32 +174,74 @@ namespace SRMath {
 			__m128 m128;
 		};
 
-		Vector();
-		Vector(float x, float y, float z, float w);
-		Vector(const SRMath::Vector<2>& v, float w);
-		Vector(const SRMath::Vector<2>& v);
-		Vector(const SRMath::Vector<3>& v, float w);
-		Vector(const SRMath::Vector<3>& v);
+		Vector() : m128(_mm_setzero_ps()) {}
+		Vector(const __m128 v) : m128(v) {}
+		Vector(float x, float y, float z, float w) : m128(_mm_set_ps(w, z, y, x)) {}
+		Vector(const SRMath::Vector<2>& v, float w) : m128(_mm_set_ps(w, 0.f, v.y, v.x)) {}
+		Vector(const SRMath::Vector<2>& v) : m128(_mm_set_ps(1.0f, 0.f, v.y, v.x)) {}
+		Vector(const SRMath::Vector<3>& v, float w) : m128(_mm_set_ps(w, v.z, v.y, v.x)) {}
+		Vector(const SRMath::Vector<3>& v) : m128(_mm_set_ps(1.0f, v.z, v.y, v.x)) {}
 
 		float& operator[](size_t index) { return data[index]; }
 		const float& operator[](size_t index) const { return data[index]; }
+
+		Vector<4>& operator+=(const Vector<4>& other) {
+			// SIMD
+			this->m128 = _mm_add_ps(this->m128, other.m128);
+			return *this;
+		}
+
+		Vector<4>& operator-=(const Vector<4>& other) {
+			this->m128 = _mm_sub_ps(this->m128, other.m128);
+			return *this;
+		}
+
+		Vector<4>& operator*=(float scalar) {
+			__m128 s = _mm_set1_ps(scalar);
+			this->m128 = _mm_mul_ps(this->m128, s);
+			return *this;
+		}
+
+		Vector<4>& operator*=(const Vector<4>& other) {
+			this->m128 = _mm_mul_ps(this->m128, other.m128);
+			return *this;
+		}
+
+		Vector<4>& operator/=(float scalar) {
+			float rcp_scalar = 1.0f / scalar;
+			__m128 r = _mm_set1_ps(rcp_scalar);
+			this->m128 = _mm_mul_ps(this->m128, r);
+			return *this;
+		}
+
+		bool operator==(const Vector<4>& other)
+		{
+			// Compare each component of the vectors
+			__m128 cmp = _mm_cmpeq_ps(this->m128, other.m128);
+
+			// Check if all components are equal
+			return _mm_movemask_ps(cmp) == 0xF; // All bits set means all components are equal
+		}
+
+		bool operator!=(const Vector<4>& other)
+		{
+			return *this == other ? false : true; // All bits set means all components are equal
+		}
+
+		Vector<4> clamp(float min, float max)
+		{
+			const __m128 min_vec = _mm_set1_ps(min);
+			const __m128 max_vec = _mm_set1_ps(max);
+
+			this->m128 = _mm_max_ps(min_vec, _mm_min_ps(max_vec, this->m128));
+
+			return *this;
+		}
 	};
 
-	inline Vector<2>::Vector() : x(0.0f), y(0.0f) {}
-	inline Vector<2>::Vector(float x, float y) : x(x), y(y) {}
-
-	inline Vector<3>::Vector() : x(0.0f), y(0.0f), z(0.0f) {}
-	inline Vector<3>::Vector(float x, float y, float z) : x(x), y(y), z(z) {}
-	inline Vector<3>::Vector(const SRMath::Vector<2>& v) : x(v.x), y(v.y), z(0.f) {}
-	inline Vector<3>::Vector(const SRMath::Vector<4>& v) : x(v.x), y(v.y), z(v.z) {}
-
-	inline Vector<4>::Vector() : x(0.0f), y(0.0f), z(0.0f), w(0.0f) {}
-	inline Vector<4>::Vector(float x, float y, float z, float w) : x(x), y(y), z(z), w(w) {}
-	inline Vector<4>::Vector(const SRMath::Vector<2>& v, float w) : x(v.x), y(v.y), z(0.f), w(w) {}
-	inline Vector<4>::Vector(const SRMath::Vector<2>& v) : x(v.x), y(v.y), z(0.f), w(1.0f) {}
-	inline Vector<4>::Vector(const SRMath::Vector<3>& v, float w) : x(v.x), y(v.y), z(v.z), w(w) {}
-	inline Vector<4>::Vector(const SRMath::Vector<3>& v) : x(v.x), y(v.y), z(v.z), w(1.0f) {}
-
+	inline Vector<3>::Vector(const Vector<4>& v)
+		: m128(_mm_set_ps(0.0f, v.z, v.y, v.x)) // w는 0으로 설정
+	{ }
 	// inline operator overloading function
 	template<size_t N>
 	inline Vector<N> operator+(const Vector<N>& a, const Vector<N>& b)
@@ -101,27 +254,12 @@ namespace SRMath {
 	}
 
 	template<size_t N>
-	inline Vector<N>& operator+=(Vector<N>& a, const Vector<N>& b)
-	{
-		// SIMD
-		a.m128 = _mm_add_ps(a.m128, b.m128);
-		return a;
-	}
-
-	template<size_t N>
 	inline Vector<N> operator-(const Vector<N>& a, const Vector<N>& b)
 	{
 		Vector<N> ret = a;
 
 		ret -= b;
 		return ret;
-	}
-
-	template<size_t N>
-	inline Vector<N>& operator-=(Vector<N>& a, const Vector<N>& b)
-	{
-		a.m128 = _mm_sub_ps(a.m128, b.m128);
-		return a;
 	}
 
 	template<size_t N>
@@ -135,18 +273,19 @@ namespace SRMath {
 	}
 
 	template<size_t N>
-	inline Vector<N>& operator*=(Vector<N>& v, float scalar)
-	{
-		__m128 s = _mm_set1_ps(scalar);
-		v.m128 = _mm_mul_ps(v.m128, s);
-
-		return v;
-	}
-
-	template<size_t N>
 	inline Vector<N> operator*(float scalar, const Vector<N>& v)
 	{
 		return v * scalar;
+	}
+
+
+	template<size_t N>
+	inline Vector<N> operator*(const Vector<N>& v1, const Vector<N>& v2)
+	{
+		Vector<N> ret = v1;
+		ret *= v2;
+
+		return ret;
 	}
 
 	template<size_t N>
@@ -159,18 +298,23 @@ namespace SRMath {
 	}
 
 	template<size_t N>
-	inline Vector<N>& operator/=(Vector<N>& v, float scalar)
+	inline bool operator==(const Vector<N>& a, const Vector<N>& b)
 	{
-		float rcp_scalar = 1.0f / scalar;
-		__m128 r = _mm_set1_ps(rcp_scalar);
-		v.m128 = _mm_mul_ps(v.m128, r);
+		Vector<N> ret = a;
+		return ret == b;
+	}
 
-		return v;
+	template<size_t N>
+	inline bool operator!=(const Vector<N>& a, const Vector<N>& b)
+	{
+		Vector<N> ret = a;
+		return ret != b;
 	}
 
 	// -- Matrix 선언 및 정의
 	template <size_t N> struct alignas(16) Matrix;
-	
+	using mat3 = Matrix<3>;
+	using mat4 = Matrix<4>;
 
 	template<size_t N>
 	struct alignas(16) Matrix
@@ -198,25 +342,9 @@ namespace SRMath {
 			return Matrix<N>(1.f);
 		}
 
-		
-
 		Vector<N>& operator[](size_t index) { return cols[index]; }
 		const Vector<N>& operator[](size_t index) const { return cols[index]; }
 	};
-
-	template<>
-	struct Matrix<3> { // 16바이트 정렬이 필수는 아님
-
-		union {
-			Vector<3> cols[3];
-			float data[3 * 3];
-		};
-
-		Vector<3>& operator[](size_t index) { return cols[index]; }
-		const Vector<3>& operator[](size_t index) const { return cols[index]; }
-	};
-
-	using mat3 = Matrix<3>;
 
 	template<>
 	struct alignas(16) Matrix<4>
@@ -228,10 +356,7 @@ namespace SRMath {
 		};
 
 		// 기본 생성자를 명시적으로 정의
-		Matrix() {
-			
-			Matrix(1.f);
-		}
+		Matrix() : Matrix(1.f) {}
 
 		// 대각선 값을 받는 생성자도 활성화
 		Matrix(float diagonal)
@@ -256,11 +381,19 @@ namespace SRMath {
 		const Vector<4>& operator[](size_t index) const { return cols[index]; }
 	};
 
-	using mat4 = Matrix<4>;
+	template<>
+	struct Matrix<3> { // 16바이트 정렬이 필수는 아님
+
+		union {
+			Vector<3> cols[3];
+			float data[3 * 3];
+		};
+
+		Vector<3>& operator[](size_t index) { return cols[index]; }
+		const Vector<3>& operator[](size_t index) const { return cols[index]; }
+	};
 
 	// inline operator overloading function
-
-
 	inline vec4 operator*(const mat4& m, const vec4& v)
 	{
 		//Classic
@@ -591,4 +724,16 @@ namespace SRMath {
 		return I - (N * (2.0f * dotNI));
 	}
 
+	template<size_t N>
+	inline Vector<N> clamp(const Vector<N>& v, float min, float max)
+	{
+		const __m128 min_vec = _mm_set1_ps(min);
+		const __m128 max_vec = _mm_set1_ps(max);
+
+		__m128 clamped = _mm_max_ps(min_vec, _mm_min_ps(max_vec, v.m128));
+		Vector<N> clamped_vec;
+		clamped_vec.m128 = clamped;
+
+		return clamped_vec;
+	}
 }

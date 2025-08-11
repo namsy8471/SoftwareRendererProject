@@ -127,12 +127,17 @@ void GameObject::SubmitToRenderQueue(RenderQueue& renderQueue, const Frustum& fr
 		if (debugFlags.bShowNormal)
 		{
 			std::vector<DebugVertex> normalLines;
-			const float normalLength = 0.1f; // Normal vector length for visualization
+			SRMath::mat4 normalMatrix = SRMath::inverse_transpose(m_worldMatrix).value_or(SRMath::mat4(1.f)); // 법선 행렬 계산
+			const float normalLength = 0.5f; // Normal vector length for visualization
 
 			for (const auto& vertex : mesh.vertices)
 			{
 				SRMath::vec3 startPoint_local = vertex.position;
-				SRMath::vec3 endPoint_local = startPoint_local + vertex.normal * normalLength;
+
+				// 3. 방향(normal)은 역전치 행렬로 변환하여 월드 공간의 법선 방향을 계산합니다.
+				// (w=0으로 설정하여 방향 벡터임을 명시)
+				SRMath::vec3 normalDir_world = normalMatrix * SRMath::vec4(vertex.normal, 0.f);
+				SRMath::vec3 endPoint_local = startPoint_local + SRMath::normalize(normalDir_world) * normalLength;
 				
 				normalLines.push_back({ startPoint_local, SRMath::vec4(1.0f, 1.0f, 0.0f, 1.0f) });
 				normalLines.push_back({ endPoint_local, SRMath::vec4(1.0f, 1.0f, 0.0f, 1.0f) });
