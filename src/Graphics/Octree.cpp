@@ -109,12 +109,12 @@ void Octree::Build(const Mesh& mesh)
 	}
 }
 
-void Octree::submitNodeRecursive(RenderQueue& renderQueue, const Frustum& frustum, const SRMath::mat4& worldTransform, const DebugFlags& debugFlags, const OctreeNode* node)
+void Octree::submitNodeRecursive(RenderQueue& renderQueue, const Frustum& frustum, const SRMath::mat4& worldTransform, 
+	const DebugFlags& debugFlags, const OctreeNode* node)
 {
-	const AABB worldNodeAABB = AABB::TransformAABB(node->bounds, worldTransform);
+	const AABB worldNodeAABB = node->bounds.Transform(worldTransform);
 	if(!frustum.IsAABBInFrustum(worldNodeAABB)) return; // 절두체 밖에 있으면 컬링
 
-	
 	if(!node->triangleIndices.empty())
 	{
 		MeshRenderCommand cmd;
@@ -137,7 +137,7 @@ void Octree::submitNodeRecursive(RenderQueue& renderQueue, const Frustum& frustu
 
 	if (debugFlags.bShowAABB)
 	{
-		std::array<SRMath::vec3, 8> vertices = node->bounds.GetVertice();
+		std::array<SRMath::vec3, 8> vertices = worldNodeAABB.GetVertice();
 		SRMath::vec4 color = SRMath::vec4(1.0f, 0.0f, 0.0f, 1.0f);
 		std::vector<DebugVertex> debugVertices;
 
@@ -150,7 +150,7 @@ void Octree::submitNodeRecursive(RenderQueue& renderQueue, const Frustum& frustu
 
 		DebugPrimitiveCommand cmd;
 		cmd.vertices = debugVertices;
-		cmd.worldTransform = worldTransform;
+		cmd.worldTransform = SRMath::mat4::identity();
 		cmd.type = DebugPrimitiveType::Line;
 		renderQueue.Submit(cmd);
 	}

@@ -13,6 +13,7 @@ struct DirectionalLight;
 struct DebugPrimitiveCommand;
 struct MeshRenderCommand;
 struct Material;
+struct Tile;
 
 enum class ELineAlgorithm
 {
@@ -53,11 +54,19 @@ private:
 	void resterization(const std::vector<ShadedVertex>& clipped_vertices,
 		const Material* material, const std::vector<DirectionalLight>& lights, const SRMath::vec3 camPos, const MeshRenderCommand& cmd);
 
-	void drawMesh(const MeshRenderCommand& cmd, const SRMath::mat4& viewMatrix, const SRMath::mat4& projectionMatrix, const SRMath::vec3& camPos, const std::vector<DirectionalLight> lights);
+	void drawMesh(const MeshRenderCommand& cmd, const SRMath::mat4& vp, const SRMath::vec3& camPos, const std::vector<DirectionalLight> lights);
 	void drawDebugPrimitive(const DebugPrimitiveCommand& cmd, const SRMath::mat4& vp, const Camera& camera);
 
+	void renderTile(int tx, int ty, const Tile& tiles, const SRMath::mat4& vp,
+		const SRMath::vec3& camPos, const std::vector<DirectionalLight> lights);
+	void resterizationForTile(const std::vector<ShadedVertex>& clipped_vertices, const Material* material, 
+		const std::vector<DirectionalLight>& lights, const SRMath::vec3 camPos, const MeshRenderCommand& cmd, int tile_minX, int tile_minY, int tile_maxX, int tile_maxY);
+	void drawFilledTriangleForTile(const RasterizerVertex& v0, const RasterizerVertex& v1, const RasterizerVertex& v2, const Material* material, const std::vector<DirectionalLight>& lights, const SRMath::vec3& camPos, int tile_minX, int tile_minY, int tile_maxX, int tile_maxY);
+
+
+
 	ShadedVertex interpolate(const ShadedVertex& v0, const ShadedVertex& v1, float t);
-	std::vector<ShadedVertex> clipPolygonAgainstPlane(const std::vector<ShadedVertex>& vertices, int plane_axis, int plane_sign);
+	void clipPolygonAgainstPlane(std::vector<ShadedVertex>& out_vertices, const std::vector<ShadedVertex>& vertices, int plane_axis, int plane_sign);
 	std::vector<ShadedVertex> clipTriangle(const ShadedVertex& v0, const ShadedVertex& v1, const ShadedVertex& v2);
 
 public:
@@ -72,8 +81,6 @@ public:
 	void Clear();
 	void Present(HDC hScreenDC) const;
 	void RenderScene(const RenderQueue& queue, const Camera& camera, const std::vector<DirectionalLight>& lights);
-
-	void DebugNormalVector(const SRMath::vec3& v0_World, const SRMath::vec3& v1_World, const SRMath::vec3& v2_World, const SRMath::vec3& n0_World, const SRMath::vec3& n1_World, const SRMath::vec3& n2_World, const SRMath::mat4& vp);
 
 	void OnResize(HWND hWnd);
 

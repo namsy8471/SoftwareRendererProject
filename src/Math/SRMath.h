@@ -417,8 +417,7 @@ namespace SRMath {
 
 	inline vec4 operator*(const mat4& m, const vec3& v)
 	{
-		Vector<4> newV = { v.x, v.y, v.z, 1 };
-
+		Vector<4> newV(v);
 		return m * newV;
 	}
 
@@ -530,9 +529,7 @@ namespace SRMath {
 	static Matrix<4> translate(const Vector<3>& v)
 	{
 		Matrix<4> ret(1.0f);
-		ret[3][0] = v.x;
-		ret[3][1] = v.y;
-		ret[3][2] = v.z;
+		ret[3].m128 = _mm_set_ps(1.0f, v.z, v.y, v.x); // SIMD √÷¿˚»≠
 		return ret;
 	}
 

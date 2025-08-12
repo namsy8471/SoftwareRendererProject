@@ -11,7 +11,7 @@ struct StbiImageDeleter
 using StbiImagePtr = std::unique_ptr<unsigned char, StbiImageDeleter>;
 
 class Texture;
-class Material;
+struct Material;
 
 class TextureLoader
 {

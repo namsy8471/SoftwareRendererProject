@@ -48,7 +48,7 @@ void GameObject::UpdateTransform()
 	m_worldMatrix = translationMatrix * rotationMatrix * scaleMatrix;
 
 	const AABB& localAABB = m_model->GetLocalAABB();
-	m_worldAABB = AABB::TransformAABB(localAABB, m_worldMatrix);
+	m_worldAABB = localAABB.Transform(m_worldMatrix);
 }
 
 const SRMath::vec3 GameObject::GetPosition() const

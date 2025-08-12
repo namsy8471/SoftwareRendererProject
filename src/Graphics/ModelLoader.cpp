@@ -250,8 +250,6 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
     }
  
     AABB modelAABB;
-    modelAABB.min = SRMath::vec3(std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max());
-    modelAABB.max = SRMath::vec3(std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest());
 
 #pragma omp parallel for
     for (int i = 0 ; i < outModel->m_meshes.size(); i++)
@@ -319,7 +317,8 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
 
         // 메시 AABB 계산 및 모델 전체 통합
         AABB meshAABB = AABB::CreateFromMesh(mesh);
-        
+		mesh.localAABB = meshAABB;
+
         #pragma omp critical
         {
             modelAABB.Encapsulate(meshAABB);

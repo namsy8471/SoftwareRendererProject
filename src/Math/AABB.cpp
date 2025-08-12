@@ -46,6 +46,29 @@ const bool AABB::AABBContains(const AABB& other) const
            (min.z <= other.min.z && max.z >= other.max.z);
 }
 
+const AABB AABB::Transform(const SRMath::mat4& transform) const
+{
+    AABB newAABB;
+
+    SRMath::vec3 corners[8] = {
+        { this->min.x, this->min.y, this->min.z },
+        { this->max.x, this->min.y, this->min.z },
+        { this->min.x, this->max.y, this->min.z },
+        { this->max.x, this->max.y, this->min.z },
+        { this->min.x, this->min.y, this->max.z },
+        { this->max.x, this->min.y, this->max.z },
+        { this->min.x, this->max.y, this->max.z },
+        { this->max.x, this->max.y, this->max.z }
+    };
+    for (const auto& corner : corners)
+    {
+        const SRMath::vec3 transformedCorner = transform * SRMath::vec4(corner, 1.0f);
+        newAABB.Encapsulate(transformedCorner);
+    }
+
+    return newAABB;
+}
+
 const SRMath::vec3 AABB::GetCenter() const
 {
     return { (min.x + max.x) * 0.5f, (min.y + max.y) * 0.5f, (min.z + max.z) * 0.5f };
@@ -66,6 +89,11 @@ const std::array<SRMath::vec3, 8> AABB::GetVertice() const
     return array;
 }
 
+const AABB AABB::GetAABB() const
+{
+    return *this;
+}
+
 AABB AABB::CreateFromMesh(const Mesh& mesh)
 {
     if(mesh.vertices.empty())
@@ -74,8 +102,8 @@ AABB AABB::CreateFromMesh(const Mesh& mesh)
 	}
 
     AABB bounds;
-	bounds.min = { std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max() };
-    bounds.max = { std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest() };
+	//bounds.min = { std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max() };
+    //bounds.max = { std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest() };
     
     for (const auto& vertex : mesh.vertices)
     {
@@ -88,29 +116,4 @@ AABB AABB::CreateFromMesh(const Mesh& mesh)
         bounds.max.z = std::max(bounds.max.z, vertex.position.z);
     }
 	return bounds;
-}
-
-AABB AABB::TransformAABB(const AABB& aabb, const SRMath::mat4& transform)
-{
-    AABB transformed;
-    transformed.min = { std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max() };
-    transformed.max = { std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest() };
-    
-    SRMath::vec3 corners[8] = {
-        { aabb.min.x, aabb.min.y, aabb.min.z },
-        { aabb.max.x, aabb.min.y, aabb.min.z },
-        { aabb.min.x, aabb.max.y, aabb.min.z },
-        { aabb.max.x, aabb.max.y, aabb.min.z },
-        { aabb.min.x, aabb.min.y, aabb.max.z },
-        { aabb.max.x, aabb.min.y, aabb.max.z },
-        { aabb.min.x, aabb.max.y, aabb.max.z },
-        { aabb.max.x, aabb.max.y, aabb.max.z }
-    };
-    for (const auto& corner : corners)
-    {
-        SRMath::vec3 transformedCorner = transform * SRMath::vec4(corner, 1.0f);
-        transformed.Encapsulate(transformedCorner);
-    }
-
-    return transformed;
 }
