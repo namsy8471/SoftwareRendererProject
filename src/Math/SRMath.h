@@ -30,6 +30,7 @@ namespace SRMath {
 
 		Vector() : m128(_mm_setzero_ps()) {}
 		Vector(const __m128 v) : m128(v) {}
+		Vector(float x) : m128(_mm_set_ps(0.0f, 0.f, x, x)) {}
 		Vector(float x, float y) : m128(_mm_set_ps(0.0f, 0.0f, y, x)) {}
 
 		float& operator[](size_t index) { return data[index]; }
@@ -101,6 +102,7 @@ namespace SRMath {
 
 		Vector() : m128(_mm_setzero_ps()) {}
 		Vector(const __m128 v) : m128(v) {}
+		Vector(float x) : m128(_mm_set_ps(0.0f, x, x, x)) {}
 		Vector(float x, float y, float z) : m128(_mm_set_ps(0.0f, z, y, x)) {}
 		Vector(const SRMath::Vector<2>& v) : m128(_mm_set_ps(0.0f, 0.0f, v.y, v.x)) {}
 		Vector(const SRMath::Vector<2>& v, float z) : m128(_mm_set_ps(0.0f, z, v.y, v.x)) {}
@@ -176,6 +178,7 @@ namespace SRMath {
 
 		Vector() : m128(_mm_setzero_ps()) {}
 		Vector(const __m128 v) : m128(v) {}
+		Vector(float x) : m128(_mm_set_ps(x, x, x, x)) {}
 		Vector(float x, float y, float z, float w) : m128(_mm_set_ps(w, z, y, x)) {}
 		Vector(const SRMath::Vector<2>& v, float w) : m128(_mm_set_ps(w, 0.f, v.y, v.x)) {}
 		Vector(const SRMath::Vector<2>& v) : m128(_mm_set_ps(1.0f, 0.f, v.y, v.x)) {}

@@ -57,3 +57,4 @@
 *.lib
 *.exp
 *.docx
+/ClassDiagram.cd

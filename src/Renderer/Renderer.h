@@ -69,6 +69,7 @@ private:
 	void clipPolygonAgainstPlane(std::vector<ShadedVertex>& out_vertices, const std::vector<ShadedVertex>& vertices, int plane_axis, int plane_sign);
 	std::vector<ShadedVertex> clipTriangle(const ShadedVertex& v0, const ShadedVertex& v1, const ShadedVertex& v2);
 
+
 public:
 	Renderer();
 	~Renderer();

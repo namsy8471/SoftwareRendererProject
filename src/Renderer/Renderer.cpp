@@ -692,8 +692,9 @@ void Renderer::RenderScene(const RenderQueue& queue, const Camera& camera, const
         transformed_clip.reserve(65536); // 충분한 초기 용량
         stamp.reserve(65536);
 
+		int cmd_count = queue.GetRenderCommands().size();
 #pragma omp for schedule(guided)
-        for (int cmd_idx = 0; cmd_idx < queue.GetRenderCommands().size(); ++cmd_idx)
+        for (int cmd_idx = 0; cmd_idx < cmd_count; ++cmd_idx)
         {
             //drawMesh(cmd, vp, camera.GetCameraPos(), lights);
 
@@ -711,8 +712,9 @@ void Renderer::RenderScene(const RenderQueue& queue, const Camera& camera, const
             }
             int my_stamp = cmd_idx;
 
+			int indices_size = indices.size();
             // 2. 메쉬의 모든 '삼각형'을 순회합니다.
-            for (size_t i = 0; i < indices.size(); i += 3)
+            for (size_t i = 0; i < indices_size; i += 3)
             {
                 // 3. 삼각형의 세 정점 인덱스를 가져옵니다.
                 uint32_t i0 = indices[i];
@@ -767,9 +769,9 @@ void Renderer::RenderScene(const RenderQueue& queue, const Camera& camera, const
 
                 // 7. AABB를 이용해 영향을 받는 타일 범위를 계산합니다.
                 int min_tile_x = static_cast<int>(std::floor(ndc_to_tile_x(min_x))) - 1;
-                int max_tile_x = static_cast<int>(std::ceil(ndc_to_tile_x(max_x))) - 1;
+                int max_tile_x = static_cast<int>(std::ceil(ndc_to_tile_x(max_x)));
                 int min_tile_y = static_cast<int>(std::floor(ndc_to_tile_y(max_y))) - 1;
-                int max_tile_y = static_cast<int>(std::ceil(ndc_to_tile_y(min_y))) - 1;
+                int max_tile_y = static_cast<int>(std::ceil(ndc_to_tile_y(min_y)));
 
                 min_tile_x = std::clamp(min_tile_x, 0, num_tiles_x - 1);
                 min_tile_y = std::clamp(min_tile_y, 0, num_tiles_y - 1);
@@ -778,8 +780,8 @@ void Renderer::RenderScene(const RenderQueue& queue, const Camera& camera, const
 
                 // 해당 '삼각형'을 영향을 받는 모든 타일에 추가합니다.
                 TriangleRef tri_ref = { &cmd, static_cast<uint32_t>(i) };
-                for (int ty = min_tile_y; ty <= max_tile_y; ++ty) {
-                    for (int tx = min_tile_x; tx <= max_tile_x; ++tx) {
+                for (int ty = min_tile_y; ty < max_tile_y; ++ty) {
+                    for (int tx = min_tile_x; tx < max_tile_x; ++tx) {
                         my_local_tiles[ty * num_tiles_x + tx].push_back(tri_ref);
                     }
                 }
@@ -787,12 +789,16 @@ void Renderer::RenderScene(const RenderQueue& queue, const Camera& camera, const
         }
 
         // 각 타일에 해당하는 삼각형들을 병렬로 모읍니다.
+
+        int tiles_size = tiles.size();
+		int num_threads = thread_local_storages.size();
+
         #pragma omp for schedule(guided)
-        for (int i = 0; i < tiles.size(); ++i)
+        for (int i = 0; i < tiles_size; ++i)
         {
             // 3-1. 최종 타일에 들어갈 삼각형의 총개수를 미리 계산
             size_t total_triangle_count = 0;
-            for (int t = 0; t < thread_local_storages.size(); ++t) {
+            for (int t = 0; t < num_threads; ++t) {
                 total_triangle_count += thread_local_storages[t][i].size();
             }
 
@@ -801,7 +807,7 @@ void Renderer::RenderScene(const RenderQueue& queue, const Camera& camera, const
             // 3-2. 단 한 번의 메모리 할당을 위해 용량을 완벽하게 예약! (재할당 방지)
             tiles[i].triangles.reserve(total_triangle_count);
             // 3-3. 각 스레드의 결과물을 재할당 없이 차례대로 삽입
-            for (int t = 0; t < thread_local_storages.size(); ++t) {
+            for (int t = 0; t < num_threads; ++t) {
                 tiles[i].triangles.insert(
                     tiles[i].triangles.end(),
                     std::make_move_iterator(thread_local_storages[t][i].begin()), // 이동 반복자 시작
@@ -812,24 +818,28 @@ void Renderer::RenderScene(const RenderQueue& queue, const Camera& camera, const
 
         // --- 직렬 병합 단계 이후 ---
         std::vector<int> active_tile_indices;
-        for (int i = 0; i < tiles.size(); ++i) {
+		active_tile_indices.reserve(tiles.size());
+
+        for (int i = 0; i < tiles_size; ++i) {
             if (!tiles[i].triangles.empty()) {
                 active_tile_indices.push_back(i);
             }
         }
 
         // --- 병렬 렌더링 단계 ---
+        int active_tile_size = active_tile_indices.size();
         // 실제 작업이 있는 수백 개의 타일만 순회
 #pragma omp for schedule(dynamic)
-        for (int i = 0; i < active_tile_indices.size(); ++i) {
+        for (int i = 0; i < active_tile_size; ++i) {
             int tile_idx = active_tile_indices[i];
             int tx = tile_idx % num_tiles_x;
             int ty = tile_idx / num_tiles_x;
             renderTile(tx, ty, tiles[tile_idx], vp, camera.GetCameraPos(), lights);
         }
     
+		int queue_size = queue.GetDebugCommands().size();
 #pragma omp for schedule(dynamic)
-        for(int i = 0; i < queue.GetDebugCommands().size(); ++i)
+        for(int i = 0; i < queue_size; ++i)
         {
             const auto& cmd = queue.GetDebugCommands()[i];
             // 디버그 프리미티브를 렌더링합니다.

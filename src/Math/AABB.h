@@ -20,6 +20,7 @@ struct AABB
 	const SRMath::vec3 GetCenter() const; // 중심점을 반환하는 함수
 	const std::array<SRMath::vec3, 8> GetVertice() const; // 8개의 꼭짓점을 반환하는 함수
 	const AABB GetAABB() const; // AABB를 반환하는 함수
+	bool IsValid() const;
 
 	static AABB CreateFromMesh(const Mesh& mesh);
 	const AABB Transform(const SRMath::mat4& transform) const;

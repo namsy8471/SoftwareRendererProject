@@ -94,6 +94,11 @@ const AABB AABB::GetAABB() const
     return *this;
 }
 
+bool AABB::IsValid() const
+{
+    return (min.x <= max.x && min.y <= max.y && min.z <= max.z);
+}
+
 AABB AABB::CreateFromMesh(const Mesh& mesh)
 {
     if(mesh.vertices.empty())
