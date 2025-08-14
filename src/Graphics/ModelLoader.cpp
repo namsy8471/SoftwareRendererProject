@@ -11,16 +11,19 @@
 #include "Graphics/Material.h"
 #include "Math/AABB.h"
 
+// 디버깅용 전역 카운터 (파일 파싱 상태 추적용)
 int face_lines_read = 0; // 디버깅용: 읽은 면(face) 라인 수
 int triangles_generated = 0; // 디버깅용: 생성된 삼각형 수
 
+// v/vt/vn 조합을 하나의 정점 키로 사용하기 위한 구조체
 struct VertexKey
 {
-    int pos_idx = -1;	// v
-    int tex_idx = -1;	// vt
-    int nrm_idx = -1;	// vn
+    int pos_idx = -1;	// v: 위치 인덱스 (1 기반 → 0 기반 변환)
+    int tex_idx = -1;	// vt: 텍스처 좌표 인덱스
+    int nrm_idx = -1;	// vn: 법선 인덱스
 
     // map의 key로 사용하기 위한 비교 연산자
+    // 정렬 기준: pos_idx → tex_idx → nrm_idx
     bool operator<(const VertexKey& other) const
     {
         if (pos_idx < other.pos_idx) return true;
@@ -31,14 +34,16 @@ struct VertexKey
     }
 };
 
+// OBJ 로더: 파일 경로(확장자 없는 베이스 경로)를 받아 Model 구성
 std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
 {
-    std::unique_ptr<Model> outModel = std::make_unique<Model>();
+    std::unique_ptr<Model> outModel = std::make_unique<Model>(); // 출력 모델
 
-    std::ifstream file(filename + ".obj");
-    if (!file.is_open()) return nullptr;
+    std::ifstream file(filename + ".obj"); // .obj 파일 열기
+    if (!file.is_open()) return nullptr;   // 실패 시 null 반환
 
-    // 이 'directoryPath'가 모든 상대 경로의 기준이 됩니다.
+    // 텍스처/MTL 상대 경로 기반 디렉터리 계산
+    // 예: "path\to\model" → "path\to\"
     std::string directoryPath = "";
     size_t last_slash_idx = filename.find_last_of("/\\");
     if (std::string::npos != last_slash_idx)
@@ -47,9 +52,9 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
     }
 
     // 1. 파일에서 모든 속성(v, vt, vn)을 임시 버퍼에 읽어들입니다.
-    std::vector<SRMath::vec3> temp_positions;
-    std::vector<SRMath::vec2> temp_texcoords;
-    std::vector<SRMath::vec3> temp_normals;
+    std::vector<SRMath::vec3> temp_positions; // v
+    std::vector<SRMath::vec2> temp_texcoords; // vt
+    std::vector<SRMath::vec3> temp_normals;   // vn
 
 	std::unordered_map<std::string, Material> materials;    // MTL 파일에서 읽은 재질들
 	std::string currentMaterialName;                        // 현재 사용 중인 재질 이름
@@ -60,14 +65,16 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
     // Key: v/vt/vn 인덱스 조합, Value: 최종 정점 버퍼의 인덱스
     std::map<VertexKey, unsigned int> vertexCache;
 
-    std::string line;
+    std::string line; // 한 줄 버퍼
     
+    // OBJ 파일을 한 줄씩 읽어 파싱
     while (std::getline(file, line))
     {
         std::stringstream ss(line);
         std::string prefix;
         ss >> prefix; // Read the Prefix(v, vt, vn, f)
 
+        // 위치 벡터(v)
         if (prefix == "v")
         {
             SRMath::vec3 pos;
@@ -75,6 +82,7 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
             temp_positions.push_back(pos);
         }
 
+        // 텍스처 좌표(vt)
         else if (prefix == "vt")
         {
             SRMath::vec2 uv;
@@ -83,6 +91,7 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
 
         }
 
+        // 법선 벡터(vn)
         else if (prefix == "vn")
         {
             SRMath::vec3 nrm;
@@ -91,38 +100,42 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
             
         }
 
+        // 머티리얼 라이브러리 참조(mtllib)
         else if (prefix == "mtllib")
         {
             std::string mtlFilename;
             ss >> mtlFilename;
+            // 디렉터리 기준 경로를 사용하여 MTL 파싱
             materials = TextureLoader::LoadMTLFile(directoryPath + mtlFilename);
         }
+        // 머티리얼 선택(usemtl)
         else if (prefix == "usemtl")
         {
             ss >> currentMaterialName;
         }
-
+        // 그룹 시작(g)
         else if (prefix == "g")
         {
             // 새로운 g 태그를 만나면 플래그를 설정
             newGroupStarted = true;
         }
-
+        // 면(face) 정의(f)
         else if(prefix == "f")
         {
-			// 새로운 메시 그룹이 시작되었거나, 현재 메시가 없을 때
+			// 새로운 메시 그룹이 시작되었거나, 현재 메시가 없거나, 머티리얼이 바뀐 경우
             if (outModel->m_meshes.empty()
                 || outModel->m_meshes.back().material.name != currentMaterialName
                 || newGroupStarted)
             {
 				newGroupStarted = false; // 새로운 그룹 시작 플래그 초기화
-                // 새로운 메시 그룹이 시작될 때 vertexCache 초기화 --- 
+                // 새로운 메시 그룹이 시작될 때 vertexCache 초기화 ---
                 vertexCache.clear();
 
                 // 모델에 새로운 메시 추가 및 currentMesh 포인터 갱신
                 outModel->m_meshes.emplace_back();
                 auto& newMesh = outModel->m_meshes.back();
 
+                // 현재 머티리얼 이름으로 머티리얼 할당 (없으면 기본값 / 콜론 분리 폴백)
                 if(materials.find(currentMaterialName) != materials.end())
                 {
                     newMesh.material = materials[currentMaterialName];
@@ -159,12 +172,13 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
                 newMesh.material.name = currentMaterialName;
             }
 
-			auto& meshToAddTo = outModel->m_meshes.back();
+			auto& meshToAddTo = outModel->m_meshes.back(); // 현재 면이 추가될 타겟 메시
             // 여기서부터 파싱되는 면(face)들은 이 메시 그룹에 속하게 됨
             std::string face_data;
-            int vertex_count_in_face = 0;
-            unsigned int face_indices[4]; // 쿼드까지 지원한다고 가정
+            int vertex_count_in_face = 0;     // 하나의 f 라인에 포함된 정점 수 (3~4)
+            unsigned int face_indices[4];     // 쿼드까지 지원한다고 가정
 
+            // f 라인의 각 토큰(예: "v", "v/vt", "v//vn", "v/vt/vn") 파싱
             while (ss >> face_data && vertex_count_in_face < 4)
             {
                 VertexKey key;
@@ -211,6 +225,7 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
                     continue;
                 }
 
+                // 동일 v/vt/vn 조합이 이미 생성된 적이 있으면 캐시 재사용
                 auto it = vertexCache.find(key);
                 if (it != vertexCache.end())
                 {
@@ -249,13 +264,15 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
         }
     }
  
-    AABB modelAABB;
+    AABB modelAABB; // 모델 전체 AABB (모든 메시 통합용)
 
+    // 메시별 후처리(법선 생성, AABB 계산, 옥트리 빌드)를 병렬 처리
 #pragma omp parallel for
     for (int i = 0 ; i < outModel->m_meshes.size(); i++)
     {
         auto& mesh = outModel->m_meshes[i];
 
+        // OBJ에 vn이 실제로 존재하는지 여부 체크
         bool hasNormals = false;
         for(const auto& vertex : mesh.vertices)
         {
@@ -267,6 +284,7 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
 		}
 
         // If there is no Normal vector in OBJ File
+        // 주의: || true 로 인해 항상 법선을 재계산함 (의도된 동작으로 보임)
         if (!hasNormals || true)
         {
             // 각 정점의 법선을 0으로 초기화
@@ -286,8 +304,10 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
                 const SRMath::vec3& v1 = mesh.vertices[i1].position;
                 const SRMath::vec3& v2 = mesh.vertices[i2].position;
 
+                // 삼각형 면 법선 (v0->v1) × (v0->v2)
                 SRMath::vec3 face_normal = SRMath::cross(v1 - v0, v2 - v0);
 
+                // 0벡터 방지 후 정규화
                 float length = SRMath::length(face_normal);
                 if (length > 1e-6f) // 0벡터 방지
                 {
@@ -298,7 +318,7 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
                     face_normal = SRMath::vec3(0.0f, 0.0f, 0.0f);
                 }
 
-
+                // 정점 법선에 면 법선 누적 (스무딩)
                 mesh.vertices[i0].normal = mesh.vertices[i0].normal + face_normal;
                 mesh.vertices[i1].normal = mesh.vertices[i1].normal + face_normal;
                 mesh.vertices[i2].normal = mesh.vertices[i2].normal + face_normal;
@@ -319,12 +339,13 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
         AABB meshAABB = AABB::CreateFromMesh(mesh);
 		mesh.localAABB = meshAABB;
 
+        // 병렬 영역에서의 공용 AABB 갱신은 크리티컬로 보호
         #pragma omp critical
         {
             modelAABB.Encapsulate(meshAABB);
         }
 
-        // Octree 생성 및 빌드
+        // Octree 생성 및 빌드 (가시화/프러스텀 컬링 최적화)
         mesh.octree = std::make_unique<Octree>();
         mesh.octree->Build(mesh);
     }
@@ -332,7 +353,7 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
     // 최종 계산된 AABB 모델에 저장
     outModel->m_localAABB = modelAABB;
 
-    file.close();
-    return outModel;
+    file.close(); // 파일 닫기
+    return outModel; // 완성된 모델 반환
 }
 

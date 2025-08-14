@@ -656,59 +656,86 @@ namespace SRMath {
 	// SIMD를 사용한 4x4 행렬 역행렬 함수
 	// 행렬식이 0에 가까우면 역행렬이 존재하지 않으므로 false를 반환합니다.
 	inline std::optional<mat4> inverse(const mat4& m) {
-		__m128 A = _mm_movelh_ps(m.m128[0], m.m128[1]);
-		__m128 B = _mm_movehl_ps(m.m128[1], m.m128[0]);
-		__m128 C = _mm_movelh_ps(m.m128[2], m.m128[3]);
-		__m128 D = _mm_movehl_ps(m.m128[3], m.m128[2]);
+		// We'll represent augmented matrix rows as:
+	// rowL[r] = left 4 elements (original matrix row r)  -> __m128
+	// rowR[r] = right 4 elements (identity initially)     -> __m128
+		__m128 rowL[4];
+		__m128 rowR[4];
 
-		__m128 detSub = _mm_sub_ps(
-			_mm_mul_ps(_mm_shuffle_ps(m.m128[0], m.m128[2], 0x88), _mm_shuffle_ps(m.m128[1], m.m128[3], 0xE4)),
-			_mm_mul_ps(_mm_shuffle_ps(m.m128[0], m.m128[2], 0xE4), _mm_shuffle_ps(m.m128[1], m.m128[3], 0x88))
-		);
-
-		__m128 detA = _mm_shuffle_ps(detSub, detSub, 0x44);
-		__m128 detB = _mm_shuffle_ps(detSub, detSub, 0xEE);
-		__m128 detC = _mm_shuffle_ps(detSub, detSub, 0x55);
-		__m128 detD = _mm_shuffle_ps(detSub, detSub, 0xFF);
-
-		__m128 D_C = _mm_sub_ps(_mm_mul_ps(D, detA), _mm_mul_ps(C, detB));
-		__m128 A_B = _mm_sub_ps(_mm_mul_ps(A, detD), _mm_mul_ps(B, detC));
-
-		__m128 detM = _mm_mul_ps(_mm_shuffle_ps(A, A, 0x00), D_C);
-		detM = _mm_add_ps(detM, _mm_mul_ps(_mm_shuffle_ps(A, A, 0x55), D_C));
-		detM = _mm_add_ps(detM, _mm_mul_ps(_mm_shuffle_ps(A, A, 0xAA), D_C));
-		detM = _mm_add_ps(detM, _mm_mul_ps(_mm_shuffle_ps(A, A, 0xFF), D_C));
-
-		// 행렬식이 0에 가까운지 확인
-		if (_mm_cvtss_f32(detM) == 0.0f)
-		{
-			return std::nullopt;
+		// Build rows from column-major mat4: element (r,c) == m[c][r]
+		for (int r = 0; r < 4; ++r) {
+			// _mm_set_ps sets (w,z,y,x) -> elements [3]=w ... [0]=x
+			rowL[r] = _mm_set_ps(m[3][r], m[2][r], m[1][r], m[0][r]);
+			// identity: row r has 1.0 at column r
+			rowR[r] = _mm_set_ps((r == 3) ? 1.0f : 0.0f,
+				(r == 2) ? 1.0f : 0.0f,
+				(r == 1) ? 1.0f : 0.0f,
+				(r == 0) ? 1.0f : 0.0f);
 		}
 
-		__m128 invDetM = _mm_div_ps(_mm_set1_ps(1.0f), detM);
+		const float EPS = 1e-12f;
 
-		D_C = _mm_mul_ps(D_C, invDetM);
-		A_B = _mm_mul_ps(A_B, invDetM);
+		// Temporary arrays for extracting elements when needed
+		float tmp[4];
 
-		__m128 X = _mm_shuffle_ps(A_B, A_B, 0xFF);
-		__m128 Y = _mm_shuffle_ps(D_C, D_C, 0xAA);
-		__m128 Z = _mm_shuffle_ps(A_B, A_B, 0x55);
-		__m128 W = _mm_shuffle_ps(D_C, D_C, 0x00);
+		for (int col = 0; col < 4; ++col) {
+			// --- pivot selection (partial pivot) ---
+			int pivot_row = col;
+			float max_abs = 0.0f;
+			for (int r = col; r < 4; ++r) {
+				_mm_store_ps(tmp, rowL[r]);      // tmp[0] = col0, tmp[1] = col1, ...
+				float val = tmp[col];
+				float aval = std::fabs(val);
+				if (aval > max_abs) { max_abs = aval; pivot_row = r; }
+			}
 
-		__m128 R0 = _mm_shuffle_ps(Y, W, 0x77);
-		__m128 R1 = _mm_shuffle_ps(Y, W, 0x22);
-		__m128 R2 = _mm_shuffle_ps(X, Z, 0x77);
-		__m128 R3 = _mm_shuffle_ps(X, Z, 0x22);
+			if (max_abs < EPS) {
+				// Singular or nearly singular
+				return std::nullopt;
+			}
 
-		// out_inverse 행렬에 결과를 저장합니다.
-		mat4 out_inverse;
+			// swap rows if pivot_row != col
+			if (pivot_row != col) {
+				std::swap(rowL[col], rowL[pivot_row]);
+				std::swap(rowR[col], rowR[pivot_row]);
+			}
 
-		out_inverse.m128[0] = _mm_shuffle_ps(R0, R1, 0x88);
-		out_inverse.m128[1] = _mm_shuffle_ps(R0, R1, 0xDD);
-		out_inverse.m128[2] = _mm_shuffle_ps(R2, R3, 0x88);
-		out_inverse.m128[3] = _mm_shuffle_ps(R2, R3, 0xDD);
+			// --- normalize pivot row: divide entire row by pivot element ---
+			_mm_store_ps(tmp, rowL[col]);
+			float pivot = tmp[col];
+			float inv_pivot = 1.0f / pivot;
+			__m128 inv_pivot_v = _mm_set1_ps(inv_pivot);
 
-		return out_inverse;
+			rowL[col] = _mm_mul_ps(rowL[col], inv_pivot_v);
+			rowR[col] = _mm_mul_ps(rowR[col], inv_pivot_v);
+
+			// After normalization, pivot element is (ideally) 1.0
+
+			// --- eliminate column in other rows ---
+			for (int r = 0; r < 4; ++r) {
+				if (r == col) continue;
+				_mm_store_ps(tmp, rowL[r]);
+				float factor = tmp[col]; // scalar factor
+				if (factor == 0.0f) continue;
+				__m128 factor_v = _mm_set1_ps(factor);
+
+				// row_r = row_r - factor * row_col
+				rowL[r] = _mm_sub_ps(rowL[r], _mm_mul_ps(factor_v, rowL[col]));
+				rowR[r] = _mm_sub_ps(rowR[r], _mm_mul_ps(factor_v, rowR[col]));
+			}
+		}
+
+		// Build resulting inverse matrix (column-major).
+		// result[c][r] = rowR[r] element at column c
+		mat4 result(0.0f);
+		for (int r = 0; r < 4; ++r) {
+			_mm_store_ps(tmp, rowR[r]); // tmp[0]..tmp[3] correspond to columns 0..3
+			for (int c = 0; c < 4; ++c) {
+				result[c][r] = tmp[c];
+			}
+		}
+
+		return result;
 	}
 
 	inline std::optional<mat4> inverse_transpose(const mat4& m) {

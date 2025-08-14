@@ -17,9 +17,11 @@
 #include "Graphics/Material.h"
 #include "Renderer/Tile.h"
 
+// 부동소수 무한대 상수 (가독성용)
 constexpr float FLOATINF = std::numeric_limits<float>::infinity();
 
 // Vertex Shading
+// 설명: 정점 셰이딩 결과(월드/클립 좌표, 법선, UV)를 담는 구조체
 struct ShadedVertex {
     SRMath::vec3 pos_world;
     SRMath::vec4 pos_clip;
@@ -33,23 +35,29 @@ struct ShadedVertex {
 };
 
 // --- 래스터화를 위한 최종 정점 데이터 준비 ---
+// 설명: 원근 분할 및 뷰포트 변환 이후, 픽셀 셰이딩에 필요한 데이터
 struct RasterizerVertex {
     SRMath::vec2 screen_pos;          // 최종 화면 좌표
     float one_over_w;                 // 원근 보간을 위한 1/w
     SRMath::vec3 normal_world_over_w; // 원근 보정된 법선
     SRMath::vec2 texcoord_over_w;     // 원근 보정된 UV
-    SRMath::vec3 world_pos_over_w;    // 월드 좌표
+    SRMath::vec3 world_pos_over_w;    // 원근 보정된 월드 좌표
 };
 
+// 설명: GDI 백버퍼/DC 초기 상태 설정
 Renderer::Renderer() : m_hBitmap(nullptr), m_hMemDC(nullptr),
 m_hOldBitmap(nullptr), m_height(), m_width(), m_pPixelData(nullptr)
 {
+    // 기본 멤버 초기화만 수행
 }
 
+// 설명: 리소스 해제는 Shutdown()에서 수행
 Renderer::~Renderer()
 {
+    // 의도적으로 비움
 }
 
+// 설명: 렌더러 초기화 (윈도우 크기, 백버퍼/DIB 섹션 생성 등)
 bool Renderer::Initialize(HWND hWnd)
 {
     // 윈도우의 클라이언트 영역 크기를 얻어옵니다.
@@ -84,6 +92,7 @@ bool Renderer::Initialize(HWND hWnd)
     // 메모리 DC에 그려질 비트맵(백버퍼)을 생성합니다.
     m_hBitmap = CreateCompatibleBitmap(hScreenDC, m_width, m_height);
     
+    // DIB 섹션 생성: CPU에서 직접 픽셀 접근 가능
     m_hBitmap = CreateDIBSection(m_hMemDC, &bmi, DIB_RGB_COLORS,
         (void**)&m_pPixelData, NULL, 0);
 
@@ -95,6 +104,7 @@ bool Renderer::Initialize(HWND hWnd)
         return false;
     }
 
+    // 깊이 버퍼 크기 재할당 (width * height)
     m_depthBuffer.resize(m_height * m_width);
 
     // 생성한 비트맵을 메모리 DC에 선택시킵니다.
@@ -111,6 +121,7 @@ bool Renderer::Initialize(HWND hWnd)
     return true;
 }
 
+// 설명: 생성의 역순으로 GDI 리소스 해제
 void Renderer::Shutdown() const
 {
     // 생성의 역순으로 GDI 객체들을 해제합니다.
@@ -127,6 +138,7 @@ void Renderer::Shutdown() const
     }
 }
 
+// 설명: 화면 경계 검사 후 지정 좌표에 픽셀 기록
 void Renderer::drawPixel(int x, int y, unsigned int color)
 {
     // Checking Boundary
@@ -149,6 +161,7 @@ void Renderer::drawPixel(int x, int y, unsigned int color)
 }
 
 // Bresenham Algorithm
+// 설명: 정수 기반 오차 누적 방식으로 선분을 그립니다.
 void Renderer::drawLineByBresenham(int x0, int y0, int x1, int y1, unsigned int color)
 {
     const int dx = abs(x1 - x0);
@@ -160,22 +173,25 @@ void Renderer::drawLineByBresenham(int x0, int y0, int x1, int y1, unsigned int 
 
     while (true)
     {
-        
+        // 안전 인덱스 검사 후 픽셀 쓰기
         int idx = y0 * m_width + x0;
         if (idx >= 0 && idx < m_depthBuffer.size())
         {
             drawPixel(x0, y0, color);
         }
 
+        // 종료 조건
         if (x0 == x1 && y0 == y1) break;
 
         int e2 = 2 * err;
 
+        // x 스텝 진행
         if (e2 >= dy)
         {
             err += dy;
             x0 += sx;
         }
+        // y 스텝 진행
         if (e2 <= dx)
         {
             err += dx;
@@ -185,6 +201,7 @@ void Renderer::drawLineByBresenham(int x0, int y0, int x1, int y1, unsigned int 
 }
 
 // DDA(Digital Differential Analyzer) Algorithm
+// 설명: 실수 증분 기반으로 선분을 그립니다.
 void Renderer::drawLineByDDA(int x0, int y0, int x1, int y1, unsigned int color)
 {
     const int dx = x1 - x0;
@@ -205,6 +222,7 @@ void Renderer::drawLineByDDA(int x0, int y0, int x1, int y1, unsigned int color)
     double y = y0;
     
     for (int i = 0; i <= steps; i++) {
+        // 반올림하여 정수 픽셀에 기록
         drawPixel(round(x), round(y), color);
         x += x_inc;
         y += y_inc;
@@ -212,7 +230,7 @@ void Renderer::drawLineByDDA(int x0, int y0, int x1, int y1, unsigned int color)
     
 }
 
-
+// 설명: 현재 설정된 알고리즘으로 선분을 그립니다.
 void Renderer::drawLine(int x0, int y0, int x1, int y1, unsigned int color)
 {
     switch (m_currentLineAlgorithm)
@@ -227,6 +245,7 @@ void Renderer::drawLine(int x0, int y0, int x1, int y1, unsigned int color)
     }
 }
 
+// 설명: 3개의 점으로 삼각형 외곽선 렌더링 (정수 좌표)
 void Renderer::drawTriangle(int x0, int y0, int x1, int y1, int x2, int y2, unsigned int color)
 {
     drawLine(x0, y0, x1, y1, color);
@@ -234,22 +253,28 @@ void Renderer::drawTriangle(int x0, int y0, int x1, int y1, int x2, int y2, unsi
     drawLine(x2, y2, x0, y0, color);
 }
 
+// 설명: 3개의 점으로 삼각형 외곽선 렌더링 (vec2 좌표)
 void Renderer::drawTriangle(const SRMath::vec2 v0, const SRMath::vec2 v1, const SRMath::vec2 v2, unsigned int color)
 {
     drawTriangle(v0.x, v0.y, v1.x, v1.y, v2.x, v2.y, color);
 }
 
+// 설명: 선 그리기 알고리즘 선택자 설정
 void Renderer::SetLineAlgorithm(ELineAlgorithm eLineAlgorithm)
 {
     m_currentLineAlgorithm = eLineAlgorithm;
 }
 
+// 설명: 컬러 버퍼/깊이 버퍼 클리어
 void Renderer::Clear()
 {
+	// 화면을 검정(0)으로 초기화
 	memset(m_pPixelData, 0, m_width * m_height * sizeof(unsigned int));
+	// 깊이 버퍼는 가장 낮은 값으로 초기화 (더 큰 z^-1만 패스)
 	std::fill(m_depthBuffer.begin(), m_depthBuffer.end(), std::numeric_limits<float>::lowest());   
 }
 
+// 설명: 백버퍼(m_hMemDC)의 내용을 화면 DC로 복사 (Present)
 void Renderer::Present(HDC hScreenDC) const
 {
     // BitBlt API를 사용해 메모리 DC의 내용을 화면 DC로 복사합니다.
@@ -262,7 +287,7 @@ void Renderer::Present(HDC hScreenDC) const
         SRCCOPY);       // 복사 방식 (그대로 복사)
 }
 
-
+// 설명: 바리센트릭/Phong 조명으로 채워진 삼각형을 그립니다. (전체 화면 대상)
 void Renderer::drawFilledTriangle(const RasterizerVertex& v0, const RasterizerVertex& v1, const RasterizerVertex& v2, const Material* material, const std::vector<DirectionalLight>& lights, const SRMath::vec3& camPos)
 {
     // 정점 좌표를 정수로 변환 (화면 픽셀 기준)
@@ -310,14 +335,17 @@ void Renderer::drawFilledTriangle(const RasterizerVertex& v0, const RasterizerVe
             // 바리센트릭 좌표가 모두 양수이면 삼각형 내부에 있는 것입니다.
             if (w0 >= 0 && w1 >= 0 && w2 >= 0)
             {
+                // 바리센트릭 합 (퇴화/정규화용)
                 float total_w = static_cast<float>(w0 + w1 + w2);
 
                 if (std::abs(total_w) < 1e-5f) continue;
 
+                // 정규화된 가중치
                 float w_bary = w0 / total_w;
                 float u_bary = w1 / total_w;
                 float v_bary = w2 / total_w;
 
+                // 깊이 테스트용 1/w 보간
                 float interpolated_one_over_w =
                     v0.one_over_w * w_bary + v1.one_over_w * u_bary + v2.one_over_w * v_bary;
 
@@ -325,10 +353,11 @@ void Renderer::drawFilledTriangle(const RasterizerVertex& v0, const RasterizerVe
 
                 if (interpolated_one_over_w > m_depthBuffer[idx])
                 {
-                    
+                    // 법선 보간 후 정규화
                     SRMath::vec3 normal_interpolated =
                         SRMath::normalize((v0.normal_world_over_w * w_bary + v1.normal_world_over_w * u_bary + v2.normal_world_over_w * v_bary) / interpolated_one_over_w);
 
+                    // UV 보간
                     SRMath::vec2 uv_over_w_interpolated = v0.texcoord_over_w * w_bary + v1.texcoord_over_w * u_bary + v2.texcoord_over_w * v_bary;
                     SRMath::vec2 uv_interpolated = uv_over_w_interpolated / interpolated_one_over_w;
 
@@ -336,6 +365,7 @@ void Renderer::drawFilledTriangle(const RasterizerVertex& v0, const RasterizerVe
 
                     if (material->diffuseTexture)
                     {
+                        // 텍스처 샘플링이 필요할 경우 주석 해제
                         //base_color = material->diffuseTexture->GetPixels(uv_interpolated.x, uv_interpolated.y);
                     }
                     else {
@@ -345,21 +375,23 @@ void Renderer::drawFilledTriangle(const RasterizerVertex& v0, const RasterizerVe
                     // 주변광 조명 계산
                     SRMath::vec3 ambient_color = material->ka; // 재질의 기본 주변광 색상
 
-                    // 2. 여러 빛의 난반사/정반사 효과를 누적할 변수를 0으로 초기화합니다.
+                    // 누적 조명 요소 초기화
                     SRMath::vec3 total_diffuse_color = { 0.0f, 0.0f, 0.0f };
                     SRMath::vec3 total_specular_color = { 0.0f, 0.0f, 0.0f };
 
+                    // 월드 좌표 보간 및 시선 벡터 계산
                     SRMath::vec3 interpolated_world_pos = 
                         (v0.world_pos_over_w * w_bary + v1.world_pos_over_w * u_bary + v2.world_pos_over_w * v_bary) / interpolated_one_over_w;
                     SRMath::vec3 view_dir = SRMath::normalize(camPos - interpolated_world_pos);
 
+                    // 방향성 광원 반복
                     for (const auto& light : lights)
                     {
                         // 난반사 조명 계산
                         float diffuse_intensity = std::max(0.0f, dot(normal_interpolated, light.direction));
                         total_diffuse_color += base_color * diffuse_intensity * light.color;
 
-                        // 정반사 조명 계산
+                        // 정반사 조명 계산 (Phong)
                         SRMath::vec3 reflect_dir = SRMath::reflect(-1 * light.direction, normal_interpolated);
                         float spec_dot = SRMath::dot(view_dir, reflect_dir);
                         float spec_factor = std::pow(std::max(0.0f, spec_dot), material->Ns);
@@ -1072,11 +1104,11 @@ void Renderer::drawFilledTriangleForTile(const RasterizerVertex& v0, const Raste
                     for (const auto& light : lights)
                     {
                         // 난반사 조명 계산
-                        float diffuse_intensity = std::max(0.0f, dot(normal_interpolated, light.direction));
+                        float diffuse_intensity = std::max(0.0f, dot(normal_interpolated, SRMath::normalize(light.direction)));
                         total_diffuse_color += base_color * diffuse_intensity * light.color;
 
                         // 정반사 조명 계산
-                        SRMath::vec3 reflect_dir = SRMath::reflect(-1 * light.direction, normal_interpolated);
+                        SRMath::vec3 reflect_dir = SRMath::reflect(-1 * SRMath::normalize(light.direction), normal_interpolated);
                         float spec_dot = SRMath::dot(view_dir, reflect_dir);
                         float spec_factor = std::pow(std::max(0.0f, spec_dot), material->Ns);
                         total_specular_color += material->ks * spec_factor * light.color;
@@ -1085,7 +1117,7 @@ void Renderer::drawFilledTriangleForTile(const RasterizerVertex& v0, const Raste
                     SRMath::vec3 color = ambient_color + total_diffuse_color + total_specular_color;
 
                     // 최종 색상의 각 채널(R, G, B)을 0.0과 1.0 사이로 클램핑합니다.
-                    color = color.clamp(0.f, 1.0f);
+                    color.clamp(0.f, 1.0f);
 
                     unsigned int final_color = RGB(
                         color.x * 255.f,
@@ -1093,9 +1125,9 @@ void Renderer::drawFilledTriangleForTile(const RasterizerVertex& v0, const Raste
                         color.z * 255.f
                     );
 
+                    // 깊이 갱신 및 픽셀 쓰기
                     m_depthBuffer[idx] = interpolated_one_over_w;
                     drawPixel(x, y, final_color);
-                        
                 }
             }
 
@@ -1112,6 +1144,7 @@ void Renderer::drawFilledTriangleForTile(const RasterizerVertex& v0, const Raste
     }
 }
 
+// 설명: 윈도우 리사이즈 대응 (리소스 재할당)
 void Renderer::OnResize(HWND hWnd)
 {
     Shutdown();

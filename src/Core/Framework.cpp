@@ -17,7 +17,6 @@ bool Framework::Initialize(HINSTANCE hInstance, int nCmdShow)
     LoadStringW(hInstance, IDC_SOFTRENDERERPROJECT, m_szWindowClass, MAX_LOADSTRING);
 
     // Window Class Register
-
     WNDCLASSEXW wcex;
 
     wcex.cbSize = sizeof(WNDCLASSEX);
@@ -72,8 +71,8 @@ bool Framework::Initialize(HINSTANCE hInstance, int nCmdShow)
 	m_camera.Initialize(SRMath::vec3(0.f, 0.f, -5.f));
 
     m_lights.push_back(DirectionalLight());
-    /*m_lights.push_back(DirectionalLight{ SRMath::vec3(1.f, 0.f, 0.f), SRMath::vec3(0.8f, 0.0f, 0.0f) });
-    m_lights.push_back(DirectionalLight{ SRMath::vec3(0.f, 1.f, -1.f), SRMath::vec3(0.0f, 0.8f, 0.0f) });*/
+    m_lights.push_back(DirectionalLight{ SRMath::vec3(1.f, 0.f, 0.f), SRMath::vec3(1.0f, 1.0f, 1.0f) });
+    m_lights.push_back(DirectionalLight{ SRMath::vec3(0.f, 1.f, -1.f), SRMath::vec3(1.0f, 1.0f, 1.0f) });
 
     return TRUE;
 }
