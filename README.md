@@ -50,10 +50,10 @@
 ---
 
 ## **결과물 (Output Screenshots/GIFs)**
+![2025-08-14](https://github.com/user-attachments/assets/a8bf1116-44d3-42cb-b58f-d5229d874cd4)
 <img width="1415" height="686" alt="스크린샷 2025-08-14 141501" src="https://github.com/user-attachments/assets/c22bb7bd-24b1-4339-894c-616426d648c9" />
 <img width="1415" height="731" alt="스크린샷 2025-08-14 141532" src="https://github.com/user-attachments/assets/ee8e5c99-7a6e-42c6-b56e-84313f51a172" />
 <img width="1408" height="724" alt="스크린샷 2025-08-14 141559" src="https://github.com/user-attachments/assets/c3c06817-227d-4ac8-b756-f737de7136cb" />
-![2025-08-14 14-17-29 (1)](https://github.com/user-attachments/assets/c382b6f2-10c5-4435-a4a8-3632bc8f7c4d)
 * Result by 08/14
 
 ---
@@ -107,10 +107,10 @@
 ---
 
 ## 成果物 (Output Screenshots/GIFs)
+![2025-08-14](https://github.com/user-attachments/assets/a8bf1116-44d3-42cb-b58f-d5229d874cd4)
 <img width="1415" height="686" alt="스크린샷 2025-08-14 141501" src="https://github.com/user-attachments/assets/c22bb7bd-24b1-4339-894c-616426d648c9" />
 <img width="1415" height="731" alt="스크린샷 2025-08-14 141532" src="https://github.com/user-attachments/assets/ee8e5c99-7a6e-42c6-b56e-84313f51a172" />
 <img width="1408" height="724" alt="스크린샷 2025-08-14 141559" src="https://github.com/user-attachments/assets/c3c06817-227d-4ac8-b756-f737de7136cb" />
-![2025-08-14 14-17-29 (1)](https://github.com/user-attachments/assets/c382b6f2-10c5-4435-a4a8-3632bc8f7c4d)
 * Result by 08/14
 
 
@@ -165,9 +165,9 @@ This project is a CPU-based software renderer developed to deeply understand and
 ---
 
 ## Output Screenshots/GIFs
+![2025-08-14](https://github.com/user-attachments/assets/a8bf1116-44d3-42cb-b58f-d5229d874cd4)
 <img width="1415" height="686" alt="스크린샷 2025-08-14 141501" src="https://github.com/user-attachments/assets/c22bb7bd-24b1-4339-894c-616426d648c9" />
 <img width="1415" height="731" alt="스크린샷 2025-08-14 141532" src="https://github.com/user-attachments/assets/ee8e5c99-7a6e-42c6-b56e-84313f51a172" />
 <img width="1408" height="724" alt="스크린샷 2025-08-14 141559" src="https://github.com/user-attachments/assets/c3c06817-227d-4ac8-b756-f737de7136cb" />
-![2025-08-14 14-17-29 (1)](https://github.com/user-attachments/assets/c382b6f2-10c5-4435-a4a8-3632bc8f7c4d)
 * Result by 08/14
 
