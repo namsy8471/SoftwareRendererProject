@@ -5,6 +5,7 @@
 #include <cmath>
 #include <omp.h>
 #include <optional>
+#include <unordered_map>
 
 #include "Graphics/Mesh.h"
 #include "Graphics/Texture.h"
@@ -535,6 +536,9 @@ void Renderer::drawMesh(const MeshRenderCommand& cmd, const SRMath::mat4& vp,
 	// 삼각형 처리 단계
 	const std::vector<unsigned int>& indices = *cmd.indicesToDraw;
     const std::vector<Vertex>& vertices = cmd.sourceMesh->vertices;
+    
+    std::vector<ShadedVertex> vertices_buffer1;
+    std::vector<ShadedVertex> vertices_buffer2;
 
     for (int i = 0; i < indices.size(); i += 3)
     {
@@ -579,7 +583,8 @@ void Renderer::drawMesh(const MeshRenderCommand& cmd, const SRMath::mat4& vp,
         sv[2].texcoord = v2_model.texcoord;
 
         // 클리핑
-        std::vector<ShadedVertex> clipped_vertices = clipTriangle(sv[0], sv[1], sv[2]);
+        std::vector<ShadedVertex> clipped_vertices;
+        clipTriangle(clipped_vertices, sv[0], sv[1], sv[2], vertices_buffer1, vertices_buffer2);
         if (clipped_vertices.size() < 3) continue;
         
         // 래스터화 단계
@@ -623,71 +628,98 @@ ShadedVertex Renderer::interpolate(const ShadedVertex& v0, const ShadedVertex& v
 }
 
 // 하나의 평면으로 폴리곤을 클리핑하는 함수
-void Renderer::clipPolygonAgainstPlane(std::vector<ShadedVertex>& out_vertices, const std::vector<ShadedVertex>& in_vertices, int plane_axis, int plane_sign)
+void Renderer::clipPolygonAgainstPlane(std::vector<ShadedVertex>& out_vertices, 
+    const std::vector<ShadedVertex>& in_vertices, const __m128& plane)
 {
 	out_vertices.clear();
+    if(in_vertices.empty()) return;
+
+    // SIMD 최적화를 위해 0 벡터를 미리 생성
+    const __m128 zero = _mm_setzero_ps();
 
     for (size_t i = 0; i < in_vertices.size(); ++i)
     {
         const ShadedVertex& current_v = in_vertices[i];
-        const ShadedVertex& prev_v = in_vertices[(i + in_vertices.size() - 1) % in_vertices.size()];
+        const ShadedVertex& prev_v = in_vertices[i == 0 ? in_vertices.size() - 1 : i - 1];
 
         // 각 정점의 w 값에 plane_sign을 곱한 값과, 특정 축(axis) 값을 비교합니다.
         // 예: Left Plane (w + x >= 0) -> axis=0(x), sign=1. dist = w + x
-        float current_dist = current_v.pos_clip.w + plane_sign * current_v.pos_clip.data[plane_axis];
-        float prev_dist    = prev_v.pos_clip.w    + plane_sign * prev_v.pos_clip.data[plane_axis];
 
-        bool is_current_inside = current_dist >= 0;
-        bool is_prev_inside = prev_dist >= 0;
+        // --- SIMD 거리 계산 ---
+        __m128 current_pos_ps = _mm_load_ps(&current_v.pos_clip.x);
+        __m128 prev_pos_ps = _mm_load_ps(&prev_v.pos_clip.x);
+
+        __m128 dists_ps = _mm_dp_ps(current_pos_ps, plane, 0xF1); // dists_ps = [current_dist, ?, ?, ?]
+        dists_ps = _mm_add_ps(dists_ps, _mm_dp_ps(prev_pos_ps, plane, 0xF2)); // dists_ps = [current_dist, prev_dist, ?, ?]
+
+        // [최적화 2] 비교 연산까지 모두 SIMD로 처리하여 파이프라인 스톨 제거
+        __m128 inside_mask_ps = _mm_cmpge_ps(dists_ps, zero); // [c_inside_mask, p_inside_mask, ?, ?]
+
+        // SIMD 마스크 결과를 정수 하나로 매우 빠르게 추출
+        int inside_mask = _mm_movemask_ps(inside_mask_ps);
+
+        bool is_current_inside = inside_mask & 1;
+        bool is_prev_inside =    inside_mask & 2;
 
         if (is_current_inside != is_prev_inside)
         {
+            // 교차점 계산은 스칼라로 수행 (SIMD->스칼라 변환이 필요하므로)
+            float current_dist = _mm_cvtss_f32(dists_ps);
+            float prev_dist = _mm_cvtss_f32(_mm_shuffle_ps(dists_ps, dists_ps, _MM_SHUFFLE(1, 1, 1, 1)));
+
             // 두 정점이 평면을 기준으로 서로 다른 쪽에 있으면 교차점을 계산
             float t = prev_dist / (prev_dist - current_dist);
             ShadedVertex intersection = interpolate(prev_v, current_v, t);
-            out_vertices.push_back(intersection);
+            out_vertices.emplace_back(intersection);
         }
 
         if (is_current_inside)
         {
             // 현재 정점이 평면 안쪽에 있으면 결과에 추가
-            out_vertices.push_back(current_v);
+            out_vertices.emplace_back(current_v);
         }
     }
 }
 
 
 // 삼각형을 6개의 절두체 평면으로 클리핑하는 메인 함수
-std::vector<ShadedVertex> Renderer::clipTriangle(const ShadedVertex& v0, const ShadedVertex& v1, const ShadedVertex& v2)
+void Renderer::clipTriangle(std::vector<ShadedVertex>& out_vertices, const ShadedVertex& v0, const ShadedVertex& v1, const ShadedVertex& v2,
+    std::vector<ShadedVertex>& buffer1, std::vector<ShadedVertex>& buffer2)
 {
-    std::vector<ShadedVertex> vertices_buffer1;
-    std::vector<ShadedVertex> vertices_buffer2;
+    buffer1 = { v0, v1, v2 };
 
-    vertices_buffer1 = { v0, v1, v2 };
+	auto* in_v = &buffer1;
+	auto* out_v = &buffer2;
 
-	auto* in_v = &vertices_buffer1;
-	auto* out_v = &vertices_buffer2;
+	// 6개의 절두체 평면에 대해 클리핑을 수행합니다.
+    // // _mm_set_ps는 인자 순서가 (w, z, y, x)로 역순임에 주의!
+    const __m128 plane_left = _mm_set_ps(1.0f, 0.0f, 0.0f, 1.0f);  //  x + w >= 0
+    const __m128 plane_right = _mm_set_ps(1.0f, 0.0f, 0.0f, -1.0f); // -x + w >= 0
+    const __m128 plane_bottom = _mm_set_ps(1.0f, 0.0f, 1.0f, 0.0f);  //  y + w >= 0
+    const __m128 plane_top = _mm_set_ps(1.0f, 0.0f, -1.0f, 0.0f); // -y + w >= 0
+    const __m128 plane_near = _mm_set_ps(1.0f, 1.0f, 0.0f, 0.0f);  //  z + w >= 0
+    const __m128 plane_far = _mm_set_ps(1.0f, -1.0f, 0.0f, 0.0f); // -z + w >= 0
 
     // 1. Left Plane  ( w + x >= 0 )
-    clipPolygonAgainstPlane(*out_v, *in_v, 0, 1);
+    clipPolygonAgainstPlane(*out_v, *in_v, plane_left);
 	std::swap(in_v, out_v);
     // 2. Right Plane ( w - x >= 0 )
-    clipPolygonAgainstPlane(*out_v, *in_v,  0, -1);
+    clipPolygonAgainstPlane(*out_v, *in_v, plane_right);
     std::swap(in_v, out_v);
     // 3. Bottom Plane( w + y >= 0 )
-    clipPolygonAgainstPlane(*out_v, *in_v, 1, 1);
+    clipPolygonAgainstPlane(*out_v, *in_v, plane_bottom);
     std::swap(in_v, out_v);
     // 4. Top Plane   ( w - y >= 0 )
-    clipPolygonAgainstPlane(*out_v, *in_v, 1, -1);
+    clipPolygonAgainstPlane(*out_v, *in_v, plane_top);
     std::swap(in_v, out_v);
     // 5. Near Plane  ( w + z >= 0 )  (OpenGL 기준)
-    clipPolygonAgainstPlane(*out_v, *in_v, 2, 1);
+    clipPolygonAgainstPlane(*out_v, *in_v, plane_near);
     std::swap(in_v, out_v);
     // 6. Far Plane   ( w - z >= 0 )  (OpenGL 기준)
-    clipPolygonAgainstPlane(*out_v, *in_v, 2, -1);
+    clipPolygonAgainstPlane(*out_v, *in_v, plane_far);
     std::swap(in_v, out_v);
 
-    return *in_v;
+	out_vertices = *in_v; // 최종 결과를 out_vertices에 저장
 }
 
 
@@ -725,7 +757,7 @@ void Renderer::RenderScene(const RenderQueue& queue, const Camera& camera, const
         stamp.reserve(65536);
 
 		int cmd_count = queue.GetRenderCommands().size();
-#pragma omp for schedule(guided)
+#pragma omp for schedule(dynamic)
         for (int cmd_idx = 0; cmd_idx < cmd_count; ++cmd_idx)
         {
             //drawMesh(cmd, vp, camera.GetCameraPos(), lights);
@@ -814,7 +846,7 @@ void Renderer::RenderScene(const RenderQueue& queue, const Camera& camera, const
                 TriangleRef tri_ref = { &cmd, static_cast<uint32_t>(i) };
                 for (int ty = min_tile_y; ty < max_tile_y; ++ty) {
                     for (int tx = min_tile_x; tx < max_tile_x; ++tx) {
-                        my_local_tiles[ty * num_tiles_x + tx].push_back(tri_ref);
+                        my_local_tiles[ty * num_tiles_x + tx].emplace_back(tri_ref);
                     }
                 }
             }
@@ -888,6 +920,10 @@ void Renderer::renderTile(int tx, int ty, const Tile& tiles, const SRMath::mat4&
     int tile_maxX = std::min(tile_minX + TILE_SIZE, m_width);
     int tile_maxY = std::min(tile_minY + TILE_SIZE, m_height);
 
+	std::unordered_map<const MeshRenderCommand*, SRMath::mat4> matrix_cache;
+    std::vector<ShadedVertex> vertices_buffer1;
+    std::vector<ShadedVertex> vertices_buffer2;
+
     // 타일 내 픽셀만 처리
     for (const auto& tri_ref : tiles.triangles)
     {
@@ -896,9 +932,11 @@ void Renderer::renderTile(int tx, int ty, const Tile& tiles, const SRMath::mat4&
         const SRMath::mat4& worldTransform = cmd->worldTransform;
 
         const SRMath::mat4 mvp = vp * worldTransform;
-        const SRMath::mat4 inverseTransposeWorld =
-            SRMath::inverse_transpose(worldTransform).value_or(SRMath::mat4(1.f));
 
+		if (matrix_cache.find(cmd) == matrix_cache.end())
+            matrix_cache[cmd] = SRMath::inverse_transpose(worldTransform).value_or(SRMath::mat4(1.f));
+        
+		const SRMath::mat4 inverseTransposeWorld = matrix_cache.at(cmd);
 
         // 1. 삼각형의 정점 데이터를 가져옵니다.
         const auto& vertices = mesh->vertices;
@@ -946,7 +984,8 @@ void Renderer::renderTile(int tx, int ty, const Tile& tiles, const SRMath::mat4&
         // 클리핑 (Frustum Clipping)
         // 하나의 삼각형을 Frustum에 맞게 클리핑합니다. (Sutherland-Hodgman 알고리즘 등)
         // 결과로 3~N개의 정점을 가진 폴리곤이 나옵니다.
-        std::vector<ShadedVertex> clipped_vertices = clipTriangle( sv0, sv1, sv2 );
+        std::vector<ShadedVertex> clipped_vertices;
+        clipTriangle(clipped_vertices, sv0, sv1, sv2, vertices_buffer1, vertices_buffer2);
 
         if(clipped_vertices.size() < 3)
         {
@@ -1015,10 +1054,10 @@ void Renderer::drawFilledTriangleForTile(const RasterizerVertex& v0, const Raste
 
     // 1. 삼각형 자체의 스크린 공간 바운딩 박스를 계산합니다.
 //    floor/ceil을 사용하여 부동소수점 좌표를 보수적으로 정수화합니다.
-    int tri_minY = (std::floor(std::min({ p0.y, p1.y, p2.y })));
-    int tri_maxY = (std::ceil(std::max({ p0.y, p1.y, p2.y })));
-	int tri_minX = (std::floor(std::min({ p0.x, p1.x, p2.x })));
-	int tri_maxX = (std::ceil(std::max({ p0.x, p1.x, p2.x })));
+    int tri_minY = (std::min({ p0.y, p1.y, p2.y }));
+    int tri_maxY = (std::max({ p0.y, p1.y, p2.y }));
+	int tri_minX = (std::min({ p0.x, p1.x, p2.x }));
+	int tri_maxX = (std::max({ p0.x, p1.x, p2.x }));
 
     // 2. ❗❗❗ 최종 루프 범위 계산 (교집합) - 이 부분이 올바른지 집중적으로 확인하세요!
     //    삼각형의 Y 시작점과 타일의 Y 시작점 중 '더 큰' 값에서 시작하고,
@@ -1063,22 +1102,30 @@ void Renderer::drawFilledTriangleForTile(const RasterizerVertex& v0, const Raste
 
                 if (std::abs(total_w) < 1e-5f) continue;
 
-                float w_bary = w0 / total_w;
-                float u_bary = w1 / total_w;
-                float v_bary = w2 / total_w;
+				float one_over_total_w = 1.0f / total_w;
+                float w_bary = w0 * one_over_total_w;
+                float u_bary = w1 * one_over_total_w;
+                float v_bary = w2 * one_over_total_w;
 
-                float interpolated_one_over_w =
-                    v0.one_over_w * w_bary + v1.one_over_w * u_bary + v2.one_over_w * v_bary;
+                float interpolated_one_over_w = v0.one_over_w * w_bary;
+                      interpolated_one_over_w += v1.one_over_w * u_bary;
+                      interpolated_one_over_w += v2.one_over_w * v_bary;
 
                 int idx = y * m_width + x;
                 if (interpolated_one_over_w > m_depthBuffer[idx])
                 {
+					float one_over_interpolated_one_over_w = 1.0f / interpolated_one_over_w;
 
-                    SRMath::vec3 normal_interpolated =
-                        SRMath::normalize((v0.normal_world_over_w * w_bary + v1.normal_world_over_w * u_bary + v2.normal_world_over_w * v_bary) / interpolated_one_over_w);
+                    SRMath::vec3 normal_interpolated = v0.normal_world_over_w * w_bary;
+                                 normal_interpolated += v1.normal_world_over_w * u_bary;
+                                 normal_interpolated += v2.normal_world_over_w * v_bary;
+                                 normal_interpolated *= one_over_interpolated_one_over_w;
 
-                    SRMath::vec2 uv_over_w_interpolated = v0.texcoord_over_w * w_bary + v1.texcoord_over_w * u_bary + v2.texcoord_over_w * v_bary;
-                    SRMath::vec2 uv_interpolated = uv_over_w_interpolated / interpolated_one_over_w;
+                    SRMath::vec2 uv_over_w_interpolated = v0.texcoord_over_w * w_bary;
+                                 uv_over_w_interpolated += v1.texcoord_over_w * u_bary;
+                                 uv_over_w_interpolated += v2.texcoord_over_w * v_bary;
+                    
+                    SRMath::vec2 uv_interpolated = uv_over_w_interpolated * one_over_interpolated_one_over_w;
 
                     SRMath::vec3 base_color;
 
@@ -1097,24 +1144,43 @@ void Renderer::drawFilledTriangleForTile(const RasterizerVertex& v0, const Raste
                     SRMath::vec3 total_diffuse_color = { 0.0f, 0.0f, 0.0f };
                     SRMath::vec3 total_specular_color = { 0.0f, 0.0f, 0.0f };
 
-                    SRMath::vec3 interpolated_world_pos =
-                        (v0.world_pos_over_w * w_bary + v1.world_pos_over_w * u_bary + v2.world_pos_over_w * v_bary) / interpolated_one_over_w;
+                    SRMath::vec3 interpolated_world_pos = v0.world_pos_over_w * w_bary;
+                                 interpolated_world_pos += v1.world_pos_over_w * u_bary;
+                                 interpolated_world_pos += v2.world_pos_over_w * v_bary;
+                                 interpolated_world_pos *= one_over_interpolated_one_over_w;
+                                 interpolated_world_pos = SRMath::normalize(interpolated_world_pos);
+
                     SRMath::vec3 view_dir = SRMath::normalize(camPos - interpolated_world_pos);
 
                     for (const auto& light : lights)
                     {
+                        SRMath::vec3 light_dir = SRMath::normalize(light.direction);
+
                         // 난반사 조명 계산
-                        float diffuse_intensity = std::max(0.0f, dot(normal_interpolated, SRMath::normalize(light.direction)));
-                        total_diffuse_color += base_color * diffuse_intensity * light.color;
+                        float diffuse_intensity = std::max(0.0f, dot(normal_interpolated, light_dir));
+                        SRMath::vec3 diffuse_term = base_color;
+                        diffuse_term *= diffuse_intensity;
+						diffuse_term *= light.color;
+
+                        total_diffuse_color += diffuse_term;
 
                         // 정반사 조명 계산
-                        SRMath::vec3 reflect_dir = SRMath::reflect(-1 * SRMath::normalize(light.direction), normal_interpolated);
+                        SRMath::vec3 reflect_dir = SRMath::reflect(-1 * light_dir, normal_interpolated);
                         float spec_dot = SRMath::dot(view_dir, reflect_dir);
-                        float spec_factor = std::pow(std::max(0.0f, spec_dot), material->Ns);
-                        total_specular_color += material->ks * spec_factor * light.color;
+                        float spec_factor = std::max(0.0f, spec_dot);
+                        for (int i = 2; i < material->Ns; i *= 2)
+                        	spec_factor *= spec_factor;
+                        
+						SRMath::vec3 specular_term = material->ks;
+						specular_term *= spec_factor;
+						specular_term *= light.color;
+
+                        total_specular_color += specular_term;
                     }
 
-                    SRMath::vec3 color = ambient_color + total_diffuse_color + total_specular_color;
+                    SRMath::vec3 color = ambient_color;
+                    color += total_diffuse_color;
+                    color += total_specular_color;
 
                     // 최종 색상의 각 채널(R, G, B)을 0.0과 1.0 사이로 클램핑합니다.
                     color.clamp(0.f, 1.0f);

@@ -66,8 +66,9 @@ private:
 
 
 	ShadedVertex interpolate(const ShadedVertex& v0, const ShadedVertex& v1, float t);
-	void clipPolygonAgainstPlane(std::vector<ShadedVertex>& out_vertices, const std::vector<ShadedVertex>& vertices, int plane_axis, int plane_sign);
-	std::vector<ShadedVertex> clipTriangle(const ShadedVertex& v0, const ShadedVertex& v1, const ShadedVertex& v2);
+	void clipPolygonAgainstPlane(std::vector<ShadedVertex>& out_vertices, const std::vector<ShadedVertex>& vertices, const __m128& plane);
+	void clipTriangle(std::vector<ShadedVertex>& out_vertices, const ShadedVertex& v0, const ShadedVertex& v1, const ShadedVertex& v2,
+		std::vector<ShadedVertex>& buffer1, std::vector<ShadedVertex>& buffer2);
 
 
 public:

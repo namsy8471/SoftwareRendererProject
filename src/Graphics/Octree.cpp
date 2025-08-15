@@ -123,6 +123,7 @@ void Octree::Build(const Mesh& mesh)
 
 // 재귀적으로 프러스텀 컬링 및 렌더 큐 제출(디버그 AABB 포함)
 void Octree::submitNodeRecursive(RenderQueue& renderQueue, const Frustum& frustum, const SRMath::mat4& worldTransform, 
+	const int threadId, std::vector<MeshRenderCommand>& threadLocalCmd, std::vector<DebugPrimitiveCommand>& threadlocalDebugCmd, 
 	const DebugFlags& debugFlags, const OctreeNode* node)
 {
 	// 노드 경계를 월드 공간으로 변환
@@ -149,7 +150,7 @@ void Octree::submitNodeRecursive(RenderQueue& renderQueue, const Frustum& frustu
 			cmd.rasterizeMode = ERasterizeMode::Fill;
 		}
 
-		renderQueue.Submit(cmd);                           // 메시 렌더 명령 큐에 추가
+		threadLocalCmd.push_back(cmd); // 멀티스레드 로컬 렌더 명령 큐에 추가
 	}
 
 	// 디버그: 노드 AABB를 선분으로 렌더 큐에 제출
@@ -172,20 +173,21 @@ void Octree::submitNodeRecursive(RenderQueue& renderQueue, const Frustum& frustu
 		cmd.vertices = debugVertices;
 		cmd.worldTransform = SRMath::mat4::identity(); // 이미 월드로 변환된 좌표이므로 단위행렬
 		cmd.type = DebugPrimitiveType::Line;
-		renderQueue.Submit(cmd);
+		threadlocalDebugCmd.push_back(cmd);
 	}
 	
 	// 자식 노드들에 대해 동일 처리 (존재하는 경우에만)
 	for(const auto & child : node->children)
 	{
-		if (child) submitNodeRecursive(renderQueue, frustum, worldTransform, debugFlags, child.get());
+		if (child) submitNodeRecursive(renderQueue, frustum, worldTransform, threadId, threadLocalCmd, threadlocalDebugCmd, debugFlags, child.get());
 	}
 }
 
 // 루트부터 시작하여 보이는 노드들을 렌더 큐에 제출하는 진입점
-void Octree::SubmitNodesToRenderQueue(RenderQueue& renderQueue, const Frustum& frustum, const SRMath::mat4& worldTransform, const DebugFlags& debugFlags)
+void Octree::SubmitNodesToRenderQueue(RenderQueue& renderQueue, const Frustum& frustum, const SRMath::mat4& worldTransform,
+	const int threadId, std::vector<MeshRenderCommand>& threadLocalCmd, std::vector<DebugPrimitiveCommand>& threadlocalDebugCmd, const DebugFlags& debugFlags)
 {
 	if (!root) return; // 빌드되지 않은 경우 무시
 
-	submitNodeRecursive(renderQueue, frustum, worldTransform, debugFlags, root.get());
+	submitNodeRecursive(renderQueue, frustum, worldTransform, threadId, threadLocalCmd, threadlocalDebugCmd, debugFlags, root.get());
 }

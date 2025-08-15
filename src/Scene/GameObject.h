@@ -19,6 +19,7 @@ private:
 	SRMath::vec3 m_scale;
 
 	SRMath::mat4 m_worldMatrix; // 월드 변환 행렬
+	SRMath::mat4 m_normalMatrix; // 법선 행렬 (역전치 행렬)
 
 	// Model
 	std::unique_ptr<Model> m_model;

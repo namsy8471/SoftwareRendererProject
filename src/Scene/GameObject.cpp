@@ -4,6 +4,7 @@
 #include "Math/Frustum.h"
 #include "Graphics/Octree.h"
 #include "Utils/DebugUtils.h"
+#include <omp.h>
 
 GameObject::GameObject() = default;
 GameObject::~GameObject() = default;
@@ -48,6 +49,7 @@ void GameObject::UpdateTransform()
 	SRMath::mat4 rotationMatrix = SRMath::rotate(m_rotation);
 	SRMath::mat4 translationMatrix = SRMath::translate(m_position);
 	m_worldMatrix = translationMatrix * rotationMatrix * scaleMatrix;
+	m_normalMatrix = SRMath::inverse_transpose(m_worldMatrix).value_or(SRMath::mat4(1.f)); // 법선 행렬 계산
 
 	const AABB& localAABB = m_model->GetLocalAABB();
 	m_worldAABB = localAABB.Transform(m_worldMatrix);
@@ -101,59 +103,101 @@ void GameObject::SubmitToRenderQueue(RenderQueue& renderQueue, const Frustum& fr
 	if (!frustum.IsAABBInFrustum(m_worldAABB)) return;
 	if (!m_model) return;
 
-	for (const auto& mesh : m_model->GetMeshes())
-	{
-		if (mesh.octree)
-		{
-			mesh.octree->SubmitNodesToRenderQueue(renderQueue, frustum, m_worldMatrix, debugFlags);
-		}
-		else
-		{
-			MeshRenderCommand cmd;
-			cmd.sourceMesh = &mesh;
-			cmd.indicesToDraw = &mesh.indices;
-			cmd.worldTransform = m_worldMatrix;
-			cmd.material = &mesh.material;
+	int modelSize = m_model->GetMeshes().size();
+	std::vector<std::vector<MeshRenderCommand>> threadLocalCmd;
+	std::vector<std::vector<DebugPrimitiveCommand>> threadLocalDebugCmd;
 
-			if(debugFlags.bShowWireframe)
+#pragma omp parallel
+	{
+		#pragma omp single
+		{
+			threadLocalCmd.resize(omp_get_num_threads());
+			threadLocalDebugCmd.resize(omp_get_num_threads());
+		}
+
+		std::vector<MeshRenderCommand> localCmd;
+		std::vector<DebugPrimitiveCommand> localDebugCmd;
+		int threadId = omp_get_thread_num();
+			
+		#pragma omp for schedule(dynamic)
+		for (int i = 0; i < modelSize; i++)
+		{
+			const auto& mesh = m_model->GetMeshes()[i];
+			if (mesh.octree)
 			{
-				cmd.rasterizeMode = ERasterizeMode::Wireframe;
+				mesh.octree->SubmitNodesToRenderQueue(renderQueue, frustum, m_worldMatrix,
+					threadId, localCmd, localDebugCmd, debugFlags);
 			}
 			else
 			{
-				cmd.rasterizeMode = ERasterizeMode::Fill;
+				MeshRenderCommand cmd;
+				cmd.sourceMesh = &mesh;
+				cmd.indicesToDraw = &mesh.indices;
+				cmd.worldTransform = m_worldMatrix;
+				cmd.material = &mesh.material;
+
+				if (debugFlags.bShowWireframe)
+				{
+					cmd.rasterizeMode = ERasterizeMode::Wireframe;
+				}
+				else
+				{
+					cmd.rasterizeMode = ERasterizeMode::Fill;
+				}
+
+				// renderQueue.Submit(cmd);
+				localCmd.push_back(cmd);
 			}
 
-			renderQueue.Submit(cmd);
+			if (debugFlags.bShowNormal)
+			{
+				std::vector<DebugVertex> normalLines;
+				normalLines.reserve(mesh.vertices.size() * 2); // 각 정점마다 시작점과 끝점이 있으므로 2배 크기
+
+				const float normalLength = 0.1f; // Normal vector length for visualization
+
+				for (const auto& vertex : mesh.vertices)
+				{
+					SRMath::vec3 startPoint_local = m_worldMatrix * vertex.position;
+
+					// 3. 방향(normal)은 역전치 행렬로 변환하여 월드 공간의 법선 방향을 계산합니다.
+					// (w=0으로 설정하여 방향 벡터임을 명시)
+					SRMath::vec3 normalDir_world = m_normalMatrix * SRMath::vec4(vertex.normal, 0.f);
+					SRMath::vec3 endPoint_local = startPoint_local + SRMath::normalize(normalDir_world) * normalLength;
+
+					normalLines.push_back({ startPoint_local, SRMath::vec4(1.0f, 1.0f, 0.0f, 1.0f) });
+					normalLines.push_back({ endPoint_local, SRMath::vec4(1.0f, 1.0f, 0.0f, 1.0f) });
+				}
+
+				if (!normalLines.empty()) {
+
+					DebugPrimitiveCommand cmd;
+					cmd.vertices = std::move(normalLines);
+					cmd.worldTransform = SRMath::mat4(1.f);
+					cmd.type = DebugPrimitiveType::Line;
+					//renderQueue.Submit(cmd);
+					localDebugCmd.push_back(cmd);
+				}
+			}
 		}
 
-		if (debugFlags.bShowNormal)
+		threadLocalCmd[threadId] = std::move(localCmd);
+		threadLocalDebugCmd[threadId] = std::move(localDebugCmd);
+	}
+
+	for(const auto& localCmd : threadLocalCmd)
+	{
+		for (const auto& cmd : localCmd)
 		{
-			std::vector<DebugVertex> normalLines;
-			SRMath::mat4 normalMatrix = SRMath::inverse_transpose(m_worldMatrix).value_or(SRMath::mat4(1.f)); // 법선 행렬 계산
-			const float normalLength = 0.1f; // Normal vector length for visualization
+			renderQueue.Submit(cmd);
+		}
+	}
 
-			for (const auto& vertex : mesh.vertices)
-			{
-				SRMath::vec3 startPoint_local = m_worldMatrix * vertex.position;
-
-				// 3. 방향(normal)은 역전치 행렬로 변환하여 월드 공간의 법선 방향을 계산합니다.
-				// (w=0으로 설정하여 방향 벡터임을 명시)
-				SRMath::vec3 normalDir_world = normalMatrix * SRMath::vec4(vertex.normal, 0.f);
-				SRMath::vec3 endPoint_local = startPoint_local + SRMath::normalize(normalDir_world) * normalLength;
-				
-				normalLines.push_back({ startPoint_local, SRMath::vec4(1.0f, 1.0f, 0.0f, 1.0f) });
-				normalLines.push_back({ endPoint_local, SRMath::vec4(1.0f, 1.0f, 0.0f, 1.0f) });
-			}
-
-			if (!normalLines.empty()) {
-
-				DebugPrimitiveCommand cmd;
-				cmd.vertices = std::move(normalLines);
-				cmd.worldTransform = SRMath::mat4(1.f);
-				cmd.type = DebugPrimitiveType::Line;
-				renderQueue.Submit(cmd);
-			}
+	for (const auto& localDebugCmd : threadLocalDebugCmd)
+	{
+		for (const auto& cmd : localDebugCmd)
+		{
+			renderQueue.Submit(cmd);
 		}
 	}
 

@@ -1,6 +1,8 @@
 #pragma once
 #include <memory>
+#include <vector>
 #include "Math/SRMath.h"
+#include "Renderer/RenderCommand.h"
 
 class RenderQueue;
 struct Mesh;
@@ -19,7 +21,11 @@ private:
 	std::unique_ptr<OctreeNode> root;
 	const Mesh* sourceMesh = nullptr;
 
-	void submitNodeRecursive(RenderQueue& renderQueue, const Frustum& frustum, const SRMath::mat4& worldTransform, const DebugFlags& debugFlags, const OctreeNode* node);
+	void submitNodeRecursive(RenderQueue& renderQueue, const Frustum& frustum, const SRMath::mat4& worldTransform,
+		const int threadId, std::vector<MeshRenderCommand>& threadLocalCmd, std::vector<DebugPrimitiveCommand>& localDebugCmd, 
+		const DebugFlags& debugFlags, const OctreeNode* node);
+
+	
 
 	static const int MAX_TRIANGLES_PER_NODE = 16;
 	static const int MAX_DEPTH = 8;
@@ -29,6 +35,7 @@ public:
 
 	void Build(const Mesh& mesh);
 	const OctreeNode* GetRoot() const { return root.get(); }
-	void SubmitNodesToRenderQueue(RenderQueue& renderQueue, const Frustum& frustum, const SRMath::mat4& worldTransform, const DebugFlags& debugFlags);
+	void SubmitNodesToRenderQueue(RenderQueue& renderQueue, const Frustum& frustum, const SRMath::mat4& worldTransform,
+		const int threadId, std::vector<MeshRenderCommand>& threadLocalCmd, std::vector<DebugPrimitiveCommand>& localDebugCmd, const DebugFlags& debugFlags);
 };
 
