@@ -23,20 +23,19 @@
 * **OBJ, MTL 파서 (OBJ, MTL Parser)**: std::fstream을 활용하여 .obj 파일 포맷을 읽고, **std::stringstream**을 이용해 각 줄의 데이터를 효율적으로 파싱하여 3D 모델 및 머테리얼 데이터를 로드하는 기능 구현.
 * **래스터화 (Rasterization)**: 삼각형, 선 등 기본적인 기하 도형을 픽셀로 변환하는 핵심 과정 구현.
 * **Z-버퍼링 (Z-Buffering)**: 깊이 테스트를 통해 올바른 객체 가시성을 보장하여 렌더링 오류를 방지.
-* **텍스처 매핑 (Texture Mapping)**: 3D 모델 표면에 이미지를 입혀 사실감 향상.
 * **퐁 일루미네이션 모델 (Phong Illumination Model)**: 광원, 시점, 법선 벡터를 고려하여 사실적인 표면 음영을 계산하는 셰이딩 모델 구현.
 * **선그리기 알고리즘**: Bresenham 알고리즘과 DDA 알고리즘, 두 가지를 만들고 변경 가능하게 구현
 * **클리핑 (Clipping)**: Sutherland–Hodgman algorithm을 이용한 Frustum Plane Clipping 구현으로 파이프라인 효율성 증대.
 * **백 페이스 컬링 (Back-face Culling)**: 카메라를 등지고 있는 폴리곤을 제거하여 렌더링 부하를 줄이는 최적화 기법 적용.
-* **프러스텀 컬링 (Frustum Culling)**: 화면 밖의 오브젝트는 그리지 않게 하여 최적화.
-* **법선,AABB, 와이어프레임 표시 디버깅 (Normal, AABB, and Wireframe Visualization for Debugging)**: 정점 법선을 시각화하여 렌더링 오류 진단 및 디버깅 용이성 확보.
+* **프러스텀 컬링 (Frustum Culling)**: 해당 메시의 AABB를 탐지하여 화면 밖의 오브젝트는 그리지 않게 하여 최적화.
+* **법선,AABB, 와이어프레임 표시 디버깅 (Normal, AABB, and Wireframe Visualization for Debugging)**: 정점 법선, AABB, 모델의 와이어프레임을 시각화하여 렌더링 오류 진단 및 디버깅 용이성 확보.
 * **렌더 큐 및 타일 기반 렌더링 (Render Queue and Tile-based Rendering)**: 게임 오브젝트가 각자 렌더링이 필요하면 렌더큐에 넣고, 렌더러는 해당 렌더큐에서 렌더링에 필요한 정보를 얻은 후 어느 타일에 렌더링해야하는지 분배합니다. 그리고 분배 후 각 타일마다 OpenMP를 사용한 멀티스레드를 통해서 렌더링을 실행합니다. 
 * **수학 함수 라이브러리 직접 구현 (Custom Math Library: SRMath.h)**: 행렬 및 벡터 연산 함수를 SIMD 명령어(SSE)를 활용하여 직접 구현, 성능 최적화와 기초 수학 이해도를 증명.
 
 ---
 
 ## **기술 스택 (Technologies Used)**
-* **언어**: `C++17` (객체 지향 설계 및 최신 언어 기능 - 예: 구조적 바인딩 - 활용)
+* **언어**: `C++17` (객체 지향 설계 및 최신 언어 기능 - 구조적 바인딩, Optional 활용)
 * **개발 환경**: `Visual Studio 2022`
 * **OS 인터페이스**: `WinAPI` (창 관리, 사용자 입력 처리, 픽셀 버퍼 접근 등 OS 레벨 인터페이스 제어)
 * **라이브러리**: `stb_image.h` (다양한 이미지 포맷 로딩 및 파싱을 위한 단일 헤더 라이브러리)
