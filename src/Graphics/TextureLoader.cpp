@@ -29,10 +29,11 @@ std::shared_ptr<Texture> TextureLoader::LoadImageFile(const std::string& filepat
 std::unordered_map<std::string, Material> TextureLoader::LoadMTLFile(const std::string& filepath)
 {
 	std::unordered_map<std::string, Material> materials;
-
 	std::ifstream file(filepath);
 
 	if (!file.is_open()) return materials;
+
+	materials.reserve(100); // 초기 용량 예약 (MTL 파일은 보통 재질이 많지 않음)
 
 	std::string line;
     Material* currentMaterial = nullptr;
@@ -71,6 +72,15 @@ std::unordered_map<std::string, Material> TextureLoader::LoadMTLFile(const std::
 				ss >> currentMaterial->illum; // Diffuse texture file
 		}
     }
+
+	auto shrink_unordered_map = [](auto& map) {
+		std::unordered_map<std::string, Material> temp_map;
+
+		map.swap(temp_map); // 기존 맵을 비우고 새로 할당
+		return temp_map; // 새로 할당된 맵 반환
+		};
+
+	materials = shrink_unordered_map(materials); // 메모리 최적화를 위해 맵을 축소
 
 	return materials;
 }

@@ -153,7 +153,7 @@ void Framework::Update(const float deltaTime)
     {
         if (gameObject)
         {
-            gameObject->Update(deltaTime);
+            gameObject->Update(deltaTime, m_isRotateMode);
 
             if (frustum.IsAABBInFrustum(gameObject->GetWorldAABB()))
             {
@@ -192,9 +192,13 @@ LRESULT Framework::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
         // Other variables
         case ID_LINEALGORITHM_BRESENHAM:
             m_pRenderer->SetLineAlgorithm(ELineAlgorithm::Bresenham);
+            CheckMenuBox(m_debugFlags.bShowNormal, ID_LINEALGORITHM_BRESENHAM);
+
             break;
         case ID_LINEALGORITHM_DDA:
             m_pRenderer->SetLineAlgorithm(ELineAlgorithm::DDA);
+            CheckMenuBox(m_debugFlags.bShowNormal, ID_LINEALGORITHM_DDA);
+
             break;
         case ID_DEBUG_NORMALVECTOR:
             m_debugFlags.bShowNormal = !m_debugFlags.bShowNormal;
@@ -210,7 +214,17 @@ LRESULT Framework::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
             m_debugFlags.bShowWireframe = !m_debugFlags.bShowWireframe;
 			CheckMenuBox(m_debugFlags.bShowWireframe, ID_DEBUG_WIREFRAME);
             break;
-        
+
+        case ID_ANTIALIASING_NONE:
+            m_pRenderer->SetAAAlgorithm(EAAAlgorithm::None);
+            CheckMenuBox(m_debugFlags.bShowWireframe, ID_DEBUG_WIREFRAME);
+            break;
+
+        case ID_ANTIALIASING_FXAA:
+			m_pRenderer->SetAAAlgorithm(EAAAlgorithm::FXAA);
+            CheckMenuBox(m_debugFlags.bShowWireframe, ID_DEBUG_WIREFRAME);
+            break;
+
         case IDM_ABOUT:
             DialogBox(m_hInstance, MAKEINTRESOURCE(IDD_ABOUTBOX), hWnd, Framework::About);
             break;
@@ -224,11 +238,11 @@ LRESULT Framework::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
     break;
     case WM_PAINT:
     {
-        //It is not used anymore
-        
-        /*PAINTSTRUCT ps;
+        // It is not used anymore
+        // 하지만 지우면 윈도우 에러 혹은 헬프 창이 안 뜨므로 남김. 
+        PAINTSTRUCT ps;
         HDC hdc = BeginPaint(hWnd, &ps);
-        EndPaint(hWnd, &ps);*/
+        EndPaint(hWnd, &ps);
     }
     break;
 
@@ -250,6 +264,19 @@ LRESULT Framework::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
     // Keyborad Input
     case WM_KEYDOWN:
         m_keys[wParam] = true;
+        if (m_keys[VK_SPACE])
+        {
+            m_isRotateMode = !m_isRotateMode;
+        }
+        else if (m_keys[VK_F1])
+        {
+			m_pRenderer->SetAAAlgorithm(EAAAlgorithm::None);
+        }
+        else if (m_keys[VK_F2])
+        {
+            m_pRenderer->SetAAAlgorithm(EAAAlgorithm::FXAA);
+        }
+
         break;
     case WM_KEYUP:
         m_keys[wParam] = false;

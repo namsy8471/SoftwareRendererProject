@@ -32,6 +32,7 @@ private:
 	std::vector<DirectionalLight> m_lights; // It is for Directional Lights
 
 	DebugFlags m_debugFlags;				// It is for Debug Flags
+	bool m_isRotateMode = true;		    // It is for Rotate Mode
 
 	// Key Input Variables
 	bool m_keys[256];

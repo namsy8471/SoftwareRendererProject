@@ -27,23 +27,23 @@ bool GameObject::Initialize(const SRMath::vec3& position, const SRMath::vec3& ro
 	return true;
 }
 
-void GameObject::Update(float deltaTime)
+void GameObject::Update(float deltaTime, bool isRotate)
 {
-	UpdateTransform();
+	UpdateTransform(deltaTime, isRotate);
 
 	for(const auto& son : m_sons)
 	{
 		if (son)
 		{
-			son->Update(deltaTime);
+			son->Update(deltaTime, isRotate);
 		}
 	}
 }
 
-void GameObject::UpdateTransform()
+void GameObject::UpdateTransform(float deltaTime, bool isRotate)
 {
 	// World Transform
-	m_rotation += SRMath::vec3(0.0f, 0.01, 0.0f); // Example rotation update, can be customized
+	if(isRotate) m_rotation += SRMath::vec3(0.0f, 0.4f * deltaTime, 0.0f); // Example rotation update, can be customized
 
 	SRMath::mat4 scaleMatrix = SRMath::scale(m_scale);
 	SRMath::mat4 rotationMatrix = SRMath::rotate(m_rotation);

@@ -19,6 +19,8 @@
 #define ID_DEBUG_NORMALVECTOR           32775
 #define ID_DEBUG_AABB		            32776
 #define ID_DEBUG_WIREFRAME              32777
+#define ID_ANTIALIASING_FXAA            32778
+#define ID_ANTIALIASING_NONE            32779
 #define IDC_STATIC                      -1
 
 // Next default values for new objects

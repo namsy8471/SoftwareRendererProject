@@ -17,6 +17,8 @@ namespace SRMath {
 	using vec4 = Vector<4>;
 	using vec3 = Vector<3>;
 	using vec2 = Vector<2>;
+	using Color = Vector<3>; // RGB Color
+	using Color4 = Vector<4>; // RGBA Color
 
 	// Vector2
 	template <>
@@ -24,6 +26,7 @@ namespace SRMath {
 	{
 		union {
 			struct { float x, y; };
+			struct { float u, v; }; // For texture coordinates;
 			float data[4]; // padding 8 bytes for m128
 			__m128 m128;
 		};
@@ -96,6 +99,7 @@ namespace SRMath {
 	{
 		union {
 			struct { float x, y, z; };
+			struct { float r, g, b; }; // For RGB Color
 			float data[4]; // padding 4 bytes for m128
 			__m128 m128;
 		};
@@ -172,6 +176,7 @@ namespace SRMath {
 	{
 		union {
 			struct { float x, y, z, w; };
+			struct { float r, g, b, a; }; // For RGBA Color
 			float data[4];
 			__m128 m128;
 		};

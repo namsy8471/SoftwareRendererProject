@@ -185,6 +185,7 @@
     <ClInclude Include="src\Math\AABB.h" />
     <ClInclude Include="src\Math\Frustum.h" />
     <ClInclude Include="src\Math\SRMath.h" />
+    <ClInclude Include="src\Renderer\FXAA.h" />
     <ClInclude Include="src\Renderer\Tile.h" />
     <ClInclude Include="src\Renderer\RenderCommand.h" />
     <ClInclude Include="src\Renderer\Renderer.h" />

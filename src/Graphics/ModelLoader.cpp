@@ -11,10 +11,6 @@
 #include "Graphics/Material.h"
 #include "Math/AABB.h"
 
-// 디버깅용 전역 카운터 (파일 파싱 상태 추적용)
-int face_lines_read = 0; // 디버깅용: 읽은 면(face) 라인 수
-int triangles_generated = 0; // 디버깅용: 생성된 삼각형 수
-
 // v/vt/vn 조합을 하나의 정점 키로 사용하기 위한 구조체
 struct VertexKey
 {
@@ -38,6 +34,7 @@ struct VertexKey
 std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
 {
     std::unique_ptr<Model> outModel = std::make_unique<Model>(); // 출력 모델
+	outModel->m_meshes.reserve(1000); // 초기 용량 예약
 
     std::ifstream file(filename + ".obj"); // .obj 파일 열기
     if (!file.is_open()) return nullptr;   // 실패 시 null 반환
@@ -51,11 +48,16 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
         directoryPath = filename.substr(0, last_slash_idx + 1);
     }
 
-    // 1. 파일에서 모든 속성(v, vt, vn)을 임시 버퍼에 읽어들입니다.
+    // 파일에서 모든 속성(v, vt, vn)을 임시 버퍼에 읽어들입니다.
     std::vector<SRMath::vec3> temp_positions; // v
     std::vector<SRMath::vec2> temp_texcoords; // vt
     std::vector<SRMath::vec3> temp_normals;   // vn
 
+	temp_positions.reserve(65000); // 초기 용량 예약
+	temp_texcoords.reserve(65000); // 초기 용량 예약
+    temp_normals.reserve(65000);   // 초기 용량 예약
+	
+    // MTL 파일에서 재질을 읽어들입니다.
 	std::unordered_map<std::string, Material> materials;    // MTL 파일에서 읽은 재질들
 	std::string currentMaterialName;                        // 현재 사용 중인 재질 이름
 
@@ -79,7 +81,7 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
         {
             SRMath::vec3 pos;
             ss >> pos.x >> pos.y >> pos.z;
-            temp_positions.push_back(pos);
+            temp_positions.emplace_back(pos);
         }
 
         // 텍스처 좌표(vt)
@@ -87,7 +89,7 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
         {
             SRMath::vec2 uv;
             ss >> uv.x >> uv.y;
-            temp_texcoords.push_back(uv);
+            temp_texcoords.emplace_back(uv);
 
         }
 
@@ -96,7 +98,7 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
         {
             SRMath::vec3 nrm;
             ss >> nrm.x >> nrm.y >> nrm.z;
-            temp_normals.push_back(nrm);
+            temp_normals.emplace_back(nrm);
             
         }
 
@@ -245,7 +247,7 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
                         new_vertex.normal = temp_normals[key.nrm_idx];
                     }
 
-                    meshToAddTo.vertices.push_back(new_vertex);
+                    meshToAddTo.vertices.emplace_back(new_vertex);
                     unsigned int new_index = meshToAddTo.vertices.size() - 1;
                     vertexCache[key] = new_index;
                     face_indices[vertex_count_in_face] = new_index;
@@ -257,13 +259,15 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
             // CCW 방향
             for (int i = 0; i < vertex_count_in_face - 2; ++i)
             {
-                meshToAddTo.indices.push_back(face_indices[0]);
-                meshToAddTo.indices.push_back(face_indices[i + 2]);
-                meshToAddTo.indices.push_back(face_indices[i + 1]);
+                meshToAddTo.indices.emplace_back(face_indices[0]);
+                meshToAddTo.indices.emplace_back(face_indices[i + 2]);
+                meshToAddTo.indices.emplace_back(face_indices[i + 1]);
             }
         }
     }
- 
+    
+	outModel->m_meshes.shrink_to_fit(); // 불필요한 용량 제거
+
     AABB modelAABB; // 모델 전체 AABB (모든 메시 통합용)
 
     // 메시별 후처리(법선 생성, AABB 계산, 옥트리 빌드)를 병렬 처리
@@ -273,19 +277,18 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
         auto& mesh = outModel->m_meshes[i];
 
         // OBJ에 vn이 실제로 존재하는지 여부 체크
-        bool hasNormals = false;
+        bool hasNormals = true;
         for(const auto& vertex : mesh.vertices)
         {
             if (vertex.normal != SRMath::vec3(0.0f, 0.0f, 0.0f))
             {
-                hasNormals = true;
+                hasNormals = false;
                 break;
             }
 		}
 
         // If there is no Normal vector in OBJ File
-        // 주의: || true 로 인해 항상 법선을 재계산함 (의도된 동작으로 보임)
-        if (!hasNormals || true)
+        if (!hasNormals)
         {
             // 각 정점의 법선을 0으로 초기화
             for (auto& vertex : mesh.vertices)

@@ -41,8 +41,8 @@ public:
 
 
 	bool Initialize(const SRMath::vec3& position, const SRMath::vec3& rotation, const SRMath::vec3& scale, std::unique_ptr<Model> model);
-	void Update(float deltaTime);
-	void UpdateTransform(); // Transform 업데이트 시 호출될 함수
+	void Update(float deltaTime, bool isRotate);
+	void UpdateTransform(float deltaTime, bool isRotate); // Transform 업데이트 시 호출될 함수
 
 	const SRMath::vec3 GetPosition() const;
 	const SRMath::vec3 GetRotation() const;

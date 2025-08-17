@@ -1,8 +1,12 @@
 #pragma once
 #include <vector>
+#include <unordered_map>
+#include <memory>
+
 #include "Core/pch.h"
 #include "Math/SRMath.h"
 #include "Graphics/Mesh.h"
+#include "Renderer/Tile.h"
 
 struct ShadedVertex;
 struct RasterizerVertex;
@@ -13,12 +17,17 @@ struct DirectionalLight;
 struct DebugPrimitiveCommand;
 struct MeshRenderCommand;
 struct Material;
-struct Tile;
 
 enum class ELineAlgorithm
 {
 	Bresenham,
 	DDA
+};
+
+enum class EAAAlgorithm
+{
+	None,
+	FXAA	// Fast Approxiate Anti-Aliasing
 };
 
 class Renderer
@@ -38,6 +47,15 @@ private:
 	ELineAlgorithm m_currentLineAlgorithm = 
 		ELineAlgorithm::Bresenham;	// 선 그리기 알고리즘
 
+	EAAAlgorithm m_currentAAAlgorithm = 
+		EAAAlgorithm::None;	// 앤티앨리어싱 알고리즘
+
+	// Renderer Optimization
+	std::vector<Tile> m_tiles;			
+	std::vector<std::vector<std::vector<TriangleRef>>> m_threadLocalStorages;
+	std::vector<std::vector<SRMath::vec4>> m_threadClips; // 클립 공간 좌표를 저장할 버퍼
+	std::vector<std::vector<int>> m_threadStamps;         // 정점별 스탬프 (변환 캐싱 용도)
+
 	// 선 그리기 알고리즘 셀렉터
 	void drawLineByBresenham(int x0, int y0, int x1, int y1, unsigned int color);
 	void drawLineByDDA(int x0, int y0, int x1, int y1, unsigned int color);
@@ -48,22 +66,15 @@ private:
 	void drawTriangle(int x0, int y0, int x1, int y1, int x2, int y2, unsigned int color);
 	void drawTriangle(const SRMath::vec2 v0, const SRMath::vec2 v1, const SRMath::vec2 v2, unsigned int color);
 
-	void drawFilledTriangle(const RasterizerVertex& v0, const RasterizerVertex& v1, const RasterizerVertex& v2,
-		const Material* material, const std::vector<DirectionalLight>& lights, const SRMath::vec3& camPos);
+	void renderTile(std::unordered_map<const MeshRenderCommand*, SRMath::mat4>& matrixCache, std::vector<ShadedVertex>& verticesBuffer1,
+		std::vector<ShadedVertex>& verticesBuffer2, std::vector<ShadedVertex>& clippedVertices,
+		int tx, int ty, const Tile& tiles, const SRMath::mat4& vp, const SRMath::vec3& camPos, const std::vector<DirectionalLight> lights);
 	
-	void resterization(const std::vector<ShadedVertex>& clipped_vertices,
-		const Material* material, const std::vector<DirectionalLight>& lights, const SRMath::vec3 camPos, const MeshRenderCommand& cmd);
-
-	void drawMesh(const MeshRenderCommand& cmd, const SRMath::mat4& vp, const SRMath::vec3& camPos, const std::vector<DirectionalLight> lights);
-	void drawDebugPrimitive(const DebugPrimitiveCommand& cmd, const SRMath::mat4& vp, const Camera& camera);
-
-	void renderTile(int tx, int ty, const Tile& tiles, const SRMath::mat4& vp,
-		const SRMath::vec3& camPos, const std::vector<DirectionalLight> lights);
-	void resterizationForTile(const std::vector<ShadedVertex>& clipped_vertices, const Material* material, 
+	void resterizationForTile(const std::vector<ShadedVertex>& clipped_vertices, const Material* material,
 		const std::vector<DirectionalLight>& lights, const SRMath::vec3 camPos, const MeshRenderCommand& cmd, int tile_minX, int tile_minY, int tile_maxX, int tile_maxY);
 	void drawFilledTriangleForTile(const RasterizerVertex& v0, const RasterizerVertex& v1, const RasterizerVertex& v2, const Material* material, const std::vector<DirectionalLight>& lights, const SRMath::vec3& camPos, int tile_minX, int tile_minY, int tile_maxX, int tile_maxY);
 
-
+	void drawDebugPrimitive(const DebugPrimitiveCommand& cmd, const SRMath::mat4& vp, const Camera& camera);
 
 	ShadedVertex interpolate(const ShadedVertex& v0, const ShadedVertex& v1, float t);
 	void clipPolygonAgainstPlane(std::vector<ShadedVertex>& out_vertices, const std::vector<ShadedVertex>& vertices, const __m128& plane);
@@ -78,7 +89,8 @@ public:
 	bool Initialize(HWND hWnd);
 	void Shutdown() const;
 
-	void SetLineAlgorithm(ELineAlgorithm eLineAlgorithm);
+	void SetLineAlgorithm(ELineAlgorithm eLineAlgorithm) { m_currentLineAlgorithm = eLineAlgorithm; }
+	void SetAAAlgorithm(EAAAlgorithm eAAAlgorithm) { m_currentAAAlgorithm = eAAAlgorithm; }
 
 	void Clear();
 	void Present(HDC hScreenDC) const;
