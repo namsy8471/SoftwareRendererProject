@@ -55,6 +55,17 @@
 
 ## **결과물 (Output Screenshots/GIFs)**
 ![2025-08-14](https://github.com/user-attachments/assets/a8bf1116-44d3-42cb-b58f-d5229d874cd4)
+
+최종 최적화 전(8월 14일) 전체 모델 렌더링(8 FPS)
+
+![2025-08-17 23-25-19](https://github.com/user-attachments/assets/de32bb7e-9c8e-4d00-a75b-5cc5459e44e7)
+
+최종 최적화 후(8월 17일) 전체 모델 렌더링 (15 FPS)
+
+![2025-08-17 23-25-19 (1)](https://github.com/user-attachments/assets/e1f99a4a-e381-4129-beda-5e29362d9bd3)
+
+최종 최적화 후(8월 17일) 일부 모델 렌더링 (45 FPS)
+
 <img width="1415" height="686" alt="스크린샷 2025-08-14 141501" src="https://github.com/user-attachments/assets/c22bb7bd-24b1-4339-894c-616426d648c9" />
 
 WireFrame Debug
