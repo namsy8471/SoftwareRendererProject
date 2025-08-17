@@ -746,15 +746,15 @@ void Renderer::RenderScene(const RenderQueue& queue, const Camera& camera, const
                 thread_local_storages[i].resize(num_tiles_x * num_tiles_y);
             }
         }
-        // --- 2. 병렬 Binning: 각 스레드는 자기 ID에 맞는 개인 사물함에만 접근 ---
-        int thread_id = omp_get_thread_num();
+        // 병렬 Binning: 각 스레드는 자기 ID에 맞는 개인 사물함에만 접근
+		int thread_id = omp_get_thread_num();                    // 현재 스레드 ID
         auto& my_local_tiles = thread_local_storages[thread_id]; // 참조로 편하게 사용
 
         // 🆕 per-thread scratch buffers (재사용 가능)
-        std::vector<SRMath::vec4> transformed_clip;
-        std::vector<int> stamp;
-        transformed_clip.reserve(65536); // 충분한 초기 용량
-        stamp.reserve(65536);
+		std::vector<SRMath::vec4> transformed_clip; // 클립 공간 좌표를 저장할 버퍼
+		std::vector<int> stamp;                     // 정점별 스탬프 (변환 캐싱 용도)
+        transformed_clip.reserve(65536);            // 충분한 초기 용량
+		stamp.reserve(65536);                       // 충분한 초기 용량
 
 		int cmd_count = queue.GetRenderCommands().size();
 #pragma omp for schedule(dynamic)
@@ -777,16 +777,17 @@ void Renderer::RenderScene(const RenderQueue& queue, const Camera& camera, const
             int my_stamp = cmd_idx;
 
 			int indices_size = indices.size();
-            // 2. 메쉬의 모든 '삼각형'을 순회합니다.
+
+            // 메쉬의 모든 '삼각형'을 순회합니다.
             for (size_t i = 0; i < indices_size; i += 3)
             {
-                // 3. 삼각형의 세 정점 인덱스를 가져옵니다.
+                // 삼각형의 세 정점 인덱스를 가져옵니다.
                 uint32_t i0 = indices[i];
                 uint32_t i1 = indices[i + 1];
                 uint32_t i2 = indices[i + 2];
 
-                // 4. 세 정점의 월드-뷰-프로젝션 변환을 수행하여 클립 공간 좌표를 구합니다.
-                // 🆕 transform with caching
+                // 세 정점의 월드-뷰-프로젝션 변환을 수행하여 클립 공간 좌표를 구합니다.
+                // transform with caching
                 if (stamp[i0] != my_stamp) {
                     transformed_clip[i0] = mvp * SRMath::vec4(vertices[i0].position, 1.0f);
                     stamp[i0] = my_stamp;
@@ -804,16 +805,15 @@ void Renderer::RenderScene(const RenderQueue& queue, const Camera& camera, const
                 const SRMath::vec4& v1_clip = transformed_clip[i1];
                 const SRMath::vec4& v2_clip = transformed_clip[i2];
 
-                // ❗ (심화) W-Clipping: 정점의 w 값이 0 이하(카메라 뒤)이면 비정상적인 AABB가 계산될 수 있습니다.
-                // 지금은 일단 생략하지만, 완성도 높은 렌더러를 위해서는 이 부분에 대한 처리가 필수적입니다.
+				// 클립 공간 좌표의 w 값이 0 이하인 경우, 해당 삼각형은 카메라 뒤에 있으므로 무시합니다.
                 if (v0_clip.w <= 0 || v1_clip.w <= 0 || v2_clip.w <= 0) continue;
 
-                // 5. 원근 나누기를 통해 NDC(-1~1) 좌표를 구합니다.
+                // 원근 나누기를 통해 NDC(-1~1) 좌표를 구합니다.
                 SRMath::vec3 v0_ndc = SRMath::vec3(v0_clip) / v0_clip.w;
                 SRMath::vec3 v1_ndc = SRMath::vec3(v1_clip) / v1_clip.w;
                 SRMath::vec3 v2_ndc = SRMath::vec3(v2_clip) / v2_clip.w;
 
-                // 6. 삼각형의 화면 공간 AABB를 계산합니다.
+                // 삼각형의 화면 공간 AABB를 계산합니다.
                 float min_x = std::max(-1.0f, std::min({ v0_ndc.x, v1_ndc.x, v2_ndc.x }));
                 float max_x = std::min(1.0f, std::max({ v0_ndc.x, v1_ndc.x, v2_ndc.x }));
                 float min_y = std::max(-1.0f, std::min({ v0_ndc.y, v1_ndc.y, v2_ndc.y }));
