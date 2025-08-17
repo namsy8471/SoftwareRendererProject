@@ -29,7 +29,7 @@
 * **백 페이스 컬링 (Back-face Culling)**: 카메라를 등지고 있는 폴리곤을 제거하여 렌더링 부하를 줄이는 최적화 기법 적용.
 * **프러스텀 컬링 (Frustum Culling)**: 해당 메시의 AABB를 탐지하여 화면 밖의 오브젝트는 그리지 않게 하여 최적화.
 * **법선,AABB, 와이어프레임 표시 디버깅 (Normal, AABB, and Wireframe Visualization for Debugging)**: 정점 법선, AABB, 모델의 와이어프레임을 시각화하여 렌더링 오류 진단 및 디버깅 용이성 확보.
-* **렌더 큐 및 타일 기반 렌더링 (Render Queue and Tile-based Rendering)**: 게임 오브젝트가 각자 렌더링이 필요하면 렌더큐에 넣고, 렌더러는 해당 렌더큐에서 렌더링에 필요한 정보를 얻은 후 어느 타일에 렌더링해야하는지 분배함. 그리고 분배 후 각 타일마다 OpenMP를 사용한 멀티스레드를 통해서 렌더링을 실행.
+* **렌더 큐 및 타일 기반 렌더링 (Render Queue and Tile-based Rendering)**: 게임 오브젝트가 각자 렌더링이 필요하면 자신의 vertex, worldMatrix 등을 렌더큐에 넣고, 렌더러는 해당 렌더큐에서 렌더링에 필요한 정보를 얻은 후 어느 타일에 렌더링해야하는지 Binning함. 그리고 분배 후 각 타일마다 OpenMP를 사용한 멀티스레드를 통해서 렌더링을 실행.
 * **FXAA 구현**: 빠른 성능에 비해서 비교적 좋은 품질을 만들어 낼 수 있는 FXAA 구현.
 * **수학 함수 라이브러리 직접 구현 (Custom Math Library: SRMath.h)**: 행렬 및 벡터 연산 함수를 SIMD 명령어(SSE)를 활용하여 직접 구현, 성능 최적화와 기초 수학 이해도를 증명.
 
