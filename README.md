@@ -49,22 +49,18 @@
 * **원근 투영 시 근접 객체 렌더링 오류 해결**: 디버깅 시 콜 스택 및 메모리 감시를 통해 Z-버퍼 단계에서 x, y 좌표의 유효 범위 이탈로 인한 메모리 참조 오류를 파악하고, **std::clamp 함수를 이용한 값 고정(Clamping)**으로 성공적으로 문제를 해결했습니다.
 * **법선 벡터 오류:** Utah Teapot 모델에서 누락된 법선 벡터가 누락되어있다는 것을 알고, 이후 model에서 하나라도 Normal Vector가 없을 경우 직접 외적 연산으로 계산하는 로직을 구현했하여 문제를 해결했습니다.
 * **MTL 파싱 오류**: material 이름에 콜론이 포함된 경우로 인해서 MTL에서 제대로 컬러 값을 가지고 오지 못하는 상황이 있었습니다. 그래서 문자열 뒤에서 마지막 콜론을 찾은 후, 콜론 이후의 머테리얼 이름으로 다시 map에서 찾아 할당하는 로직으로 해결했습니다.
-* **멀티스레딩 성능 최적화**: 멀티스레드에 유리하도록 타일 기반 렌더링으로 변경하고 레이스 컨디션, 메모리 재할당 등을 방지하기 위해 스레드마다 로컬 저장 vector를 생성하고 핑퐁 버퍼 및 reserve를 통해 push_back으로 일어나는 capacity 재할당을 막았습니다. 또한 OpenMP의 schedule(dynamic)/(guided) 등을 사용해 부하 분산을 최적화했습니다. 또한 기존 지역변수로 두었던 일부 변수들을 맴버 변수로 변경하여 삭제와 생성을 반복하지 않게 하여 성능을 끌어올렸습니다. 이를 통해 **단일 스레드에서 시작화면 기준 20FPS으로 돌아가는 렌더러의 성능을 멀티 스레드를 통해 90FPS**로 끌어 올렸습니다. 
+* **멀티스레딩 성능 최적화**: 멀티스레드에 유리하도록 타일 기반 렌더링으로 변경하고 레이스 컨디션, 메모리 재할당 등을 방지하기 위해 스레드마다 로컬 저장 vector를 생성하여 캐싱이 가능한 부분은 캐싱하고 핑퐁 버퍼 및 reserve를 통해 push_back으로 일어나는 capacity 재할당을 막았습니다. 또한 OpenMP의 schedule(dynamic)/(guided) 등을 사용해 부하 분산을 최적화했습니다. 또한 기존 지역변수로 두었던 일부 변수들을 맴버 변수로 변경하여 삭제와 생성을 반복하지 않게 하여 성능을 끌어올렸습니다. 이를 통해 **단일 스레드에서 모델 전부를 렌더링할 때 기준 5FPS으로 돌아가는 렌더러의 성능을 멀티 스레드를 통해 40FPS**로 끌어 올렸습니다. 
 
 ---
 
 ## **결과물 (Output Screenshots/GIFs)**
 ![2025-08-14](https://github.com/user-attachments/assets/a8bf1116-44d3-42cb-b58f-d5229d874cd4)
 
-Before Optimization(Full Models) 최종 최적화 전(8월 14일) 전체 모델 렌더링(8 FPS)
+Before Optimization 최종 최적화 전(8월 14일) (8 FPS)
 
-![2025-08-18 00-24-25](https://github.com/user-attachments/assets/15b416c8-7a4e-4dd5-8109-dffac588dad1)
+![2025-08-18 04-08-32](https://github.com/user-attachments/assets/a9843c4a-d2b3-4e0e-9158-f90c399c135a)
 
-After Optimization(Full Models) 최종 최적화 후(8월 18일) 전체 모델 렌더링 (21 FPS)
-
-![2025-08-18 00-24-59](https://github.com/user-attachments/assets/3f687979-6bb4-4ef8-a5c0-d4cf42247185)
-
-After Optimization(Part of Models) 최종 최적화 후(8월 18일) 일부 모델 렌더링 (80 FPS)
+After Optimization 최종 최적화 후(8월 18일) (35 FPS)
 
 <img width="1415" height="686" alt="스크린샷 2025-08-14 141501" src="https://github.com/user-attachments/assets/c22bb7bd-24b1-4339-894c-616426d648c9" />
 
