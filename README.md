@@ -1,7 +1,7 @@
 # SoftwareRendererProject
 
 ## **소개 (Introduction)**
-이 프로젝트는 컴퓨터 그래픽스 파이프라인의 핵심 원리를 이해하고 직접 구현하기 위해 개발된 CPU 기반 소프트웨어 렌더러입니다. DirectX 11 경험을 통해 부족하다고 느꼈던 기본 원리에 대한 깊이 있는 학습과 최적화 기법(SIMD) 적용에 중점을 두었습니다.
+이 프로젝트는 컴퓨터 그래픽스 파이프라인의 핵심 원리를 이해하고 직접 구현하기 위해 개발된 CPU 기반 소프트웨어 렌더러입니다. DirectX 11 경험을 통해 부족하다고 느꼈던 기본 원리(렌더링 파이프라인)에 대한 깊이 있는 학습과 최적화 기법(SIMD, Multi Thread) 적용에 중점을 두었습니다.
 
 ---
 
@@ -14,7 +14,7 @@
 ---
 
 ## **기간 (Duration)**
-2025/07/07 ~ 진행 중
+2025/07/07 ~ 2025/08/17
 
 ---
 
@@ -29,7 +29,8 @@
 * **백 페이스 컬링 (Back-face Culling)**: 카메라를 등지고 있는 폴리곤을 제거하여 렌더링 부하를 줄이는 최적화 기법 적용.
 * **프러스텀 컬링 (Frustum Culling)**: 해당 메시의 AABB를 탐지하여 화면 밖의 오브젝트는 그리지 않게 하여 최적화.
 * **법선,AABB, 와이어프레임 표시 디버깅 (Normal, AABB, and Wireframe Visualization for Debugging)**: 정점 법선, AABB, 모델의 와이어프레임을 시각화하여 렌더링 오류 진단 및 디버깅 용이성 확보.
-* **렌더 큐 및 타일 기반 렌더링 (Render Queue and Tile-based Rendering)**: 게임 오브젝트가 각자 렌더링이 필요하면 렌더큐에 넣고, 렌더러는 해당 렌더큐에서 렌더링에 필요한 정보를 얻은 후 어느 타일에 렌더링해야하는지 분배합니다. 그리고 분배 후 각 타일마다 OpenMP를 사용한 멀티스레드를 통해서 렌더링을 실행합니다. 
+* **렌더 큐 및 타일 기반 렌더링 (Render Queue and Tile-based Rendering)**: 게임 오브젝트가 각자 렌더링이 필요하면 자신의 vertex, worldMatrix 등을 렌더큐에 넣고, 렌더러는 해당 렌더큐에서 렌더링에 필요한 정보를 얻은 후 어느 타일에 렌더링해야하는지 Binning함. 그리고 분배 후 각 타일마다 OpenMP를 사용한 멀티스레드를 통해서 렌더링을 실행.
+* **FXAA 구현**: 빠른 성능에 비해서 비교적 좋은 품질을 만들어 낼 수 있는 FXAA 구현.
 * **수학 함수 라이브러리 직접 구현 (Custom Math Library: SRMath.h)**: 행렬 및 벡터 연산 함수를 SIMD 명령어(SSE)를 활용하여 직접 구현, 성능 최적화와 기초 수학 이해도를 증명.
 
 ---
@@ -48,13 +49,41 @@
 * **원근 투영 시 근접 객체 렌더링 오류 해결**: 디버깅 시 콜 스택 및 메모리 감시를 통해 Z-버퍼 단계에서 x, y 좌표의 유효 범위 이탈로 인한 메모리 참조 오류를 파악하고, **std::clamp 함수를 이용한 값 고정(Clamping)**으로 성공적으로 문제를 해결했습니다.
 * **법선 벡터 오류:** Utah Teapot 모델에서 누락된 법선 벡터를 교차곱 연산으로 계산하는 로직을 구현했으며, 인덱스 반복 오류를 수정하여 문제를 해결했습니다.
 * **MTL 파싱 오류**: material 이름에 콜론이 포함된 경우를 처리하도록 파싱 로직을 개선했습니다.
-* **멀티스레딩 성능 최적화**: 멀티스레드에 유리하도록 타일 기반 렌더링으로 변경하고 레이스 컨디션, 메모리 재할당 등을 방지하기 위해 스레드마다 로컬 저장 vector를 생성하고 핑퐁 버퍼 및 reserve를 통해 push_back으로 일어나는 capacity 재할당을 막았습니다. 또한 OpenMP의 schedule(dynamic)/(guided) 등을 사용해 부하 분산을 최적화했습니다. 이를 통해 **단일 스레드에서 시작화면 기준 20FPS으로 돌아가는 렌더러의 성능을 멀티 스레드를 통해 45FPS**로 끌어 올렸습니다. 
+* **멀티스레딩 성능 최적화**: 멀티스레드에 유리하도록 타일 기반 렌더링으로 변경하고 레이스 컨디션, 메모리 재할당 등을 방지하기 위해 스레드마다 로컬 저장 vector를 생성하고 핑퐁 버퍼 및 reserve를 통해 push_back으로 일어나는 capacity 재할당을 막았습니다. 또한 OpenMP의 schedule(dynamic)/(guided) 등을 사용해 부하 분산을 최적화했습니다. 또한 기존 지역변수로 두었던 일부 변수들을 맴버 변수로 변경하여 삭제와 생성을 반복하지 않게 하여 성능을 끌어올렸습니다. 이를 통해 **단일 스레드에서 시작화면 기준 20FPS으로 돌아가는 렌더러의 성능을 멀티 스레드를 통해 70FPS**로 끌어 올렸습니다. 
 
 ---
 
 ## **결과물 (Output Screenshots/GIFs)**
 ![2025-08-14](https://github.com/user-attachments/assets/a8bf1116-44d3-42cb-b58f-d5229d874cd4)
+
+최종 최적화 전(8월 14일) 전체 모델 렌더링(8 FPS)
+
+![2025-08-17 23-25-19](https://github.com/user-attachments/assets/de32bb7e-9c8e-4d00-a75b-5cc5459e44e7)
+
+최종 최적화 후(8월 17일) 전체 모델 렌더링 (15 FPS)
+
+![2025-08-17 23-25-19 (1)](https://github.com/user-attachments/assets/e1f99a4a-e381-4129-beda-5e29362d9bd3)
+
+최종 최적화 후(8월 17일) 일부 모델 렌더링 (45 FPS)
+
 <img width="1415" height="686" alt="스크린샷 2025-08-14 141501" src="https://github.com/user-attachments/assets/c22bb7bd-24b1-4339-894c-616426d648c9" />
+
+WireFrame Debug
+
 <img width="1415" height="731" alt="스크린샷 2025-08-14 141532" src="https://github.com/user-attachments/assets/ee8e5c99-7a6e-42c6-b56e-84313f51a172" />
+
+AABB Debug
+
 <img width="1408" height="724" alt="스크린샷 2025-08-14 141559" src="https://github.com/user-attachments/assets/c3c06817-227d-4ac8-b756-f737de7136cb" />
-* Result by 08/14
+
+Normal Vectro Debug
+
+<img width="1426" height="746" alt="스크린샷 2025-08-17 232015" src="https://github.com/user-attachments/assets/1afcc928-aa3e-4001-b0e2-845a360d3c66" />
+
+Before Anti-Aliasing
+
+<img width="1426" height="746" alt="스크린샷 2025-08-17 232025" src="https://github.com/user-attachments/assets/0c303273-3a2b-40f6-a8f7-178497ab5726" />
+
+After Anti-Aliasing(FXAA)
+
+* Result by 08/17
