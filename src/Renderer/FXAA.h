@@ -34,113 +34,114 @@ float RGBToLuma(const SRMath::Color& color) {
 
 void ApplyFXAA(const unsigned int* inBuffer, unsigned int* outBuffer, int width, int height) {
     // --- 튜닝 가능한 상수들 ---
-    const float EDGE_THRESHOLD = 0.125f;
-    const float EDGE_THRESHOLD_MIN = 0.03125f;
-    const int MAX_SPAN = 12;
-	const float EPS = 1e-6f; // 작은 값 비교용
+    const float EDGE_THRESHOLD = 0.08f;        // 경계선 감지 민감도 (낮을수록 민감)
+    const float EDGE_THRESHOLD_MIN = 0.03125f; // 어두운 곳에서의 최소 민감도
+    const int MAX_SPAN = 16;                   // 경계선 최대 탐색 거리
+    const float EPS = 1e-6f;                   // 0에 가까운 값 비교용
+	const float BLEND_FACTOR = 0.2f;           // 블렌딩 강도 조절 (0.0 ~ 1.0)
 
-    // 휘도(Luma) 버퍼를 미리 계산
+    // lumaBuffer를 병렬 영역 '바깥'에서 선언 (올바른 구조)
     std::vector<float> lumaBuffer(width * height);
 
 #pragma omp parallel
-    {    
+    {
+        // 1. 휘도(Luma) 맵 만들기 (기존과 동일)
 #pragma omp for schedule(static)
         for (int i = 0; i < width * height; ++i) {
             SRMath::Color tempColor;
-            unpackColor(inBuffer[i], tempColor); // Unpack
+            unpackColor(inBuffer[i], tempColor);
             lumaBuffer[i] = RGBToLuma(tempColor);
         }
 
         // --- 모든 픽셀을 순회 ---
-        #pragma omp for schedule(static)
+#pragma omp for schedule(static)
         for (int y = 1; y < height - 1; ++y) {
             for (int x = 1; x < width - 1; ++x) {
-
                 const int idx = y * width + x;
 
+                // 2. 경계선 감지 (기존과 동일)
                 const float lC = lumaBuffer[idx];
                 const float lN = lumaBuffer[(y - 1) * width + x];
                 const float lS = lumaBuffer[(y + 1) * width + x];
                 const float lW = lumaBuffer[y * width + (x - 1)];
                 const float lE = lumaBuffer[y * width + (x + 1)];
-
                 const float lMin = std::min({ lC, lN, lS, lW, lE });
                 const float lMax = std::max({ lC, lN, lS, lW, lE });
                 const float contrast = lMax - lMin;
                 const float thresh = std::max(EDGE_THRESHOLD_MIN, lMax * EDGE_THRESHOLD);
                 if (contrast < thresh) { outBuffer[idx] = inBuffer[idx]; continue; }
 
-                const float diffH = std::fabs(lW - lE);
-                const float diffV = std::fabs(lN - lS);
+                // 3. 경계선 방향 탐지 (기존과 동일)
+                const float diffH = std::abs(lW - lE);
+                const float diffV = std::abs(lN - lS);
+                const bool isVerticalEdge = (diffV >= diffH); // 이름 명확화: isVerticalEdge
 
-                // 기울기 수직(=에지 가로)면 x축 방향으로 탐색
-                const bool edgeHorizontal = (diffV >= diffH);
-
-                // 기울기 샘플(에지 수직 방향의 두 점)
-                const float g1 = edgeHorizontal ? lN : lW;
-                const float g2 = edgeHorizontal ? lS : lE;
-                const float gradient = std::fabs(g1 - g2);
+                // 4. 경계선 끝점 탐색 (기존과 동일)
+                const float gradient = isVerticalEdge ? diffV : diffH;
                 if (gradient <= EPS) { outBuffer[idx] = inBuffer[idx]; continue; }
-
-                // 에지 방향(수평/수직)으로 좌우/상하 탐색
                 float negDist = 0.0f, posDist = 0.0f;
-
-                // 음(-) 방향
+                // (-) 방향 탐색
                 for (int i = 0; i < MAX_SPAN; ++i) {
-                    const int nx = edgeHorizontal ? (x - i - 1) : x;
-                    const int ny = edgeHorizontal ? y : (y - i - 1);
+                    const int nx = isVerticalEdge ? x : x - i - 1;
+                    const int ny = isVerticalEdge ? y - i - 1 : y;
                     if (nx < 0 || ny < 0) break;
-
-                    const float dl = std::fabs(lumaBuffer[ny * width + nx] - lC) / gradient;
-                    if (dl >= 0.5f) break;
+                    const float dl = std::abs(lumaBuffer[ny * width + nx] - lC);
+                    if (dl / gradient >= 0.4f) break; // 0.5f 보다 약간 관대한 기준
                     negDist = float(i + 1);
                 }
-                // 양(+) 방향
+                // (+) 방향 탐색
                 for (int i = 0; i < MAX_SPAN; ++i) {
-                    const int nx = edgeHorizontal ? (x + i + 1) : x;
-                    const int ny = edgeHorizontal ? y : (y + i + 1);
+                    const int nx = isVerticalEdge ? x : x + i + 1;
+                    const int ny = isVerticalEdge ? y + i + 1 : y;
                     if (nx >= width || ny >= height) break;
-
-                    const float dl = std::fabs(lumaBuffer[ny * width + nx] - lC) / gradient;
-                    if (dl >= 0.5f) break;
+                    const float dl = std::abs(lumaBuffer[ny * width + nx] - lC);
+                    if (dl / gradient >= 0.4f) break;
                     posDist = float(i + 1);
                 }
 
-                const float edgeLen = negDist + posDist;
-                if (edgeLen <= EPS) { outBuffer[idx] = inBuffer[idx]; continue; }
+                // =======================================================================
+                // 5. 최종 블렌딩 (이 부분이 표준 FXAA 방식으로 변경됨)
+                // =======================================================================
+                const float edgeLength = posDist + negDist;
+                if (edgeLength < 1.0f) { // 유의미한 길이가 아니면 무시
+                    outBuffer[idx] = inBuffer[idx];
+                    continue;
+                }
 
-                // 에지 방향의 양 옆 두 픽셀 평균을 샘플로 사용 (간단한 FXAA-like)
-                const int eIdx1 = edgeHorizontal ? (y * width + (x - 1))
-                    : ((y - 1) * width + x);
-                const int eIdx2 = edgeHorizontal ? (y * width + (x + 1))
-                    : ((y + 1) * width + x);
+                // 5-1. 경계선의 중심이 현재 픽셀 중심에서 얼마나 벗어났는지 계산
+                const float pixelOffset = (posDist - negDist) / edgeLength; // 결과: [-1.0 ~ 1.0]
 
-                SRMath::Color cC, cE1, cE2;
-                unpackColor(inBuffer[idx], cC);
-                unpackColor(inBuffer[eIdx1], cE1);
-                unpackColor(inBuffer[eIdx2], cE2);
-                const SRMath::Color cEdge = LerpColor(cE1, cE2, 0.5f);
+                // 5-2. 블렌딩 강도 계산
+                // pixelOffset의 BLEND_FACTOR만큼 이동시킨다고 가정
+                const float blendFactor = BLEND_FACTOR * std::abs(pixelOffset);
 
-                // 블렌드 강도: 에지 길이와 대비 기반 (0~0.5 정도)
-                const float spanNorm = std::min(1.0f, edgeLen / float(MAX_SPAN));
-                const float strength = std::min(1.0f, (contrast - thresh) / (thresh + EPS));
-                const float blend = 0.5f * spanNorm * strength;
+                // 5-3. 섞을 이웃 픽셀 선택 (경계선에 '수직인' 방향)
+                int neighborIdx;
+                if (isVerticalEdge) { // 수직 경계선 -> 위/아래 픽셀과 섞음
+                    neighborIdx = pixelOffset > 0 ? (y - 1) * width + x : (y + 1) * width + x;
+                }
+                else { // 수평 경계선 -> 좌/우 픽셀과 섞음
+                    neighborIdx = pixelOffset > 0 ? (y * width + x - 1) : (y * width + x + 1);
+                }
 
-                const SRMath::Color finalColor = LerpColor(cC, cEdge, blend);
+                // 5-4. 최종 색상 계산
+                SRMath::Color colorCenter, neighborColor;
+                unpackColor(inBuffer[idx], colorCenter);
+                unpackColor(inBuffer[neighborIdx], neighborColor);
+
+                const SRMath::Color finalColor = LerpColor(colorCenter, neighborColor, blendFactor);
                 outBuffer[idx] = packColor(finalColor);
             }
         }
+    }
 
-        // 가장자리는 원본 복사
-#pragma omp for schedule(static)
-        for (int y = 0; y < height; ++y) {
-            outBuffer[y * width] = inBuffer[y * width];
-            outBuffer[y * width + width - 1] = inBuffer[y * width + width - 1];
-        }
-#pragma omp for schedule(static)
-        for (int x = 0; x < width; ++x) {
-            outBuffer[x] = inBuffer[x];
-            outBuffer[(height - 1) * width + x] = inBuffer[(height - 1) * width + x];
-        }
+    // 가장자리는 원본 복사
+    for (int y = 0; y < height; ++y) {
+        outBuffer[y * width] = inBuffer[y * width];
+        outBuffer[y * width + width - 1] = inBuffer[y * width + width - 1];
+    }
+    for (int x = 0; x < width; ++x) {
+        outBuffer[x] = inBuffer[x];
+        outBuffer[(height - 1) * width + x] = inBuffer[(height - 1) * width + x];
     }
 }

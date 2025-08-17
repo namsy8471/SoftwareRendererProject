@@ -443,6 +443,29 @@ void Renderer::clipPolygonAgainstPlane(std::vector<ShadedVertex>& outVertices,
     }
 }
 
+// 각 비트는 특정 평면의 '바깥쪽'임을 의미합니다.
+constexpr int INSIDEPLANE = 0;      // 000000
+constexpr int LEFTPLANE = 1;      // 000001 (x < -w)
+constexpr int RIGHTPLANE = 2;      // 000010 (x > w)
+constexpr int BOTTOMPLANE = 4;      // 000100 (y < -w)
+constexpr int TOPPLANE = 8;      // 001000 (y > w)
+constexpr int NEARPLANE = 16;     // 010000 (z < -w)
+constexpr int FARPLANE = 32;     // 100000 (z > w)
+
+// 절두체 평면에 대한 아웃코드 계산 함수
+int ComputeOutcode(const SRMath::vec4& posClip)
+{
+    int outcode = INSIDEPLANE; // 일단 안쪽이라고 가정
+
+    if (posClip.x < -posClip.w) outcode |= LEFTPLANE;
+    if (posClip.x > posClip.w) outcode |= RIGHTPLANE;
+    if (posClip.y < -posClip.w) outcode |= BOTTOMPLANE;
+    if (posClip.y > posClip.w) outcode |= TOPPLANE;
+    if (posClip.z < -posClip.w) outcode |= NEARPLANE;   // OpenGL: -w, DirectX: 0
+    if (posClip.z > posClip.w) outcode |= FARPLANE;
+
+    return outcode;
+}
 
 // 삼각형을 6개의 절두체 평면으로 클리핑하는 메인 함수
 void Renderer::clipTriangle(std::vector<ShadedVertex>& outVertices, const ShadedVertex& v0, const ShadedVertex& v1, const ShadedVertex& v2,
@@ -462,31 +485,36 @@ void Renderer::clipTriangle(std::vector<ShadedVertex>& outVertices, const Shaded
     const __m128 plane_near = _mm_set_ps(1.0f, 1.0f, 0.0f, 0.0f);  //  z + w >= 0
     const __m128 plane_far = _mm_set_ps(1.0f, -1.0f, 0.0f, 0.0f); // -z + w >= 0
 
-    // 1. Left Plane  ( w + x >= 0 )
-    clipPolygonAgainstPlane(*out_v, *in_v, plane_left);
-    if( out_v->empty()) return; // 클리핑 결과가 비어있으면 더 이상 진행하지 않습니다.
-	std::swap(in_v, out_v);
-    // 2. Right Plane ( w - x >= 0 )
-    clipPolygonAgainstPlane(*out_v, *in_v, plane_right);
-    if (out_v->empty()) return;
-    std::swap(in_v, out_v);
-    // 3. Bottom Plane( w + y >= 0 )
-    clipPolygonAgainstPlane(*out_v, *in_v, plane_bottom);
-    if (out_v->empty()) return;
-    std::swap(in_v, out_v);
-    // 4. Top Plane   ( w - y >= 0 )
-    clipPolygonAgainstPlane(*out_v, *in_v, plane_top);
-    if (out_v->empty()) return;
-    std::swap(in_v, out_v);
-    // 5. Near Plane  ( w + z >= 0 )  (OpenGL 기준)
+    // Near Plane  ( w + z >= 0 )
     clipPolygonAgainstPlane(*out_v, *in_v, plane_near);
     if (out_v->empty()) return;
     std::swap(in_v, out_v);
-    // 6. Far Plane   ( w - z >= 0 )  (OpenGL 기준)
+
+    // Far Plane   ( w - z >= 0 )
     clipPolygonAgainstPlane(*out_v, *in_v, plane_far);
     if (out_v->empty()) return;
     std::swap(in_v, out_v);
 
+    // Left Plane  ( w + x >= 0 )
+    clipPolygonAgainstPlane(*out_v, *in_v, plane_left);
+    if( out_v->empty()) return; // 클리핑 결과가 비어있으면 더 이상 진행하지 않습니다.
+	std::swap(in_v, out_v);
+
+    // Right Plane ( w - x >= 0 )
+    clipPolygonAgainstPlane(*out_v, *in_v, plane_right);
+    if (out_v->empty()) return;
+    std::swap(in_v, out_v);
+    
+    // Bottom Plane( w + y >= 0 )
+    clipPolygonAgainstPlane(*out_v, *in_v, plane_bottom);
+    if (out_v->empty()) return;
+    std::swap(in_v, out_v);
+    
+    // Top Plane   ( w - y >= 0 )
+    clipPolygonAgainstPlane(*out_v, *in_v, plane_top);
+    if (out_v->empty()) return;
+    std::swap(in_v, out_v);
+    
 	outVertices = *in_v; // 최종 결과를 out_vertices에 저장
 }
 
@@ -520,12 +548,13 @@ void Renderer::RenderScene(const RenderQueue& queue, const Camera& camera, const
 				m_threadStamps[i].reserve(65536); // 스탬프 초기화
             }
         }
+
         // 병렬 Binning: 각 스레드는 자기 ID에 맞는 개인 사물함에만 접근
 		int threadId = omp_get_thread_num();                    // 현재 스레드 ID
-        auto& myLocalTiles = m_threadLocalStorages[threadId]; // 참조로 편하게 사용
+        auto& myLocalTiles = m_threadLocalStorages[threadId];   // 참조로 편하게 사용
 
-		auto& ThreadClip = m_threadClips[threadId]; // 각 스레드마다 타일에 클립 공간 좌표를 저장
-		auto& ThreadStamp = m_threadStamps[threadId]; // 각 스레드마다 타일에 스탬프를 저장
+		auto& ThreadClip = m_threadClips[threadId];             // 각 스레드마다 타일에 클립 공간 좌표를 저장
+		auto& ThreadStamp = m_threadStamps[threadId];           // 각 스레드마다 타일에 스탬프를 저장
 
 		int cmd_count = queue.GetRenderCommands().size();
 #pragma omp for schedule(dynamic)
@@ -543,8 +572,8 @@ void Renderer::RenderScene(const RenderQueue& queue, const Camera& camera, const
                 ThreadClip.resize(vertices.size());
                 ThreadStamp.resize(vertices.size(), -1);
             }
-            int myStamp = cmd_idx;
 
+            int myStamp = cmd_idx;
 			int indices_size = indices.size();
 
             // 메쉬의 모든 '삼각형'을 순회합니다.
@@ -602,9 +631,9 @@ void Renderer::RenderScene(const RenderQueue& queue, const Camera& camera, const
 
                 // AABB를 이용해 영향을 받는 타일 범위를 계산합니다.
                 int minTileX = static_cast<int>(std::floor(ndcToTileX(min_x))) - 1;
-                int maxTileX = static_cast<int>(std::ceil(ndcToTileX(max_x)));
+                int maxTileX = static_cast<int>(std::floor(ndcToTileX(max_x)));
                 int minTileY = static_cast<int>(std::floor(ndcToTileY(max_y))) - 1;
-                int maxTileY = static_cast<int>(std::ceil(ndcToTileY(min_y)));
+                int maxTileY = static_cast<int>(std::floor(ndcToTileY(min_y)));
 
                 minTileX = std::clamp(minTileX, 0, numTilesX - 1);
                 minTileY = std::clamp(minTileY, 0, numTilesY - 1);
@@ -612,9 +641,9 @@ void Renderer::RenderScene(const RenderQueue& queue, const Camera& camera, const
                 maxTileY = std::clamp(maxTileY, 0, numTilesY - 1);
 
                 // 해당 '삼각형'을 영향을 받는 모든 타일에 추가합니다.
-                TriangleRef tri_ref = { &cmd, static_cast<uint32_t>(i) };
-                for (int ty = minTileY; ty < maxTileY; ++ty) {
-                    for (int tx = minTileX; tx < maxTileX; ++tx) {
+                TriangleRef tri_ref = { &cmd, static_cast<uint32_t>(i), v0_clip, v1_clip, v2_clip };
+                for (int ty = minTileY; ty <= maxTileY; ++ty) {
+                    for (int tx = minTileX; tx <= maxTileX; ++tx) {
                         myLocalTiles[ty * numTilesX + tx].emplace_back(tri_ref);
                     }
                 }
@@ -725,28 +754,26 @@ void Renderer::renderTile(std::unordered_map<const MeshRenderCommand*, SRMath::m
         const Mesh* mesh = cmd->sourceMesh;
         const SRMath::mat4& worldTransform = cmd->worldTransform;
 
-        const SRMath::mat4 mvp = vp * worldTransform;
-
-		if (matrixCache.find(cmd) == matrixCache.end())
+        if (matrixCache.find(cmd) == matrixCache.end())
             matrixCache[cmd] = SRMath::inverse_transpose(worldTransform).value_or(SRMath::mat4(1.f));
-        
-		const SRMath::mat4 inverseTransposeWorld = matrixCache.at(cmd);
 
-        // 1. 삼각형의 정점 데이터를 가져옵니다.
+        const SRMath::mat4 inverseTransposeWorld = matrixCache.at(cmd);
+
+        // 삼각형의 정점 데이터를 가져옵니다.
         const auto& vertices = mesh->vertices;
         const auto& indices = *cmd->indicesToDraw;
         const Vertex& v0_in = vertices[indices[triRef.triangleIndex]];
         const Vertex& v1_in = vertices[indices[triRef.triangleIndex + 1]];
         const Vertex& v2_in = vertices[indices[triRef.triangleIndex + 2]];
 
-        // 2. Vertex Shader 역할: 정점 변환, 셰이딩 속성 계산 등
+        // Vertex Shader 역할: 정점 변환, 셰이딩 속성 계산 등
         ShadedVertex sv0;
         ShadedVertex sv1;
         ShadedVertex sv2;
 
-        sv0.posClip = mvp * SRMath::vec4(v0_in.position, 1.0f);
-        sv1.posClip = mvp * SRMath::vec4(v1_in.position, 1.0f);
-        sv2.posClip = mvp * SRMath::vec4(v2_in.position, 1.0f);
+        sv0.posClip = triRef.v0_clip;
+        sv1.posClip = triRef.v1_clip;
+        sv2.posClip = triRef.v2_clip;
 
         // 클립 공간 백페이스 컬링 로직
         SRMath::vec3 ndc0 = sv0.posClip / sv0.posClip.w;
@@ -759,6 +786,21 @@ void Renderer::renderTile(std::unordered_map<const MeshRenderCommand*, SRMath::m
         // 따라서 area가 0 이상(CW가 아니거나 퇴화)이면 컬링합니다.
         if (area >= 0.f) {
             continue;
+        }
+
+        // 세 정점의 아웃코드를 각각 계산합니다.
+        int outcode0 = ComputeOutcode(sv0.posClip);
+        int outcode1 = ComputeOutcode(sv1.posClip);
+        int outcode2 = ComputeOutcode(sv2.posClip);
+
+        // Trival Rejection Test(순회 기각 테스트) (Outcode가 모두 INSIDEPLANE이면 클리핑 필요 없음)
+        if ((outcode0 & outcode1 & outcode2) != 0)
+        {
+            // 세 아웃코드의 AND 연산 결과가 0이 아니라는 것은,
+            // 세 정점 모두에게 켜져 있는 공통 비트가 있다는 의미입니다.
+            // 즉, 세 정점 모두가 '같은 평면'의 바깥쪽에 있다는 뜻이므로,
+            // 이 삼각형은 절대로 보일 수 없습니다.
+            continue; // 즉시 다음 삼각형으로 넘어감
         }
 
         sv0.posWorld = SRMath::vec3(worldTransform * SRMath::vec4(v0_in.position, 1.0f));
@@ -775,23 +817,46 @@ void Renderer::renderTile(std::unordered_map<const MeshRenderCommand*, SRMath::m
         sv2.normalWorld = SRMath::normalize(SRMath::vec3(inverseTransposeWorld * SRMath::vec4(v2_in.normal, 0.0f)));
         sv2.texcoord = v2_in.texcoord;
 
-        // 클리핑 (Frustum Clipping)
-        // 하나의 삼각형을 Frustum에 맞게 클리핑합니다. (Sutherland-Hodgman 알고리즘 등)
-        // 결과로 3~N개의 정점을 가진 폴리곤이 나옵니다.
-        
-		
+        // 클리핑된 정점들을 저장할 벡터를 초기화합니다.
         clippedVertices.clear();
-        clipTriangle(clippedVertices, sv0, sv1, sv2, verticesBuffer1, verticesBuffer2);
 
-        if(clippedVertices.size() < 3)
+        // Trival Acception Test (순회 허용 테스트) 
+        if ((outcode0 | outcode1 | outcode2) == 0)
         {
-            // 클리핑 후 폴리곤이 3개 미만이면 렌더링하지 않습니다.
-            continue;
-		}
+            // 세 아웃코드의 OR 연산 결과가 0이라는 것은,
+            // 세 정점 모두의 아웃코드가 0 (INSIDE)이라는 의미입니다.
+            // 즉, 모든 정점이 모든 평면의 '안쪽'에 완벽하게 들어와 있으므로
+            // 클리핑이 전혀 필요 없습니다.
 
-        // 래스터라이제이션
-        resterizationForTile(clippedVertices, cmd->material, lights, camPos,
-            *cmd, tileMinX, tileMinY, tileMaxX, tileMaxY);
+            // 비싼 clipTriangle 함수를 건너뛰고 바로 래스터라이저로 보냅니다.
+            clippedVertices.push_back(sv0);
+            clippedVertices.push_back(sv1);
+            clippedVertices.push_back(sv2);
+
+            // 래스터라이제이션
+            resterizationForTile(clippedVertices, cmd->material, lights, camPos,
+                *cmd, tileMinX, tileMinY, tileMaxX, tileMaxY);
+
+            continue; // 다음 삼각형으로 넘어감
+        }
+
+        else 
+        {
+            // 클리핑 (Frustum Clipping)
+            // 하나의 삼각형을 Frustum에 맞게 클리핑합니다. (Sutherland-Hodgman 알고리즘 등)
+            // 결과로 3~N개의 정점을 가진 폴리곤이 나옵니다.
+            clipTriangle(clippedVertices, sv0, sv1, sv2, verticesBuffer1, verticesBuffer2);
+
+            if (clippedVertices.size() < 3)
+            {
+                // 클리핑 후 폴리곤이 3개 미만이면 렌더링하지 않습니다.
+                continue;
+            }
+
+            // 래스터라이제이션
+            resterizationForTile(clippedVertices, cmd->material, lights, camPos,
+                *cmd, tileMinX, tileMinY, tileMaxX, tileMaxY);
+        }
     }
 }
 
@@ -800,21 +865,21 @@ void Renderer::resterizationForTile(const std::vector<ShadedVertex>& clippedVert
 {
     std::vector<RasterizerVertex> finalVertices(clippedVertices.size());
 
-    // 1. 모든 클리핑된 정점에 대해 원근 분할 및 뷰포트 변환을 먼저 수행합니다.
+    // 모든 클리핑된 정점에 대해 원근 분할 및 뷰포트 변환을 먼저 수행합니다.
     for (size_t j = 0; j < clippedVertices.size(); ++j)
     {
         const auto& vClip = clippedVertices[j];
         const float oneOverW = 1.0f / vClip.posClip.w;
 
-        // 1. 원근 분할 (w로 나누기)
+        // 원근 분할 (w로 나누기)
         SRMath::vec3 posNdc = SRMath::vec3(vClip.posClip) * oneOverW;
 
-        // 2. 뷰포트 변환 (NDC -> Screen)
+        // 뷰포트 변환 (NDC -> Screen)
         finalVertices[j].screenPos.x = (posNdc.x + 1.0f) * 0.5f * m_width;
         finalVertices[j].screenPos.y = (1.0f - posNdc.y) * 0.5f * m_height; // Y축 뒤집기
 
 
-        // 3. 원근 보정(Perspective Correction)을 위한 속성 준비
+        // 원근 보정(Perspective Correction)을 위한 속성 준비
         finalVertices[j].oneOverW = oneOverW;
         finalVertices[j].normalWorldOverW = vClip.normalWorld * oneOverW;
         finalVertices[j].texcoordOverW = vClip.texcoord * oneOverW;
@@ -848,17 +913,17 @@ void Renderer::drawFilledTriangleForTile(const RasterizerVertex& v0, const Raste
     const SRMath::vec2 p1 = { v1.screenPos.x, v1.screenPos.y };
     const SRMath::vec2 p2 = { v2.screenPos.x, v2.screenPos.y };
 
-    // 1. 삼각형 자체의 스크린 공간 바운딩 박스를 계산합니다.
-//    floor/ceil을 사용하여 부동소수점 좌표를 보수적으로 정수화합니다.
+    // 삼각형 자체의 스크린 공간 바운딩 박스를 계산합니다.
+    // floor/ceil을 사용하여 부동소수점 좌표를 보수적으로 정수화합니다.
     int triMinY = (std::min({ p0.y, p1.y, p2.y }));
     int triMaxY = (std::max({ p0.y, p1.y, p2.y }));
 	int triMinX = (std::min({ p0.x, p1.x, p2.x }));
 	int triMaxX = (std::max({ p0.x, p1.x, p2.x }));
 
-    // 2. ❗❗❗ 최종 루프 범위 계산 (교집합) - 이 부분이 올바른지 집중적으로 확인하세요!
-    //    삼각형의 Y 시작점과 타일의 Y 시작점 중 '더 큰' 값에서 시작하고,
-    //    삼각형의 Y 끝점과 타일의 Y 끝점 중 '더 작은' 값에서 끝나야 합니다.
-    // 2. 최종 루프 범위 (교집합)
+    // 최종 루프 범위 계산 (교집합) - 이 부분이 올바른지 집중적으로 확인하세요!
+    // 삼각형의 Y 시작점과 타일의 Y 시작점 중 '더 큰' 값에서 시작하고,
+    // 삼각형의 Y 끝점과 타일의 Y 끝점 중 '더 작은' 값에서 끝나야 합니다.
+    // 최종 루프 범위 (교집합)
     int finalMinX = std::max(triMinX, tileMinX);
     int finalMaxX = std::min(triMaxX, tileMaxX - 1);
     int finalMinY = std::max(triMinY, tileMinY);
@@ -936,7 +1001,7 @@ void Renderer::drawFilledTriangleForTile(const RasterizerVertex& v0, const Raste
                     // 주변광 조명 계산
                     SRMath::vec3 ambient_color = material->ka; // 재질의 기본 주변광 색상
 
-                    // 2. 여러 빛의 난반사/정반사 효과를 누적할 변수를 0으로 초기화합니다.
+                    // 여러 빛의 난반사/정반사 효과를 누적할 변수를 0으로 초기화합니다.
                     SRMath::vec3 totalDiffuseColor = { 0.0f, 0.0f, 0.0f };
                     SRMath::vec3 totalSpecularColor = { 0.0f, 0.0f, 0.0f };
 
@@ -1006,7 +1071,7 @@ void Renderer::drawFilledTriangleForTile(const RasterizerVertex& v0, const Raste
     }
 }
 
-// 설명: 윈도우 리사이즈 대응 (리소스 재할당)
+// 윈도우 리사이즈 대응 (리소스 재할당)
 void Renderer::OnResize(HWND hWnd)
 {
     Shutdown();
