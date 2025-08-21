@@ -550,7 +550,7 @@ void Renderer::RenderScene(const RenderQueue& queue, const Camera& camera, const
 		auto& myThreadClippedVertices = m_threadClippedVertices[threadId];      // 클리핑된 정점 저장
 		auto& myThreadNormalMatrixCache = m_threadNormalMatrixCache[threadId];  // 역행렬 캐시
 
-        m_threadPoolCounters[threadId].value = 0;
+        myPoolCounter.value = 0;
 
 		int cmd_count = queue.GetRenderCommands().size();
 #pragma omp for schedule(static)
@@ -562,7 +562,7 @@ void Renderer::RenderScene(const RenderQueue& queue, const Camera& camera, const
             const SRMath::mat4 mvp = vp * worldTransform;
 
             if (myThreadNormalMatrixCache.find(&cmd) == myThreadNormalMatrixCache.end())
-                myThreadNormalMatrixCache[&cmd] = SRMath::inverse_transpose(worldTransform).value_or(SRMath::mat4(1.f));
+                myThreadNormalMatrixCache.try_emplace(&cmd, SRMath::inverse_transpose(worldTransform).value_or(SRMath::mat4(1.f)));
 
             const SRMath::mat4 inverseTransposeWorld = myThreadNormalMatrixCache.at(&cmd);
 
@@ -590,9 +590,8 @@ void Renderer::RenderScene(const RenderQueue& queue, const Camera& camera, const
                 // --- 정점 0 셰이딩 및 캐싱 ---
                 if (myThreadStamp[i0] != myStamp) {
                     // 캐시 미스(Cache Miss): 처음 보는 정점이므로 모든 셰이딩 수행
-                    ShadedVertex temp_sv;
                     const Vertex& vIn = vertices[i0];
-
+                    ShadedVertex temp_sv;
                     temp_sv.posClip = mvp * SRMath::vec4(vIn.position, 1.0f);
                     temp_sv.posWorld = SRMath::vec3(worldTransform * SRMath::vec4(vIn.position, 1.0f));
                     temp_sv.normalWorld = SRMath::normalize(SRMath::vec3(inverseTransposeWorld * SRMath::vec4(vIn.normal, 0.0f)));
@@ -608,9 +607,8 @@ void Renderer::RenderScene(const RenderQueue& queue, const Camera& camera, const
                 // --- 정점 1 셰이딩 및 캐싱 ---
                 if (myThreadStamp[i1] != myStamp) {
                     // 캐시 미스(Cache Miss): 처음 보는 정점이므로 모든 셰이딩 수행
-                    ShadedVertex temp_sv;
                     const Vertex& vIn = vertices[i1];
-
+                    ShadedVertex temp_sv;
                     temp_sv.posClip = mvp * SRMath::vec4(vIn.position, 1.0f);
                     temp_sv.posWorld = SRMath::vec3(worldTransform * SRMath::vec4(vIn.position, 1.0f));
                     temp_sv.normalWorld = SRMath::normalize(SRMath::vec3(inverseTransposeWorld * SRMath::vec4(vIn.normal, 0.0f)));
@@ -626,9 +624,8 @@ void Renderer::RenderScene(const RenderQueue& queue, const Camera& camera, const
                 // --- 정점 2 셰이딩 및 캐싱 ---
                 if (myThreadStamp[i2] != myStamp) {
                     // 캐시 미스(Cache Miss): 처음 보는 정점이므로 모든 셰이딩 수행
-                    ShadedVertex temp_sv;
                     const Vertex& vIn = vertices[i2];
-
+                    ShadedVertex temp_sv;
                     temp_sv.posClip = mvp * SRMath::vec4(vIn.position, 1.0f);
                     temp_sv.posWorld = SRMath::vec3(worldTransform * SRMath::vec4(vIn.position, 1.0f));
                     temp_sv.normalWorld = SRMath::normalize(SRMath::vec3(inverseTransposeWorld * SRMath::vec4(vIn.normal, 0.0f)));
@@ -678,9 +675,9 @@ void Renderer::RenderScene(const RenderQueue& queue, const Camera& camera, const
 
                 if ((outcode0 | outcode1 | outcode2) == 0) {
                     // Trivial Acceptance: 원본 셰이딩된 정점 3개를 그대로 사용
-                    myThreadClippedVertices.push_back(sv0);
-                    myThreadClippedVertices.push_back(sv1);
-                    myThreadClippedVertices.push_back(sv2);
+                    myThreadClippedVertices.emplace_back(sv0);
+                    myThreadClippedVertices.emplace_back(sv1);
+                    myThreadClippedVertices.emplace_back(sv2);
                 }
                 else {
                     // Clipping Path: 클리핑 수행. 결과는 verticesToBin에 저장됨
@@ -765,7 +762,8 @@ void Renderer::RenderScene(const RenderQueue& queue, const Camera& camera, const
             int tx = tileIdx % numTilesX;
             int ty = tileIdx / numTilesX;
 
-            renderTile(tx, ty, numTilesX, m_threadLocalStorages, vp, camera.GetCameraPos(), lights);
+            #pragma omp task
+            renderTile(tx, ty, numTilesX, m_threadLocalStorages, camera.GetCameraPos(), lights);
         }
 
     
@@ -797,7 +795,7 @@ void Renderer::RenderScene(const RenderQueue& queue, const Camera& camera, const
 }
 
 void Renderer::renderTile(int tx, int ty, int numTilesX, const std::vector<std::vector<std::vector<TriangleRef*>>>& threadLocalStorages,
-    const SRMath::mat4& vp, const SRMath::vec3& camPos, const std::vector<DirectionalLight> lights)
+    const SRMath::vec3& camPos, const std::vector<DirectionalLight>& lights)
 {
     // 타일의 화면 경계 계산
     int tileMinX = tx * TILE_SIZE;
@@ -826,7 +824,7 @@ void Renderer::renderTile(int tx, int ty, int numTilesX, const std::vector<std::
 }
 
 void Renderer::resterizationForTile(const ShadedVertex& sv0, const ShadedVertex& sv1, const ShadedVertex& sv2, const Material* material,
-    const std::vector<DirectionalLight>& lights, const SRMath::vec3 camPos, const MeshRenderCommand& cmd, int tileMinX, int tileMinY, int tileMaxX, int tileMaxY)
+    const std::vector<DirectionalLight>& lights, const SRMath::vec3& camPos, const MeshRenderCommand& cmd, int tileMinX, int tileMinY, int tileMaxX, int tileMaxY)
 {
     // 모든 클리핑된 정점에 대해 원근 분할 및 뷰포트 변환을 먼저 수행합니다.
     RasterizerVertex rv0, rv1, rv2;
@@ -880,11 +878,22 @@ void Renderer::drawFilledTriangleForTile(const RasterizerVertex& v0, const Raste
     const SRMath::vec2 p2 = { v2.screenPos.x, v2.screenPos.y };
 
     // 삼각형 자체의 스크린 공간 바운딩 박스를 계산합니다.
-    // floor/ceil을 사용하여 부동소수점 좌표를 보수적으로 정수화합니다.
-    int triMinY = (std::min({ p0.y, p1.y, p2.y }));
-    int triMaxY = (std::max({ p0.y, p1.y, p2.y }));
-	int triMinX = (std::min({ p0.x, p1.x, p2.x }));
-	int triMaxX = (std::max({ p0.x, p1.x, p2.x }));
+    const __m128 min_xy = _mm_min_ps(v0.screenPos.m128, _mm_min_ps(v1.screenPos.m128, v2.screenPos.m128));
+    const __m128 max_xy = _mm_max_ps(v0.screenPos.m128, _mm_max_ps(v1.screenPos.m128, v2.screenPos.m128));
+
+	const __m128i min_xy_i = _mm_cvttps_epi32(min_xy);
+	const __m128i max_xy_i = _mm_cvttps_epi32(max_xy);
+
+	alignas(16) int min_xy_arr[4];
+	alignas(16) int max_xy_arr[4];
+
+	_mm_store_si128(reinterpret_cast<__m128i*>(min_xy_arr), min_xy_i);
+	_mm_store_si128(reinterpret_cast<__m128i*>(max_xy_arr), max_xy_i);
+
+    int triMinX = min_xy_arr[0];
+    int triMinY = min_xy_arr[1];
+	int triMaxX = max_xy_arr[0];
+    int triMaxY = max_xy_arr[1];
 
     // 최종 루프 범위 계산 (교집합) - 이 부분이 올바른지 집중적으로 확인하세요!
     // 삼각형의 Y 시작점과 타일의 Y 시작점 중 '더 큰' 값에서 시작하고,
@@ -912,19 +921,35 @@ void Renderer::drawFilledTriangleForTile(const RasterizerVertex& v0, const Raste
     float w1Row = dy20 * (finalMinX + 0.5f - p2.x) - dx20 * (finalMinY + 0.5f - p2.y);
     float w2Row = dy01 * (finalMinX + 0.5f - p0.x) - dx01 * (finalMinY + 0.5f - p0.y);
 
+	// 고정 소수점으로 변환
+    const SRMath::FixedPoint<16> dx01_fixed = SRMath::FixedPoint<16>(dx01);
+    const SRMath::FixedPoint<16> dy01_fixed = SRMath::FixedPoint<16>(dy01);
+    const SRMath::FixedPoint<16> dx12_fixed = SRMath::FixedPoint<16>(dx12);
+    const SRMath::FixedPoint<16> dy12_fixed = SRMath::FixedPoint<16>(dy12);
+    const SRMath::FixedPoint<16> dx20_fixed = SRMath::FixedPoint<16>(dx20);
+    const SRMath::FixedPoint<16> dy20_fixed = SRMath::FixedPoint<16>(dy20);
+
+	SRMath::FixedPoint<16> w0Row_fixed = SRMath::FixedPoint<16>(w0Row);
+	SRMath::FixedPoint<16> w1Row_fixed = SRMath::FixedPoint<16>(w1Row);
+	SRMath::FixedPoint<16> w2Row_fixed = SRMath::FixedPoint<16>(w2Row);
+
     // --- 래스터화 루프 ---
     for (int y = finalMinY; y <= finalMaxY; ++y)
     {
         // 현재 행의 시작 값을 복사
-        float w0 = w0Row;
-        float w1 = w1Row;
-        float w2 = w2Row;
+        SRMath::FixedPoint<16> w0_fixed = w0Row_fixed;
+        SRMath::FixedPoint<16> w1_fixed = w1Row_fixed;
+        SRMath::FixedPoint<16> w2_fixed = w2Row_fixed;
 
         for (int x = finalMinX; x <= finalMaxX; ++x)
         {
             // 바리센트릭 좌표가 모두 양수이면 삼각형 내부에 있는 것입니다.
-            if (w0 >= 0 && w1 >= 0 && w2 >= 0)
+            if ((w0_fixed.value | w1_fixed.value | w2_fixed.value) >= 0)
             {
+				float w0 = w0_fixed.toFloat();
+				float w1 = w1_fixed.toFloat();
+				float w2 = w2_fixed.toFloat();
+
                 float total_w = static_cast<float>(w0 + w1 + w2);
 
                 if (std::abs(total_w) < 1e-5f) continue;
@@ -1025,15 +1050,15 @@ void Renderer::drawFilledTriangleForTile(const RasterizerVertex& v0, const Raste
             }
 
             // x가 1 증가했으므로, y의 변화량만큼 더해줍니다. (점진적 계산)
-            w0 += dy12;
-            w1 += dy20;
-            w2 += dy01;
+            w0_fixed += dy12;
+            w1_fixed += dy20;
+            w2_fixed += dy01;
         }
 
         // y가 1 증가했으므로, 다음 행의 시작 값을 x의 변화량만큼 더해서 갱신합니다.
-        w0Row -= dx12;
-        w1Row -= dx20;
-        w2Row -= dx01;
+        w0Row_fixed -= dx12_fixed;
+        w1Row_fixed -= dx20_fixed;
+        w2Row_fixed -= dx01_fixed;
     }
 }
 

@@ -74,10 +74,10 @@ private:
 	void drawTriangle(int x0, int y0, int x1, int y1, int x2, int y2, unsigned int color);
 	void drawTriangle(const SRMath::vec2 v0, const SRMath::vec2 v1, const SRMath::vec2 v2, unsigned int color);
 
-	void renderTile(int tx, int ty, int numTileX, const std::vector<std::vector<std::vector<TriangleRef*>>>& trianglesToRender, const SRMath::mat4& vp, const SRMath::vec3& camPos, const std::vector<DirectionalLight> lights);
+	void renderTile(int tx, int ty, int numTileX, const std::vector<std::vector<std::vector<TriangleRef*>>>& trianglesToRender, const SRMath::vec3& camPos, const std::vector<DirectionalLight>& lights);
 	
 	void resterizationForTile(const ShadedVertex& sv0, const ShadedVertex& sv1, const ShadedVertex& sv2, const Material* material,
-		const std::vector<DirectionalLight>& lights, const SRMath::vec3 camPos, const MeshRenderCommand& cmd, int tile_minX, int tile_minY, int tile_maxX, int tile_maxY);
+		const std::vector<DirectionalLight>& lights, const SRMath::vec3& camPos, const MeshRenderCommand& cmd, int tile_minX, int tile_minY, int tile_maxX, int tile_maxY);
 	void drawFilledTriangleForTile(const RasterizerVertex& v0, const RasterizerVertex& v1, const RasterizerVertex& v2, const Material* material, const std::vector<DirectionalLight>& lights, const SRMath::vec3& camPos, int tile_minX, int tile_minY, int tile_maxX, int tile_maxY);
 
 	void drawDebugPrimitive(const DebugPrimitiveCommand& cmd, const SRMath::mat4& vp, const Camera& camera);

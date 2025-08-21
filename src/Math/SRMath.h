@@ -4,14 +4,113 @@
 #include <optional>
 #include <xmmintrin.h> // SSE Header
 #include <smmintrin.h> // SSE4.1
+#include <cstdint>
 
 constexpr float PI = 3.1415926535f;
 const float angle90 = PI / 2.0f;
 
-
 namespace SRMath {
-	// General Template
 
+	// General Template
+	template <size_t FRACT_BIT> 
+	struct FixedPoint {
+		int32_t value;
+
+		FixedPoint() : value(0) {}
+		FixedPoint(int32_t v) : value(v) {}
+		FixedPoint(float v) : value(static_cast<int32_t>(v* (1 << FRACT_BIT))) {}
+		FixedPoint(double v) : value(static_cast<int32_t>(v* (1 << FRACT_BIT))) {}
+
+		inline const float toFloat() const {
+			return static_cast<float>(value) / (1 << FRACT_BIT);
+		}
+
+		inline const double toDouble() const {
+			return static_cast<double>(value) / (1 << FRACT_BIT);
+		}
+
+		inline FixedPoint<FRACT_BIT>& operator+=(const FixedPoint<FRACT_BIT>& other) {
+			this->value += other.value;
+			return *this;
+		}
+
+		inline FixedPoint<FRACT_BIT>& operator-=(const FixedPoint<FRACT_BIT>& other) {
+			this->value -= other.value;
+			return *this;
+		}
+
+		inline FixedPoint<FRACT_BIT>& operator*=(const FixedPoint<FRACT_BIT>& other) {
+			int64_t temp = static_cast<int64_t>(this->value) * other.value;
+			this->value = static_cast<int32_t>(temp >> FRACT_BIT);
+		}
+
+		inline FixedPoint<FRACT_BIT>& operator/=(const FixedPoint<FRACT_BIT>& other) {
+			int64_t temp = static_cast<int64_t>(this->value) << FRACT_BIT;
+			this->value = static_cast<int32_t>(temp / other.value);
+		}
+
+	};
+
+	template <size_t fractBits>
+	inline FixedPoint<fractBits> floatToFixed(float value) {
+		FixedPoint<fractBits> fixedPoint;
+		fixedPoint.value = static_cast<int32_t>(value * (1 << fractBits));
+		return fixedPoint;
+	}
+
+	template <size_t fractBits>
+	inline float fixedToFloat(FixedPoint<fractBits> fp)
+	{
+		return static_cast<float>(fp.value) / (1 << fractBits);
+	}
+
+	using Fixed16 = FixedPoint<16>;
+	using Fixed24 = FixedPoint<24>;
+	using Fixed30 = FixedPoint<30>;
+
+	template <size_t FRACT_BIT>
+	inline FixedPoint<FRACT_BIT> operator+(const FixedPoint<FRACT_BIT>& a, const FixedPoint<FRACT_BIT>& b) {
+		FixedPoint<FRACT_BIT> ret = a;
+		ret += b;
+		return ret;
+	}
+
+	template <size_t FRACT_BIT>
+	inline FixedPoint<FRACT_BIT> operator-(const FixedPoint<FRACT_BIT>& a, const FixedPoint<FRACT_BIT>& b) {
+		FixedPoint<FRACT_BIT> ret = a;
+		ret -= b;
+		return ret;
+	}
+
+	template <size_t FRACT_BIT>
+	inline FixedPoint<FRACT_BIT> operator*(const FixedPoint<FRACT_BIT>& a, const FixedPoint<FRACT_BIT>& b) {
+		FixedPoint<FRACT_BIT> ret = a;
+		ret *= b;
+		return ret;
+	}
+
+	template <size_t FRACT_BIT>
+	inline FixedPoint<FRACT_BIT> operator*(const FixedPoint<FRACT_BIT>& a, float scalar) {
+		FixedPoint<FRACT_BIT> ret = a;
+		ret *= scalar;
+		return ret;
+	}
+
+	template <size_t FRACT_BIT>
+	inline FixedPoint<FRACT_BIT> operator/(const FixedPoint<FRACT_BIT>& a, const FixedPoint<FRACT_BIT>& b) {
+		FixedPoint<FRACT_BIT> ret = a;
+		ret /= b;
+		return ret;
+	}
+
+	template <size_t FRACT_BIT>
+	inline FixedPoint<FRACT_BIT> operator/(const FixedPoint<FRACT_BIT>& a, float scalar) {
+		FixedPoint<FRACT_BIT> ret = a;
+		ret /= scalar;
+		return ret;
+	}
+
+	// General Template
 	template <size_t N>	struct alignas(16) Vector;
 	
 	using vec4 = Vector<4>;
@@ -354,8 +453,39 @@ namespace SRMath {
 		const Vector<N>& operator[](size_t index) const { return cols[index]; }
 	};
 
+
+	template<typename T1, typename T2>
+	class Matrix4x4Proxy
+	{
+	private:
+		const T1& m_lhs; // left-hand side
+		const T2& m_rhs; // right-hand side
+	public:
+		Matrix4x4Proxy(const T1& lhs, const T2& rhs) : m_lhs(lhs), m_rhs(rhs) {
+			static_assert(std::is_same_v<T1, mat4> || std::is_same_v<T1, Matrix<4>>,
+				"First template argument must be mat4 or Matrix<4>");
+			static_assert(std::is_same_v<T2, mat4> || std::is_same_v<T2, Matrix<4>>,
+				"Second template argument must be mat4 or Matrix<4>");
+		}
+
+		// 행렬 곱셈 연산자 오버로딩
+		vec4 operator[](size_t col_idx) const
+		{
+			// m_lhs * v
+			return m_lhs * m_rhs[col_idx];
+		}
+
+		const T1& lhs() const { return m_lhs; }
+		const T2& rhs() const { return m_rhs; }
+	};
+
+	inline Matrix4x4Proxy<mat4, mat4> operator*(const mat4& lhs, const mat4& rhs)
+	{
+		return Matrix4x4Proxy<mat4, mat4>(lhs, rhs);
+	}
+
 	template<>
-	struct alignas(16) Matrix<4>
+	struct alignas(64) Matrix<4>
 	{
 		union {
 			__m128 m128[4];
@@ -387,6 +517,30 @@ namespace SRMath {
 
 		Vector<4>& operator[](size_t index) { return cols[index]; }
 		const Vector<4>& operator[](size_t index) const { return cols[index]; }
+
+		template<typename T1, typename T2>
+		Matrix(const Matrix4x4Proxy<T1, T2>& proxy)
+		{
+			// 내부 로직은 operator=와 완전히 동일합니다.
+			// 프록시로부터 각 열의 계산 결과를 가져와 새 행렬을 초기화합니다.
+			multiply(*this, proxy.lhs(), proxy.rhs());
+		}
+
+		template<typename T1, typename T2>
+		mat4& operator=(const Matrix4x4Proxy<T1, T2>& proxy)
+		{
+			if (std::is_same_v<T1, mat4> && std::is_same_v<T2, mat4>) {
+				multiply(*this, proxy.lhs(), proxy.rhs());
+			}
+			else {
+				this->cols[0] = proxy[0];
+				this->cols[1] = proxy[1];
+				this->cols[2] = proxy[2];
+				this->cols[3] = proxy[3];
+			}
+			return *this; // return this matrix
+		}
+
 	};
 
 	template<>
@@ -401,6 +555,7 @@ namespace SRMath {
 		const Vector<3>& operator[](size_t index) const { return cols[index]; }
 	};
 
+	
 	// inline operator overloading function
 	inline vec4 operator*(const mat4& m, const vec4& v)
 	{
@@ -429,7 +584,70 @@ namespace SRMath {
 		return m * newV;
 	}
 
-	inline mat4 operator*(const mat4& a, const mat4& b)
+	inline void multiply(mat4& result, const mat4& a, const mat4& b)
+	{
+		// A의 열들을 미리 SIMD 레지스터에 로드합니다.
+		// 이렇게 하면 루프마다 메모리에서 읽어오는 것을 방지할 수 있습니다.
+		__m128 a_col0 = a.m128[0];
+		__m128 a_col1 = a.m128[1];
+		__m128 a_col2 = a.m128[2];
+		__m128 a_col3 = a.m128[3];
+
+		// --- 결과 행렬의 첫 번째 열 계산 ---
+		__m128 b_splat = _mm_set1_ps(b.cols[0].x);
+		__m128 res = _mm_mul_ps(a_col0, b_splat);
+
+		b_splat = _mm_set1_ps(b.cols[0].y);
+		res = _mm_add_ps(res, _mm_mul_ps(a_col1, b_splat));
+
+		b_splat = _mm_set1_ps(b.cols[0].z);
+		res = _mm_add_ps(res, _mm_mul_ps(a_col2, b_splat));
+
+		b_splat = _mm_set1_ps(b.cols[0].w);
+		res = _mm_add_ps(res, _mm_mul_ps(a_col3, b_splat));
+		result.m128[0] = res;
+
+		b_splat = _mm_set1_ps(b.cols[1].x);
+		res = _mm_mul_ps(a_col0, b_splat);
+
+		b_splat = _mm_set1_ps(b.cols[1].y);
+		res = _mm_add_ps(res, _mm_mul_ps(a_col1, b_splat));
+
+		b_splat = _mm_set1_ps(b.cols[1].z);
+		res = _mm_add_ps(res, _mm_mul_ps(a_col2, b_splat));
+
+		b_splat = _mm_set1_ps(b.cols[1].w);
+		res = _mm_add_ps(res, _mm_mul_ps(a_col3, b_splat));
+		result.m128[1] = res;
+
+		b_splat = _mm_set1_ps(b.cols[2].x);
+		res = _mm_mul_ps(a_col0, b_splat);
+
+		b_splat = _mm_set1_ps(b.cols[2].y);
+		res = _mm_add_ps(res, _mm_mul_ps(a_col1, b_splat));
+
+		b_splat = _mm_set1_ps(b.cols[2].z);
+		res = _mm_add_ps(res, _mm_mul_ps(a_col2, b_splat));
+
+		b_splat = _mm_set1_ps(b.cols[2].w);
+		res = _mm_add_ps(res, _mm_mul_ps(a_col3, b_splat));
+		result.m128[2] = res;
+
+		b_splat = _mm_set1_ps(b.cols[3].x);
+		res = _mm_mul_ps(a_col0, b_splat);
+
+		b_splat = _mm_set1_ps(b.cols[3].y);
+		res = _mm_add_ps(res, _mm_mul_ps(a_col1, b_splat));
+
+		b_splat = _mm_set1_ps(b.cols[3].z);
+		res = _mm_add_ps(res, _mm_mul_ps(a_col2, b_splat));
+
+		b_splat = _mm_set1_ps(b.cols[3].w);
+		res = _mm_add_ps(res, _mm_mul_ps(a_col3, b_splat));
+		result.m128[3] = res;
+	}
+
+	/*inline mat4 operator*(const mat4& a, const mat4& b)
 	{
 		mat4 ret(0.0f);
 
@@ -439,8 +657,7 @@ namespace SRMath {
 		ret[3] = a * b[3];
 		
 		return ret;
-	}
-
+	}*/
 
 	// inline utility functions (dot product, cross product)
 	inline float dot(const vec4& a, const vec4& b)

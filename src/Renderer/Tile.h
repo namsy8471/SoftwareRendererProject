@@ -6,7 +6,7 @@
 
 class MeshRenderCommand;
 
-constexpr int TILE_SIZE = 32; // 타일의 크기 (16x16 픽셀)
+constexpr int TILE_SIZE = 16; // 타일의 크기 (16x16 픽셀)
 
 // 어떤 메쉬의 몇 번째 삼각형인지를 가리키는 구조체
 struct alignas(CACHE_LINE_SIZE) TriangleRef
