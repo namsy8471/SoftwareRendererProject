@@ -13,14 +13,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     UNREFERENCED_PARAMETER(hPrevInstance);
     UNREFERENCED_PARAMETER(lpCmdLine);
 
-    Framework app;
-
-    if (app.Initialize(hInstance, nCmdShow))
-    {
-        app.Run();
-    }
-
-    app.Shutdown();
+    Framework app(hInstance, nCmdShow);
+    app.Run();
 
     return 0;
 } 

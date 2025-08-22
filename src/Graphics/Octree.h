@@ -22,7 +22,7 @@ private:
 	const Mesh* sourceMesh = nullptr;
 
 	void submitNodeRecursive(RenderQueue& renderQueue, const Frustum& frustum, const SRMath::mat4& worldTransform,
-		const int threadId, std::vector<MeshRenderCommand>& threadLocalCmd, std::vector<DebugPrimitiveCommand>& localDebugCmd, 
+		std::vector<MeshRenderCommand>& threadLocalCmd, std::vector<DebugPrimitiveCommand>& localDebugCmd, 
 		const DebugFlags& debugFlags, const OctreeNode* node);
 
 	
@@ -36,6 +36,6 @@ public:
 	void Build(const Mesh& mesh);
 	const OctreeNode* GetRoot() const { return root.get(); }
 	void SubmitNodesToRenderQueue(RenderQueue& renderQueue, const Frustum& frustum, const SRMath::mat4& worldTransform,
-		const int threadId, std::vector<MeshRenderCommand>& threadLocalCmd, std::vector<DebugPrimitiveCommand>& localDebugCmd, const DebugFlags& debugFlags);
+		std::vector<MeshRenderCommand>& threadLocalCmd, std::vector<DebugPrimitiveCommand>& localDebugCmd, const DebugFlags& debugFlags);
 };
 

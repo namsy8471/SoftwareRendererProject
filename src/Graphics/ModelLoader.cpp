@@ -3,7 +3,7 @@
 #include <sstream>
 #include <map>
 #include <unordered_map>
-#include <omp.h>
+#include <tbb/tbb.h>
 
 #include "Graphics/TextureLoader.h"
 #include "Graphics/Model.h"
@@ -271,89 +271,93 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
     AABB modelAABB; // 모델 전체 AABB (모든 메시 통합용)
 
     // 메시별 후처리(법선 생성, AABB 계산, 옥트리 빌드)를 병렬 처리
-#pragma omp parallel for
-    for (int i = 0 ; i < outModel->m_meshes.size(); i++)
-    {
-        auto& mesh = outModel->m_meshes[i];
+    tbb::combinable<AABB> localAABB([] { return AABB(); }); // 스레드 로컬 AABB
 
-        // OBJ에 vn이 실제로 존재하는지 여부 체크
-        bool hasNormals = true;
-        for(const auto& vertex : mesh.vertices)
+    tbb::parallel_for(tbb::blocked_range<int>(0, (int)outModel->m_meshes.size()),
+        [&](const tbb::blocked_range<int>& r) {
+        for (int i = r.begin(); i != r.end(); i++)
         {
-            if (vertex.normal != SRMath::vec3(0.0f, 0.0f, 0.0f))
+            auto& mesh = outModel->m_meshes[i];
+
+            // OBJ에 vn이 실제로 존재하는지 여부 체크
+            bool hasNormals = true;
+            for (const auto& vertex : mesh.vertices)
             {
-                hasNormals = false;
-                break;
-            }
-		}
-
-        // If there is no Normal vector in OBJ File
-        if (!hasNormals)
-        {
-            // 각 정점의 법선을 0으로 초기화
-            for (auto& vertex : mesh.vertices)
-            {
-                vertex.normal = SRMath::vec3(0.0f, 0.0f, 0.0f);
-            }
-
-            // 모든 면을 순회하며 면의 법선을 계산하고, 면을 구성하는 정점들에 더해줌
-            for (size_t idx = 0; idx < mesh.indices.size(); idx += 3)
-            {
-                unsigned int i0 = mesh.indices[idx];
-                unsigned int i1 = mesh.indices[idx + 1];
-                unsigned int i2 = mesh.indices[idx + 2];
-
-                const SRMath::vec3& v0 = mesh.vertices[i0].position;
-                const SRMath::vec3& v1 = mesh.vertices[i1].position;
-                const SRMath::vec3& v2 = mesh.vertices[i2].position;
-
-                // 삼각형 면 법선 (v0->v1) × (v0->v2)
-                SRMath::vec3 face_normal = SRMath::cross(v1 - v0, v2 - v0);
-
-                // 0벡터 방지 후 정규화
-                float length = SRMath::length(face_normal);
-                if (length > 1e-6f) // 0벡터 방지
+                if (vertex.normal != SRMath::vec3(0.0f, 0.0f, 0.0f))
                 {
-                    face_normal = SRMath::normalize(face_normal);
+                    hasNormals = false;
+                    break;
                 }
-                else
+            }
+
+            // If there is no Normal vector in OBJ File
+            if (!hasNormals)
+            {
+                // 각 정점의 법선을 0으로 초기화
+                for (auto& vertex : mesh.vertices)
                 {
-                    face_normal = SRMath::vec3(0.0f, 0.0f, 0.0f);
+                    vertex.normal = SRMath::vec3(0.0f, 0.0f, 0.0f);
                 }
 
-                // 정점 법선에 면 법선 누적 (스무딩)
-                mesh.vertices[i0].normal = mesh.vertices[i0].normal + face_normal;
-                mesh.vertices[i1].normal = mesh.vertices[i1].normal + face_normal;
-                mesh.vertices[i2].normal = mesh.vertices[i2].normal + face_normal;
+                // 모든 면을 순회하며 면의 법선을 계산하고, 면을 구성하는 정점들에 더해줌
+                for (size_t idx = 0; idx < mesh.indices.size(); idx += 3)
+                {
+                    unsigned int i0 = mesh.indices[idx];
+                    unsigned int i1 = mesh.indices[idx + 1];
+                    unsigned int i2 = mesh.indices[idx + 2];
+
+                    const SRMath::vec3& v0 = mesh.vertices[i0].position;
+                    const SRMath::vec3& v1 = mesh.vertices[i1].position;
+                    const SRMath::vec3& v2 = mesh.vertices[i2].position;
+
+                    // 삼각형 면 법선 (v0->v1) × (v0->v2)
+                    SRMath::vec3 face_normal = SRMath::cross(v1 - v0, v2 - v0);
+
+                    // 0벡터 방지 후 정규화
+                    float length = SRMath::length(face_normal);
+                    if (length > 1e-6f) // 0벡터 방지
+                    {
+                        face_normal = SRMath::normalize(face_normal);
+                    }
+                    else
+                    {
+                        face_normal = SRMath::vec3(0.0f, 0.0f, 0.0f);
+                    }
+
+                    // 정점 법선에 면 법선 누적 (스무딩)
+                    mesh.vertices[i0].normal = mesh.vertices[i0].normal + face_normal;
+                    mesh.vertices[i1].normal = mesh.vertices[i1].normal + face_normal;
+                    mesh.vertices[i2].normal = mesh.vertices[i2].normal + face_normal;
+                }
+
+                // 각 정점의 법선을 정규화하여 부드러운 법선(Smooth Normal) 생성
+                for (auto& vertex : mesh.vertices)
+                {
+                    float length = SRMath::length(vertex.normal);
+                    if (length > 1e-6f)
+                        vertex.normal = SRMath::normalize(vertex.normal);
+                    else
+                        vertex.normal = SRMath::vec3(0.0f, 1.0f, 0.0f); // 기본 위쪽 방향
+                }
             }
 
-            // 각 정점의 법선을 정규화하여 부드러운 법선(Smooth Normal) 생성
-            for (auto& vertex : mesh.vertices)
-            {
-                float length = SRMath::length(vertex.normal);
-                if (length > 1e-6f)
-                    vertex.normal = SRMath::normalize(vertex.normal);
-                else
-                    vertex.normal = SRMath::vec3(0.0f, 1.0f, 0.0f); // 기본 위쪽 방향
-            }
-        }
+            // 메시 AABB 계산 및 모델 전체 통합
+            AABB meshAABB = AABB::CreateFromMesh(mesh);
+            mesh.localAABB = meshAABB;
 
-        // 메시 AABB 계산 및 모델 전체 통합
-        AABB meshAABB = AABB::CreateFromMesh(mesh);
-		mesh.localAABB = meshAABB;
+			localAABB.local().Encapsulate(meshAABB); // 스레드 로컬 AABB에 통합
 
-        // 병렬 영역에서의 공용 AABB 갱신은 크리티컬로 보호
-        #pragma omp critical
-        {
-            modelAABB.Encapsulate(meshAABB);
-        }
+            // Octree 생성 및 빌드 (가시화/프러스텀 컬링 최적화)
+            mesh.octree = std::make_unique<Octree>();
+            mesh.octree->Build(mesh);
+		}});
 
-        // Octree 생성 및 빌드 (가시화/프러스텀 컬링 최적화)
-        mesh.octree = std::make_unique<Octree>();
-        mesh.octree->Build(mesh);
-    }
-
+    // 최종적으로 thread-local AABB들을 병합
+    localAABB.combine_each([&](const AABB& aabb) {
+        modelAABB.Encapsulate(aabb);
+        });
     // 최종 계산된 AABB 모델에 저장
+    
     outModel->m_localAABB = modelAABB;
 
     file.close(); // 파일 닫기

@@ -3,6 +3,7 @@
 #include <unordered_map>
 #include <memory>
 #include <atomic>
+#include <tbb/enumerable_thread_specific.h>
 
 #include "Core/pch.h"
 #include "Math/SRMath.h"
@@ -55,14 +56,17 @@ private:
 		EAAAlgorithm::None;	// 앤티앨리어싱 알고리즘
 
 	// Renderer Optimization		
-	std::vector<std::vector<std::vector<TriangleRef*>>> m_threadLocalStorages;
-	std::vector<std::vector<TriangleRef>> m_threadTrianglePools; // 실제 TriangleRef 객체들이 저장될 스레드별 메모리 풀
-	std::unique_ptr<AlignedAtomicInt[]> m_threadPoolCounters; // 각 스레드가 자신의 풀을 얼마나 사용했는지 나타내는 카운터
-	std::vector<std::vector<ShadedVertex>> m_threadShadedVertexBuffers; // 클립 공간 좌표를 저장할 버퍼
-	std::vector<std::vector<int>> m_threadStamps;         // 정점별 스탬프 (변환 캐싱 용도)
-	std::vector<std::vector<ShadedVertex>> m_threadClipBuffer1, m_threadClipBuffer2, m_threadClippedVertices;
-	std::vector<std::unordered_map<const MeshRenderCommand*, SRMath::mat4>> m_threadNormalMatrixCache;
+	std::vector<tbb::concurrent_vector<TriangleRef*>> m_finalTriangleBins;
+	tbb::enumerable_thread_specific<tbb::concurrent_vector<TriangleRef>> m_threadTrianglePools; // 실제 TriangleRef 객체들이 저장될 스레드별 메모리 풀
+	tbb::enumerable_thread_specific<std::vector<ShadedVertex>> m_threadShadedVertexBuffers; // 클립 공간 좌표를 저장할 버퍼
+	tbb::enumerable_thread_specific<std::vector<int>> m_threadStamps;         // 정점별 스탬프 (변환 캐싱 용도)
+	tbb::enumerable_thread_specific<std::vector<ShadedVertex>> m_threadClipBuffer1, m_threadClipBuffer2, m_threadClippedVertices;
+	tbb::enumerable_thread_specific<std::unordered_map<const MeshRenderCommand*, SRMath::mat4>>m_threadNormalMatrixCache;
 
+
+	// Resize용 재초기화 함수
+	bool reInit(HWND hWnd);
+	void shutdownForResize() const;
 
 	// 선 그리기 알고리즘 셀렉터
 	void drawLineByBresenham(int x0, int y0, int x1, int y1, unsigned int color);
@@ -74,7 +78,7 @@ private:
 	void drawTriangle(int x0, int y0, int x1, int y1, int x2, int y2, unsigned int color);
 	void drawTriangle(const SRMath::vec2 v0, const SRMath::vec2 v1, const SRMath::vec2 v2, unsigned int color);
 
-	void renderTile(int tx, int ty, int numTileX, const std::vector<std::vector<std::vector<TriangleRef*>>>& trianglesToRender, const SRMath::vec3& camPos, const std::vector<DirectionalLight>& lights);
+	void renderTile(int tx, int ty, int numTileX, const tbb::concurrent_vector<TriangleRef*>& triangleBin, const SRMath::vec3& camPos, const std::vector<DirectionalLight>& lights);
 	
 	void resterizationForTile(const ShadedVertex& sv0, const ShadedVertex& sv1, const ShadedVertex& sv2, const Material* material,
 		const std::vector<DirectionalLight>& lights, const SRMath::vec3& camPos, const MeshRenderCommand& cmd, int tile_minX, int tile_minY, int tile_maxX, int tile_maxY);
@@ -89,11 +93,8 @@ private:
 
 
 public:
-	Renderer();
+	Renderer(HWND hWnd);
 	~Renderer();
-
-	bool Initialize(HWND hWnd);
-	void Shutdown() const;
 
 	void SetLineAlgorithm(ELineAlgorithm eLineAlgorithm) { m_currentLineAlgorithm = eLineAlgorithm; }
 	void SetAAAlgorithm(EAAAlgorithm eAAAlgorithm) { m_currentAAAlgorithm = eAAAlgorithm; }

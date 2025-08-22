@@ -1,6 +1,10 @@
 #include "Camera.h"
 
-Camera::Camera() : m_cameraPos({0.0f, 0.0f ,0.0f })
+Camera::Camera() : m_cameraPos({0.0f, 0.0f, 0.0f})
+{
+}
+
+Camera::Camera(SRMath::vec3 pos) : m_cameraPos(pos)
 {
 }
 
@@ -8,10 +12,6 @@ Camera::~Camera()
 {
 }
 
-void Camera::Initialize(SRMath::vec3 pos)
-{
-	m_cameraPos = pos;
-}
 
 void Camera::Update(const float deltaTime, const bool* keyInput, const float aspectRatio)
 {
@@ -42,5 +42,4 @@ void Camera::Move(const float deltaTime, const bool* keyInput)
     if (keyInput['S']) MoveBackward(deltaTime);
     if (keyInput['D']) MoveRight(deltaTime);
     if (keyInput['A']) MoveLeft(deltaTime);
-
 }

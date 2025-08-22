@@ -37,9 +37,9 @@ private:
 
 public:
 	Camera();
+	Camera(SRMath::vec3 pos);
 	~Camera();
 
-	void Initialize(SRMath::vec3 pos);
 	void Update(const float deltaTime, const bool* keyInput, const float aspectRatio);
 	void Move(const float deltaTime, const bool* keyInput);
 

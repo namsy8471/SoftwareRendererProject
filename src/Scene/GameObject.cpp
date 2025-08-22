@@ -1,18 +1,13 @@
 #include "GameObject.h"
 #include "Graphics/Model.h"
-#include "Renderer/RenderQueue.h"
 #include "Math/Frustum.h"
 #include "Graphics/Octree.h"
 #include "Utils/DebugUtils.h"
-#include <omp.h>
 
-GameObject::GameObject() = default;
-GameObject::~GameObject() = default;
+#include <stdexcept>
+#include <tbb/tbb.h>
 
-GameObject::GameObject(GameObject&& move) noexcept = default;
-GameObject& GameObject::operator=(GameObject&&) noexcept = default;
-
-bool GameObject::Initialize(const SRMath::vec3& position, const SRMath::vec3& rotation, const SRMath::vec3& scale, std::unique_ptr<Model> model)
+GameObject::GameObject(const SRMath::vec3& position, const SRMath::vec3& rotation, const SRMath::vec3& scale, std::unique_ptr<Model> model)
 {
 	m_position = position;
 	m_rotation = rotation;
@@ -21,11 +16,26 @@ bool GameObject::Initialize(const SRMath::vec3& position, const SRMath::vec3& ro
 	if (!m_model)
 	{
 		// Handle error: model is null
-		return false;
+		throw std::runtime_error("Model cannot be null");
 	}
 
-	return true;
+	int maxThreads = tbb::this_task_arena::max_concurrency();
+	tbb::task_arena arena(maxThreads);
+	arena.execute([&] {
+		tbb::parallel_for(0, maxThreads, [&](int) {
+			std::vector<MeshRenderCommand> localCmd = m_threadLocalCmd.local();
+			std::vector<DebugPrimitiveCommand> localDebugCmd = m_threadLocalDebugCmd.local();
+
+			localCmd.reserve(200);
+			localDebugCmd.reserve(200);
+			});
+		});
 }
+
+GameObject::~GameObject() = default;
+
+GameObject::GameObject(GameObject&& move) noexcept = default;
+GameObject& GameObject::operator=(GameObject&&) noexcept = default;
 
 void GameObject::Update(float deltaTime, bool isRotate)
 {
@@ -104,88 +114,77 @@ void GameObject::SubmitToRenderQueue(RenderQueue& renderQueue, const Frustum& fr
 	if (!m_model) return;
 
 	int modelSize = m_model->GetMeshes().size();
-	std::vector<std::vector<MeshRenderCommand>> threadLocalCmd;
-	std::vector<std::vector<DebugPrimitiveCommand>> threadLocalDebugCmd;
 
-#pragma omp parallel
-	{
-		#pragma omp single
-		{
-			threadLocalCmd.resize(omp_get_num_threads());
-			threadLocalDebugCmd.resize(omp_get_num_threads());
-		}
+	m_threadLocalCmd.clear();
+	m_threadLocalDebugCmd.clear();
 
-		std::vector<MeshRenderCommand> localCmd;
-		std::vector<DebugPrimitiveCommand> localDebugCmd;
-		int threadId = omp_get_thread_num();
-			
-		#pragma omp for schedule(dynamic)
-		for (int i = 0; i < modelSize; i++)
-		{
-			const auto& mesh = m_model->GetMeshes()[i];
-			if (mesh.octree)
+	tbb::parallel_for(tbb::blocked_range<int>(0, modelSize),
+		[&](const tbb::blocked_range<int>& r) {
+
+			std::vector<MeshRenderCommand>& localCmd = m_threadLocalCmd.local();
+			std::vector<DebugPrimitiveCommand>& localDebugCmd = m_threadLocalDebugCmd.local();
+
+			for (int i = r.begin(); i != r.end(); i++)
 			{
-				mesh.octree->SubmitNodesToRenderQueue(renderQueue, frustum, m_worldMatrix,
-					threadId, localCmd, localDebugCmd, debugFlags);
-			}
-			else
-			{
-				MeshRenderCommand cmd;
-				cmd.sourceMesh = &mesh;
-				cmd.indicesToDraw = &mesh.indices;
-				cmd.worldTransform = m_worldMatrix;
-				cmd.material = &mesh.material;
-
-				if (debugFlags.bShowWireframe)
+				const auto& mesh = m_model->GetMeshes()[i];
+				if (mesh.octree)
 				{
-					cmd.rasterizeMode = ERasterizeMode::Wireframe;
+					mesh.octree->SubmitNodesToRenderQueue(renderQueue, frustum, m_worldMatrix,
+						localCmd, localDebugCmd, debugFlags);
 				}
 				else
 				{
-					cmd.rasterizeMode = ERasterizeMode::Fill;
+					MeshRenderCommand cmd;
+					cmd.sourceMesh = &mesh;
+					cmd.indicesToDraw = &mesh.indices;
+					cmd.worldTransform = m_worldMatrix;
+					cmd.material = &mesh.material;
+
+					if (debugFlags.bShowWireframe)
+					{
+						cmd.rasterizeMode = ERasterizeMode::Wireframe;
+					}
+					else
+					{
+						cmd.rasterizeMode = ERasterizeMode::Fill;
+					}
+
+					localCmd.push_back(cmd);
 				}
 
-				// renderQueue.Submit(cmd);
-				localCmd.push_back(cmd);
-			}
-
-			if (debugFlags.bShowNormal)
-			{
-				std::vector<DebugVertex> normalLines;
-				normalLines.reserve(mesh.vertices.size() * 2); // 각 정점마다 시작점과 끝점이 있으므로 2배 크기
-
-				const float normalLength = 0.1f; // Normal vector length for visualization
-
-				for (const auto& vertex : mesh.vertices)
+				if (debugFlags.bShowNormal)
 				{
-					SRMath::vec3 startPoint_local = m_worldMatrix * vertex.position;
+					std::vector<DebugVertex> normalLines;
+					normalLines.reserve(mesh.vertices.size() * 2); // 각 정점마다 시작점과 끝점이 있으므로 2배 크기
 
-					// 3. 방향(normal)은 역전치 행렬로 변환하여 월드 공간의 법선 방향을 계산합니다.
-					// (w=0으로 설정하여 방향 벡터임을 명시)
-					SRMath::vec3 normalDir_world = m_normalMatrix * SRMath::vec4(vertex.normal, 0.f);
-					SRMath::vec3 endPoint_local = startPoint_local + SRMath::normalize(normalDir_world) * normalLength;
+					const float normalLength = 0.1f; // Normal vector length for visualization
 
-					normalLines.push_back({ startPoint_local, SRMath::vec4(1.0f, 1.0f, 0.0f, 1.0f) });
-					normalLines.push_back({ endPoint_local, SRMath::vec4(1.0f, 1.0f, 0.0f, 1.0f) });
-				}
+					for (const auto& vertex : mesh.vertices)
+					{
+						SRMath::vec3 startPoint_local = m_worldMatrix * vertex.position;
 
-				if (!normalLines.empty()) {
+						// 3. 방향(normal)은 역전치 행렬로 변환하여 월드 공간의 법선 방향을 계산합니다.
+						// (w=0으로 설정하여 방향 벡터임을 명시)
+						SRMath::vec3 normalDir_world = m_normalMatrix * SRMath::vec4(vertex.normal, 0.f);
+						SRMath::vec3 endPoint_local = startPoint_local + SRMath::normalize(normalDir_world) * normalLength;
 
-					DebugPrimitiveCommand cmd;
-					cmd.vertices = std::move(normalLines);
-					cmd.worldTransform = SRMath::mat4(1.f);
-					cmd.type = DebugPrimitiveType::Line;
-					//renderQueue.Submit(cmd);
-					localDebugCmd.push_back(cmd);
+						normalLines.push_back({ startPoint_local, SRMath::vec4(1.0f, 1.0f, 0.0f, 1.0f) });
+						normalLines.push_back({ endPoint_local, SRMath::vec4(1.0f, 1.0f, 0.0f, 1.0f) });
+					}
+
+					if (!normalLines.empty()) {
+
+						DebugPrimitiveCommand cmd;
+						cmd.vertices = std::move(normalLines);
+						cmd.worldTransform = SRMath::mat4(1.f);
+						cmd.type = DebugPrimitiveType::Line;
+						localDebugCmd.push_back(cmd);
+					}
 				}
 			}
-		}
+		});
 
-		threadLocalCmd[threadId] = std::move(localCmd);
-		threadLocalDebugCmd[threadId] = std::move(localDebugCmd);
-	}
-
-	for(const auto& localCmd : threadLocalCmd)
+	for(const auto& localCmd : m_threadLocalCmd)
 	{
 		for (const auto& cmd : localCmd)
 		{
@@ -193,7 +192,7 @@ void GameObject::SubmitToRenderQueue(RenderQueue& renderQueue, const Frustum& fr
 		}
 	}
 
-	for (const auto& localDebugCmd : threadLocalDebugCmd)
+	for (const auto& localDebugCmd : m_threadLocalDebugCmd)
 	{
 		for (const auto& cmd : localDebugCmd)
 		{

@@ -7,10 +7,7 @@
 #include "Graphics/Model.h"
 #include <omp.h>
 
-Framework::Framework() = default;
-Framework::~Framework() = default;
-
-bool Framework::Initialize(HINSTANCE hInstance, int nCmdShow)
+Framework::Framework(HINSTANCE hInstance, int nCmdShow)
 {
     // 전역 문자열을 초기화합니다.
     LoadStringW(hInstance, IDS_APP_TITLE, m_szTitle, MAX_LOADSTRING);
@@ -35,7 +32,7 @@ bool Framework::Initialize(HINSTANCE hInstance, int nCmdShow)
 
     if (!RegisterClassExW(&wcex))
     {
-        return FALSE; // 등록 실패 시 즉시 종료
+        throw std::runtime_error("Failed to register window class");
     }
 
     // Init Class Instance
@@ -44,53 +41,52 @@ bool Framework::Initialize(HINSTANCE hInstance, int nCmdShow)
 
     if (!m_hWnd)
     {
-        return FALSE;
+        throw std::runtime_error("Failed to create window");
     }
 
     ShowWindow(m_hWnd, nCmdShow);
     UpdateWindow(m_hWnd);
 
-    m_pRenderer = std::make_unique<Renderer>();
+    m_pRenderer = std::make_unique<Renderer>(m_hWnd);
+    m_perfAnalyzer = PerformanceAnalyzer();
 
-    if (!m_pRenderer->Initialize(m_hWnd))
-    {
-        return FALSE;
-    }
-
-    m_perfAnalyzer.Initialize();
-
-    
     if (!initializeGameobject(SRMath::vec3(0.f, 0.f, 0.f), SRMath::vec3(0.f, 0.f, 0.0f),
         SRMath::vec3(0.04f, 0.04f, 0.04f), "IronMan"))
-        return false;
+        throw std::runtime_error("Failed to initialize IronMan GameObject");
 
     if (!initializeGameobject(SRMath::vec3(-10.f, 0.f, 0.f), SRMath::vec3(0.f, 0.f, 0.0f),
         SRMath::vec3(0.04f, 0.04f, 0.04f), "teapot"))
-        return false;
+        throw std::runtime_error("Failed to initialize teapot GameObject");
 
-	m_camera.Initialize(SRMath::vec3(0.f, 0.f, -5.f));
+    m_camera = Camera(SRMath::vec3(0.f, 0.f, -5.f));
 
     m_lights.push_back(DirectionalLight());
     m_lights.push_back(DirectionalLight{ SRMath::vec3(1.f, 0.f, 0.f), SRMath::vec3(1.0f, 1.0f, 1.0f) });
     m_lights.push_back(DirectionalLight{ SRMath::vec3(0.f, 1.f, -1.f), SRMath::vec3(1.0f, 1.0f, 1.0f) });
-
-    return TRUE;
 }
+
+
+Framework::~Framework() = default;
 
 bool Framework::initializeGameobject(const SRMath::vec3& pos, const SRMath::vec3& rotation, const SRMath::vec3& scale, const std::string modelName)
 {
-    m_gameobject = std::make_shared<GameObject>();
-    std::string modelPath = "assets/" + modelName;
-
-    // Load Model
-    if (!m_gameobject->Initialize(pos, rotation, scale, ModelLoader::LoadOBJ(modelPath)))
+    try
     {
-        MessageBox(m_hWnd, L"Failed to load Model.", L"Model Load Error", MB_OK);
+        std::string modelPath = "assets/" + modelName;
+        auto m_gameobject = std::make_shared<GameObject>(pos, rotation, scale, ModelLoader::LoadOBJ(modelPath));
+
+        m_gameobjects.push_back(std::move(m_gameobject));
+        return true;
+    }
+    catch (const std::runtime_error& e)
+    {
+        std::string errorMessage = e.what();
+        std::wstring wErrorMessage(errorMessage.begin(), errorMessage.end());
+
+        MessageBox(m_hWnd, wErrorMessage.c_str(), L"GameObject Creation Error", MB_OK);
+
         return false;
     }
-
-    m_gameobjects.push_back(std::move(m_gameobject));
-    return true;
 }
 
 void Framework::Run()
@@ -171,11 +167,6 @@ void Framework::Render()
     m_pRenderer->Clear();
 
     m_pRenderer->RenderScene(m_renderQueue, m_camera, m_lights);
-}
-
-void Framework::Shutdown()
-{
-    m_pRenderer->Shutdown();
 }
 
 LRESULT Framework::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)

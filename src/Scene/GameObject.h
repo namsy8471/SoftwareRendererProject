@@ -5,6 +5,8 @@
 #include <memory>
 #include "Math/AABB.h"
 #include "Math/SRMath.h"
+#include "Renderer/RenderQueue.h"
+#include "tbb/tbb.h"
 
 class Model;
 class RenderQueue;
@@ -29,9 +31,12 @@ private:
 	std::weak_ptr<GameObject> m_parent;
 	std::vector<std::shared_ptr<GameObject>> m_sons;
 
+	tbb::enumerable_thread_specific<std::vector<MeshRenderCommand>> m_threadLocalCmd;
+	tbb::enumerable_thread_specific<std::vector<DebugPrimitiveCommand>> m_threadLocalDebugCmd;
+
 public:
 
-	GameObject();
+	GameObject(const SRMath::vec3& position, const SRMath::vec3& rotation, const SRMath::vec3& scale, std::unique_ptr<Model> model);
 	~GameObject();
 
 	GameObject(GameObject&&) noexcept;

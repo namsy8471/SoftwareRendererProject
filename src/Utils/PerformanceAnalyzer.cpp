@@ -4,18 +4,14 @@
 
 PerformanceAnalyzer::PerformanceAnalyzer() : m_frequency(), m_prevTime()
 {
-}
-
-PerformanceAnalyzer::~PerformanceAnalyzer()
-{
-}
-
-void PerformanceAnalyzer::Initialize()
-{
     // 고해상도 타이머의 주파수를 얻어옵니다.
     QueryPerformanceFrequency(&m_frequency);
     // 현재 시간을 기록합니다.
     QueryPerformanceCounter(&m_prevTime);
+}
+
+PerformanceAnalyzer::~PerformanceAnalyzer()
+{
 }
 
 void PerformanceAnalyzer::Update()

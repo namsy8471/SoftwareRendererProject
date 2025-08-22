@@ -6,6 +6,7 @@
 #include <omp.h>
 #include <optional>
 #include <unordered_map>
+#include <tbb/tbb.h>
 
 #include "Graphics/Mesh.h"
 #include "Graphics/Texture.h"
@@ -22,24 +23,12 @@
 
 // 부동소수 무한대 상수 (가독성용)
 constexpr float FLOATINF = std::numeric_limits<float>::infinity();
-
+constexpr int MAX_TRIANGLES_PER_THREAD_POOL = 10000; // 각 스레드별 최대 삼각형 수
 
 
 // 설명: GDI 백버퍼/DC 초기 상태 설정
-Renderer::Renderer() : m_hBitmap(nullptr), m_hMemDC(nullptr),
+Renderer::Renderer(HWND hWnd) : m_hBitmap(nullptr), m_hMemDC(nullptr),
 m_hOldBitmap(nullptr), m_height(), m_width(), m_pPixelData(nullptr)
-{
-    
-}
-
-// 설명: 리소스 해제는 Shutdown()에서 수행
-Renderer::~Renderer()
-{
-
-}
-
-// 설명: 렌더러 초기화 (윈도우 크기, 백버퍼/DIB 섹션 생성 등)
-bool Renderer::Initialize(HWND hWnd)
 {
     // 윈도우의 클라이언트 영역 크기를 얻어옵니다.
     RECT clientRect;
@@ -57,7 +46,7 @@ bool Renderer::Initialize(HWND hWnd)
     {
         // 실패 시 Screen DC를 해제하고 종료
         ReleaseDC(hWnd, hScreenDC);
-        return false;
+		throw std::runtime_error("Failed to create memory DC");
     }
 
     // DIB 정보를 담을 BITMAPINFO 구조체를 설정합니다.
@@ -72,7 +61,7 @@ bool Renderer::Initialize(HWND hWnd)
 
     // 메모리 DC에 그려질 비트맵(백버퍼)을 생성합니다.
     m_hBitmap = CreateCompatibleBitmap(hScreenDC, m_width, m_height);
-    
+
     // DIB 섹션 생성: CPU에서 직접 픽셀 접근 가능
     m_hBitmap = CreateDIBSection(m_hMemDC, &bmi, DIB_RGB_COLORS,
         (void**)&m_pPixelData, NULL, 0);
@@ -82,7 +71,7 @@ bool Renderer::Initialize(HWND hWnd)
         // 실패 시 메모리 DC와 Screen DC를 해제하고 종료
         DeleteDC(m_hMemDC);
         ReleaseDC(hWnd, hScreenDC);
-        return false;
+		throw std::runtime_error("Failed to create DIB section");
     }
 
     // 깊이 버퍼 크기 재할당 (width * height)
@@ -99,11 +88,43 @@ bool Renderer::Initialize(HWND hWnd)
     // 이 예제에서는 백버퍼를 흰색으로 초기화합니다.
     PatBlt(m_hMemDC, 0, 0, m_width, m_height, WHITENESS);
 
-    return true;
+    // 타일 데이터 버퍼 초기화
+    const int numTilesX = (m_width + TILE_SIZE - 1) / TILE_SIZE;
+    const int numTilesY = (m_height + TILE_SIZE - 1) / TILE_SIZE;
+    const int totalTiles = numTilesX * numTilesY;
+
+	m_finalTriangleBins.resize(totalTiles);
+    for(auto& bin : m_finalTriangleBins) 
+    {
+		bin.reserve(256);
+	}
+
+    int maxThreads = tbb::this_task_arena::max_concurrency();
+    tbb::task_arena arena(maxThreads);
+    arena.execute([&] {
+        // 강제로 TLS 인스턴스들을 만들고 reserve 해준다
+        tbb::parallel_for(0, maxThreads, [&](int) {
+            auto& myPool = m_threadTrianglePools.local(); // 각 스레드의 삼각형 풀
+            auto& myThreadShadedVertex = m_threadShadedVertexBuffers.local();     // 각 스레드마다 타일에 클리프 공간 좌표를 저장
+            auto& myThreadStamp = m_threadStamps.local();                         // 각 스레드마다 타일에 스탬프를 저장
+            auto& myThreadClipBuffer1 = m_threadClipBuffer1.local();              // 클리핑 스왑 버퍼 1
+            auto& myThreadClipBuffer2 = m_threadClipBuffer2.local();              // 클리핑 스왑 버퍼 2
+            auto& myThreadClippedVertices = m_threadClippedVertices.local();      // 클리핑된 정점 저장
+            auto& myThreadNormalMatrixCache = m_threadNormalMatrixCache.local();  // 역행렬 캐시
+
+            myPool.reserve(MAX_TRIANGLES_PER_THREAD_POOL);
+            myThreadShadedVertex.resize(65535); // 충분히 큰 초기 크기 (튜닝 필요)
+            myThreadStamp.resize(65535, -1); // 초기 스탬프 값은 -1로 설정
+            myThreadClipBuffer1.reserve(6); // 6개의 평면 클리핑을 위한 충분한 공간
+            myThreadClipBuffer2.reserve(6); // 6개의 평면 클리핑을 위한 충분한 공간
+            myThreadClippedVertices.reserve(6); // 6개의 평면 클리핑을 위한 충분한 공간
+            myThreadNormalMatrixCache.rehash(65536); // 충분히 큰 초기 크기 (튜닝 필요)
+            });
+        });
 }
 
-// 생성의 역순으로 GDI 리소스 해제
-void Renderer::Shutdown() const
+// 설명: 리소스 해제는 Shutdown()에서 수행
+Renderer::~Renderer()
 {
     // 생성의 역순으로 GDI 객체들을 해제합니다.
     if (m_hMemDC)
@@ -249,18 +270,12 @@ void Renderer::Clear()
     // 깊이 버퍼는 가장 낮은 값으로 초기화 (더 큰 z^-1만 패스)
 	std::fill(m_depthBuffer.begin(), m_depthBuffer.end(), std::numeric_limits<float>::lowest());
 
-    int num_tiles_x = (m_width + TILE_SIZE - 1) / TILE_SIZE;
-    int num_tiles_y = (m_height + TILE_SIZE - 1) / TILE_SIZE;
-	int num_tiles = num_tiles_x * num_tiles_y;
-
-    for(auto& storage : m_threadLocalStorages)
+    for(auto& storage : m_finalTriangleBins)
     {
-        for(auto& tile_storage : storage)
-        {
-            tile_storage.clear();
-        }
+		storage.clear();
 	}
 
+	for (auto& bin : m_finalTriangleBins) bin.clear();
     m_threadShadedVertexBuffers.clear();
 	m_threadStamps.clear();
 	m_threadClipBuffer1.clear();
@@ -501,281 +516,266 @@ void Renderer::RenderScene(const RenderQueue& queue, const Camera& camera, const
     // 타일 데이터 버퍼 초기화
     int numTilesX = (m_width + TILE_SIZE - 1) / TILE_SIZE;
     int numTilesY = (m_height + TILE_SIZE - 1) / TILE_SIZE;
+	int totalTiles = numTilesX * numTilesY;
 
-#pragma omp parallel
-    {
+    int maxThreads = tbb::this_task_arena::max_concurrency();
+    tbb::task_arena arena(maxThreads);
+    arena.execute([&] {
+        // 강제로 TLS 인스턴스들을 만들고 reserve 해준다
+        tbb::parallel_for(0, maxThreads, [&](int) {
+            auto& myPool = m_threadTrianglePools.local(); // 각 스레드의 삼각형 풀
+            auto& myThreadShadedVertex = m_threadShadedVertexBuffers.local();     // 각 스레드마다 타일에 클리프 공간 좌표를 저장
+            auto& myThreadStamp = m_threadStamps.local();                         // 각 스레드마다 타일에 스탬프를 저장
+            auto& myThreadClipBuffer1 = m_threadClipBuffer1.local();              // 클리핑 스왑 버퍼 1
+            auto& myThreadClipBuffer2 = m_threadClipBuffer2.local();              // 클리핑 스왑 버퍼 2
+            auto& myThreadClippedVertices = m_threadClippedVertices.local();      // 클리핑된 정점 저장
+            auto& myThreadNormalMatrixCache = m_threadNormalMatrixCache.local();  // 역행렬 캐시
 
-#pragma omp single
-        {
-            int numThreads = omp_get_num_threads();
+            myPool.clear();
+            myThreadShadedVertex.clear();
+            myThreadStamp.clear();
+            myThreadClipBuffer1.clear();
+            myThreadClipBuffer2.clear();
+            myThreadClippedVertices.clear();
+            myThreadNormalMatrixCache.clear();
+            });
+        });
 
-            // 스레드별 스크래치 버퍼들도 스레드 개수만큼 준비
-            m_threadLocalStorages.resize(numThreads);
-            m_threadTrianglePools.resize(numThreads);
-            m_threadPoolCounters = std::make_unique<AlignedAtomicInt[]>(numThreads);
-            m_threadShadedVertexBuffers.resize(numThreads);
-            m_threadStamps.resize(numThreads);
-            m_threadClipBuffer1.resize(numThreads); 
-            m_threadClipBuffer2.resize(numThreads); 
-            m_threadClippedVertices.resize(numThreads);
-			m_threadNormalMatrixCache.resize(numThreads);
 
-			const int MAX_TRIANGLES_PER_THREAD_POOL = 500000; // 메모리 할당
-			
-            // 각 스레드의 타일 스토리지 초기화
-            for (int i = 0; i < numThreads; ++i) {
-                m_threadLocalStorages[i].resize(numTilesX * numTilesY);
-                m_threadTrianglePools[i].resize(MAX_TRIANGLES_PER_THREAD_POOL);
+    int cmd_count = queue.GetRenderCommands().size();
+    // 병렬 Binning: 각 스레드는 자기 ID에 맞는 개인 사물함에만 접근
+	tbb::parallel_for(tbb::blocked_range<int>(0, cmd_count),
+        [&](const tbb::blocked_range<int>& r) {
+            
+			auto& myPool = m_threadTrianglePools.local(); // 각 스레드의 삼각형 풀
+            auto& myThreadShadedVertex = m_threadShadedVertexBuffers.local();     // 각 스레드마다 타일에 클리프 공간 좌표를 저장
+            auto& myThreadStamp = m_threadStamps.local();                         // 각 스레드마다 타일에 스탬프를 저장
+            auto& myThreadClipBuffer1 = m_threadClipBuffer1.local();              // 클리핑 스왑 버퍼 1
+            auto& myThreadClipBuffer2 = m_threadClipBuffer2.local();              // 클리핑 스왑 버퍼 2
+            auto& myThreadClippedVertices = m_threadClippedVertices.local();      // 클리핑된 정점 저장
+            auto& myThreadNormalMatrixCache = m_threadNormalMatrixCache.local();  // 역행렬 캐시
 
-				m_threadShadedVertexBuffers[i].reserve(65536); // 65536은 최대 정점 수 (16K 타일 * 4096 정점)
-				m_threadStamps[i].reserve(65536); // 스탬프 초기화
-
-                m_threadClipBuffer1[i].reserve(6); // 6개 정점까지 capacity 넣음
-                m_threadClipBuffer2[i].reserve(6); // 6개 정점까지 capacity 넣음
-                m_threadClippedVertices[i].reserve(6); // 6개 정점까지 capacity 넣음
-				m_threadNormalMatrixCache[i].rehash(65536); // 최대 65536개의 정점에 대한 역행렬 캐시
-            }
-        }
-
-        // 병렬 Binning: 각 스레드는 자기 ID에 맞는 개인 사물함에만 접근
-		int threadId = omp_get_thread_num();                    // 현재 스레드 ID
-        auto& myLocalTiles = m_threadLocalStorages[threadId];   // 참조로 편하게 사용
-		auto& myTrianglePool = m_threadTrianglePools[threadId]; // 각 스레드의 삼각형 풀
-		auto& myPoolCounter = m_threadPoolCounters[threadId];   // 각 스레드의 풀 카운터
-
-		auto& myThreadShadedVertex = m_threadShadedVertexBuffers[threadId];     // 각 스레드마다 타일에 클립 공간 좌표를 저장
-		auto& myThreadStamp = m_threadStamps[threadId];                         // 각 스레드마다 타일에 스탬프를 저장
-		auto& myThreadClipBuffer1 = m_threadClipBuffer1[threadId];              // 클리핑 스왑 버퍼 1
-		auto& myThreadClipBuffer2 = m_threadClipBuffer2[threadId];              // 클리핑 스왑 버퍼 2
-		auto& myThreadClippedVertices = m_threadClippedVertices[threadId];      // 클리핑된 정점 저장
-		auto& myThreadNormalMatrixCache = m_threadNormalMatrixCache[threadId];  // 역행렬 캐시
-
-        myPoolCounter.value = 0;
-
-		int cmd_count = queue.GetRenderCommands().size();
-#pragma omp for schedule(static)
-        for (int cmd_idx = 0; cmd_idx < cmd_count; ++cmd_idx)
-        {
-            const auto& cmd = queue.GetRenderCommands()[cmd_idx];
-            const Mesh* mesh = cmd.sourceMesh;
-            const SRMath::mat4& worldTransform = cmd.worldTransform;
-            const SRMath::mat4 mvp = vp * worldTransform;
-
-            if (myThreadNormalMatrixCache.find(&cmd) == myThreadNormalMatrixCache.end())
-                myThreadNormalMatrixCache.try_emplace(&cmd, SRMath::inverse_transpose(worldTransform).value_or(SRMath::mat4(1.f)));
-
-            const SRMath::mat4 inverseTransposeWorld = myThreadNormalMatrixCache.at(&cmd);
-
-            const auto& vertices = mesh->vertices;
-            const auto& indices = *cmd.indicesToDraw; // 실제 그릴 인덱스 목록
-
-            if ((int)myThreadShadedVertex.size() < (int)vertices.size()) {
-                myThreadShadedVertex.resize(vertices.size());
-                myThreadStamp.resize(vertices.size(), -1);
-            }
-
-            int myStamp = cmd_idx;
-			int indices_size = indices.size();
-
-            // 메쉬의 모든 '삼각형'을 순회합니다.
-            for (size_t i = 0; i < indices_size; i += 3)
+            for (int cmd_idx = r.begin(); cmd_idx != r.end(); ++cmd_idx)
             {
-                // 삼각형의 세 정점 인덱스를 가져옵니다.
-                uint32_t i0 = indices[i];
-                uint32_t i1 = indices[i + 1];
-                uint32_t i2 = indices[i + 2];
+                const auto& cmd = queue.GetRenderCommands()[cmd_idx];
+                const Mesh* mesh = cmd.sourceMesh;
+                const SRMath::mat4& worldTransform = cmd.worldTransform;
+                const SRMath::mat4 mvp = vp * worldTransform;
 
-                ShadedVertex sv0, sv1, sv2;
+                if (myThreadNormalMatrixCache.find(&cmd) == myThreadNormalMatrixCache.end())
+                    myThreadNormalMatrixCache.try_emplace(&cmd, SRMath::inverse_transpose(worldTransform).value_or(SRMath::mat4(1.f)));
 
-                // --- 정점 0 셰이딩 및 캐싱 ---
-                if (myThreadStamp[i0] != myStamp) {
-                    // 캐시 미스(Cache Miss): 처음 보는 정점이므로 모든 셰이딩 수행
-                    const Vertex& vIn = vertices[i0];
-                    ShadedVertex temp_sv;
-                    temp_sv.posClip = mvp * SRMath::vec4(vIn.position, 1.0f);
-                    temp_sv.posWorld = SRMath::vec3(worldTransform * SRMath::vec4(vIn.position, 1.0f));
-                    temp_sv.normalWorld = SRMath::normalize(SRMath::vec3(inverseTransposeWorld * SRMath::vec4(vIn.normal, 0.0f)));
-                    temp_sv.texcoord = vIn.texcoord;
+                const SRMath::mat4 inverseTransposeWorld = myThreadNormalMatrixCache.at(&cmd);
 
-                    // 계산이 끝난 ShadedVertex를 캐시에 저장
-                    myThreadShadedVertex[i0] = temp_sv;
-                    myThreadStamp[i0] = myStamp;
+                const auto& vertices = mesh->vertices;
+                const auto& indices = *cmd.indicesToDraw; // 실제 그릴 인덱스 목록
+
+                if (myThreadShadedVertex.size() < (int)vertices.size()) {
+                    size_t newSize = std::max(vertices.size(), myThreadShadedVertex.capacity() * 2);
+                    myThreadShadedVertex.resize(newSize);
+                    myThreadStamp.resize(newSize, -1);
                 }
 
-                sv0 = myThreadShadedVertex[i0];
+                int myStamp = cmd_idx;
+                int indices_size = indices.size();
 
-                // --- 정점 1 셰이딩 및 캐싱 ---
-                if (myThreadStamp[i1] != myStamp) {
-                    // 캐시 미스(Cache Miss): 처음 보는 정점이므로 모든 셰이딩 수행
-                    const Vertex& vIn = vertices[i1];
-                    ShadedVertex temp_sv;
-                    temp_sv.posClip = mvp * SRMath::vec4(vIn.position, 1.0f);
-                    temp_sv.posWorld = SRMath::vec3(worldTransform * SRMath::vec4(vIn.position, 1.0f));
-                    temp_sv.normalWorld = SRMath::normalize(SRMath::vec3(inverseTransposeWorld * SRMath::vec4(vIn.normal, 0.0f)));
-                    temp_sv.texcoord = vIn.texcoord;
-
-                    // 계산이 끝난 ShadedVertex를 캐시에 저장
-                    myThreadShadedVertex[i1] = temp_sv;
-                    myThreadStamp[i1] = myStamp;
-                }
-
-                sv1 = myThreadShadedVertex[i1];
-
-                // --- 정점 2 셰이딩 및 캐싱 ---
-                if (myThreadStamp[i2] != myStamp) {
-                    // 캐시 미스(Cache Miss): 처음 보는 정점이므로 모든 셰이딩 수행
-                    const Vertex& vIn = vertices[i2];
-                    ShadedVertex temp_sv;
-                    temp_sv.posClip = mvp * SRMath::vec4(vIn.position, 1.0f);
-                    temp_sv.posWorld = SRMath::vec3(worldTransform * SRMath::vec4(vIn.position, 1.0f));
-                    temp_sv.normalWorld = SRMath::normalize(SRMath::vec3(inverseTransposeWorld * SRMath::vec4(vIn.normal, 0.0f)));
-                    temp_sv.texcoord = vIn.texcoord;
-
-                    // 계산이 끝난 ShadedVertex를 캐시에 저장
-                    myThreadShadedVertex[i2] = temp_sv;
-                    myThreadStamp[i2] = myStamp;
-                }
-
-                sv2 = myThreadShadedVertex[i2];
-
-
-                const SRMath::vec4& v0Clip = sv0.posClip;
-                const SRMath::vec4& v1Clip = sv1.posClip;
-                const SRMath::vec4& v2Clip = sv2.posClip;
-
-                // 원근 나누기를 통해 NDC(-1~1) 좌표를 구합니다.
-                SRMath::vec3 v0Ndc = SRMath::vec3(v0Clip) / v0Clip.w;
-                SRMath::vec3 v1Ndc = SRMath::vec3(v1Clip) / v1Clip.w;
-                SRMath::vec3 v2Ndc = SRMath::vec3(v2Clip) / v2Clip.w;
-
-                float area = (v1Ndc.x - v0Ndc.x) * (v2Ndc.y - v0Ndc.y) - (v1Ndc.y - v0Ndc.y) * (v2Ndc.x - v0Ndc.x);
-
-                // CCW가 앞면일 때, 오른손->왼손 투영 변환을 거치면 NDC에서는 CW가 되므로 area가 음수가 됩니다.
-                // 따라서 area가 0 이상(CW가 아니거나 퇴화)이면 컬링합니다.
-                if (area >= 0.f) {
-                    continue;
-                }
-
-                // 세 정점의 아웃코드를 각각 계산합니다.
-                int outcode0 = ComputeOutcode(v0Clip);
-                int outcode1 = ComputeOutcode(v1Clip);
-                int outcode2 = ComputeOutcode(v2Clip);
-
-                // Trival Rejection Test(순회 기각 테스트) (Outcode가 모두 INSIDEPLANE이면 클리핑 필요 없음)
-                if ((outcode0 & outcode1 & outcode2) != 0)
+                // 메쉬의 모든 '삼각형'을 순회합니다.
+                for (size_t i = 0; i < indices_size; i += 3)
                 {
-                    // 세 아웃코드의 AND 연산 결과가 0이 아니라는 것은,
-                    // 세 정점 모두에게 켜져 있는 공통 비트가 있다는 의미입니다.
-                    // 즉, 세 정점 모두가 '같은 평면'의 바깥쪽에 있다는 뜻이므로,
-                    // 이 삼각형은 절대로 보일 수 없습니다.
-                    continue; // 즉시 다음 삼각형으로 넘어감
-                }
+                    // 삼각형의 세 정점 인덱스를 가져옵니다.
+                    uint32_t i0 = indices[i];
+                    uint32_t i1 = indices[i + 1];
+                    uint32_t i2 = indices[i + 2];
 
-                myThreadClippedVertices.clear(); // 이전에 저장된 정점들을 비웁니다
+                    ShadedVertex sv0, sv1, sv2;
 
-                if ((outcode0 | outcode1 | outcode2) == 0) {
-                    // Trivial Acceptance: 원본 셰이딩된 정점 3개를 그대로 사용
-                    myThreadClippedVertices.emplace_back(sv0);
-                    myThreadClippedVertices.emplace_back(sv1);
-                    myThreadClippedVertices.emplace_back(sv2);
-                }
-                else {
-                    // Clipping Path: 클리핑 수행. 결과는 verticesToBin에 저장됨
-                    clipTriangle(myThreadClippedVertices, sv0, sv1, sv2, myThreadClipBuffer1, myThreadClipBuffer2);
-                }
+                    // --- 정점 0 셰이딩 및 캐싱 ---
+                    if (myThreadStamp[i0] != myStamp) {
+                        // 캐시 미스(Cache Miss): 처음 보는 정점이므로 모든 셰이딩 수행
+                        const Vertex& vIn = vertices[i0];
+                        ShadedVertex temp_sv;
+                        temp_sv.posClip = mvp * SRMath::vec4(vIn.position, 1.0f);
+                        temp_sv.posWorld = SRMath::vec3(worldTransform * SRMath::vec4(vIn.position, 1.0f));
+                        temp_sv.normalWorld = SRMath::normalize(SRMath::vec3(inverseTransposeWorld * SRMath::vec4(vIn.normal, 0.0f)));
+                        temp_sv.texcoord = vIn.texcoord;
 
-                // 클리핑된 결과(폴리곤)를 삼각형 팬(Fan)으로 분할 후 Binning
-                if (myThreadClippedVertices.size() < 3) continue;
+                        // 계산이 끝난 ShadedVertex를 캐시에 저장
+                        myThreadShadedVertex[i0] = temp_sv;
+                        myThreadStamp[i0] = myStamp;
+                    }
 
-                for (size_t j = 1; j < myThreadClippedVertices.size() - 1; ++j)
-                {
-                    const auto& final_v0 = myThreadClippedVertices[0];
-                    const auto& final_v1 = myThreadClippedVertices[j];
-                    const auto& final_v2 = myThreadClippedVertices[j + 1];
+                    sv0 = myThreadShadedVertex[i0];
 
-                    // --- '클리핑된 최종 삼각형'으로 NDC와 AABB를 계산 ---
-                    // 이제 이 정점들은 w>0 임이 보장되므로, NDC 계산이 안전합니다.
-                    SRMath::vec3 v0_ndc = SRMath::vec3(final_v0.posClip) / final_v0.posClip.w;
-                    SRMath::vec3 v1_ndc = SRMath::vec3(final_v1.posClip) / final_v1.posClip.w;
-                    SRMath::vec3 v2_ndc = SRMath::vec3(final_v2.posClip) / final_v2.posClip.w;
+                    // --- 정점 1 셰이딩 및 캐싱 ---
+                    if (myThreadStamp[i1] != myStamp) {
+                        // 캐시 미스(Cache Miss): 처음 보는 정점이므로 모든 셰이딩 수행
+                        const Vertex& vIn = vertices[i1];
+                        ShadedVertex temp_sv;
+                        temp_sv.posClip = mvp * SRMath::vec4(vIn.position, 1.0f);
+                        temp_sv.posWorld = SRMath::vec3(worldTransform * SRMath::vec4(vIn.position, 1.0f));
+                        temp_sv.normalWorld = SRMath::normalize(SRMath::vec3(inverseTransposeWorld * SRMath::vec4(vIn.normal, 0.0f)));
+                        temp_sv.texcoord = vIn.texcoord;
 
-                    float min_x = std::max(-1.0f, std::min({ v0_ndc.x, v1_ndc.x, v2_ndc.x }));
-                    float max_x = std::min(1.0f, std::max({ v0_ndc.x, v1_ndc.x, v2_ndc.x }));
-                    float min_y = std::max(-1.0f, std::min({ v0_ndc.y, v1_ndc.y, v2_ndc.y }));
-                    float max_y = std::min(1.0f, std::max({ v0_ndc.y, v1_ndc.y, v2_ndc.y }));
+                        // 계산이 끝난 ShadedVertex를 캐시에 저장
+                        myThreadShadedVertex[i1] = temp_sv;
+                        myThreadStamp[i1] = myStamp;
+                    }
 
-                    if (max_x < min_x || max_y < min_y) continue;
+                    sv1 = myThreadShadedVertex[i1];
 
-                    // X축 뒤집기 적용
-                    auto ndcToTileX = [&](float ndc_x) {
-                        return ((ndc_x * 0.5f + 0.5f) * numTilesX);
-                        };
+                    // --- 정점 2 셰이딩 및 캐싱 ---
+                    if (myThreadStamp[i2] != myStamp) {
+                        // 캐시 미스(Cache Miss): 처음 보는 정점이므로 모든 셰이딩 수행
+                        const Vertex& vIn = vertices[i2];
+                        ShadedVertex temp_sv;
+                        temp_sv.posClip = mvp * SRMath::vec4(vIn.position, 1.0f);
+                        temp_sv.posWorld = SRMath::vec3(worldTransform * SRMath::vec4(vIn.position, 1.0f));
+                        temp_sv.normalWorld = SRMath::normalize(SRMath::vec3(inverseTransposeWorld * SRMath::vec4(vIn.normal, 0.0f)));
+                        temp_sv.texcoord = vIn.texcoord;
 
-                    auto ndcToTileY = [&](float ndc_y) {
-                        // 화면 좌표계(Y=0 위쪽)로 변환하려면 NDC의 Y를 뒤집어야 함
-                        return (((1.0f - ndc_y) * 0.5f) * numTilesY);
-                        };
+                        // 계산이 끝난 ShadedVertex를 캐시에 저장
+                        myThreadShadedVertex[i2] = temp_sv;
+                        myThreadStamp[i2] = myStamp;
+                    }
 
-                    // AABB를 이용해 영향을 받는 타일 범위를 계산합니다.
-                    int minTileX = static_cast<int>(std::floor(ndcToTileX(min_x))) - 1;
-                    int maxTileX = static_cast<int>(std::floor(ndcToTileX(max_x)));
-                    int minTileY = static_cast<int>(std::floor(ndcToTileY(max_y))) - 1;
-                    int maxTileY = static_cast<int>(std::floor(ndcToTileY(min_y)));
+                    sv2 = myThreadShadedVertex[i2];
 
-                    minTileX = std::clamp(minTileX, 0, numTilesX - 1);
-                    minTileY = std::clamp(minTileY, 0, numTilesY - 1);
-                    maxTileX = std::clamp(maxTileX, 0, numTilesX - 1);
-					maxTileY = std::clamp(maxTileY, 0, numTilesY - 1);
+                    const SRMath::vec4& v0Clip = sv0.posClip;
+                    const SRMath::vec4& v1Clip = sv1.posClip;
+                    const SRMath::vec4& v2Clip = sv2.posClip;
 
-                    // TriangleRef 구조체도 최종 정점 데이터를 담도록 수정해야 합니다.
-                    TriangleRef finalTri = { &cmd, final_v0, final_v1, final_v2 };
+                    // 원근 나누기를 통해 NDC(-1~1) 좌표를 구합니다.
+                    SRMath::vec3 v0Ndc = SRMath::vec3(v0Clip) / v0Clip.w;
+                    SRMath::vec3 v1Ndc = SRMath::vec3(v1Clip) / v1Clip.w;
+                    SRMath::vec3 v2Ndc = SRMath::vec3(v2Clip) / v2Clip.w;
 
-                    // 풀에서 다음 객체의 인덱스를 가져옵니다. (Thread-safe)
-                    int poolIndex = myPoolCounter.value.fetch_add(1);
+                    float area = (v1Ndc.x - v0Ndc.x) * (v2Ndc.y - v0Ndc.y) - (v1Ndc.y - v0Ndc.y) * (v2Ndc.x - v0Ndc.x);
 
-                    // (선택사항) 풀이 가득 찼는지 확인하는 방어 코드
-                    if (poolIndex >= myTrianglePool.size()) {
-                        // 풀이 넘쳤음! 에러 처리 또는 풀 크기 늘리기
+                    // CCW가 앞면일 때, 오른손->왼손 투영 변환을 거치면 NDC에서는 CW가 되므로 area가 음수가 됩니다.
+                    // 따라서 area가 0 이상(CW가 아니거나 퇴화)이면 컬링합니다.
+                    if (area >= 0.f) {
                         continue;
                     }
 
-                    // 풀에서 해당 인덱스의 객체에 대한 포인터를 가져옵니다.
-                    TriangleRef* triPtr = &myTrianglePool[poolIndex];
+                    // 세 정점의 아웃코드를 각각 계산합니다.
+                    int outcode0 = ComputeOutcode(v0Clip);
+                    int outcode1 = ComputeOutcode(v1Clip);
+                    int outcode2 = ComputeOutcode(v2Clip);
 
-                    // 가져온 객체에 최종 삼각형 데이터를 복사합니다.
-                    *triPtr = finalTri; // finalTri는 이전에 계산된 최종 삼각형 데이터
+                    // Trival Rejection Test(순회 기각 테스트) (Outcode가 모두 INSIDEPLANE이면 클리핑 필요 없음)
+                    if ((outcode0 & outcode1 & outcode2) != 0)
+                    {
+                        // 세 아웃코드의 AND 연산 결과가 0이 아니라는 것은,
+                        // 세 정점 모두에게 켜져 있는 공통 비트가 있다는 의미입니다.
+                        // 즉, 세 정점 모두가 '같은 평면'의 바깥쪽에 있다는 뜻이므로,
+                        // 이 삼각형은 절대로 보일 수 없습니다.
+                        continue; // 즉시 다음 삼각형으로 넘어감
+                    }
 
-                    for (int ty = minTileY; ty <= maxTileY; ++ty) {
-                        for (int tx = minTileX; tx <= maxTileX; ++tx) {
-                            myLocalTiles[ty * numTilesX + tx].emplace_back(triPtr);
+                    myThreadClippedVertices.clear(); // 이전에 저장된 정점들을 비웁니다
+
+                    if ((outcode0 | outcode1 | outcode2) == 0) {
+                        // Trivial Acceptance: 원본 셰이딩된 정점 3개를 그대로 사용
+                        myThreadClippedVertices.emplace_back(sv0);
+                        myThreadClippedVertices.emplace_back(sv1);
+                        myThreadClippedVertices.emplace_back(sv2);
+                    }
+                    else {
+                        // Clipping Path: 클리핑 수행. 결과는 verticesToBin에 저장됨
+                        clipTriangle(myThreadClippedVertices, sv0, sv1, sv2, myThreadClipBuffer1, myThreadClipBuffer2);
+                    }
+
+                    // 클리핑된 결과(폴리곤)를 삼각형 팬(Fan)으로 분할 후 Binning
+                    if (myThreadClippedVertices.size() < 3) continue;
+
+                    for (size_t j = 1; j < myThreadClippedVertices.size() - 1; ++j)
+                    {
+                        const auto& final_v0 = myThreadClippedVertices[0];
+                        const auto& final_v1 = myThreadClippedVertices[j];
+                        const auto& final_v2 = myThreadClippedVertices[j + 1];
+
+                        // --- '클리핑된 최종 삼각형'으로 NDC와 AABB를 계산 ---
+                        // 이제 이 정점들은 w>0 임이 보장되므로, NDC 계산이 안전합니다.
+                        SRMath::vec3 v0_ndc = SRMath::vec3(final_v0.posClip) / final_v0.posClip.w;
+                        SRMath::vec3 v1_ndc = SRMath::vec3(final_v1.posClip) / final_v1.posClip.w;
+                        SRMath::vec3 v2_ndc = SRMath::vec3(final_v2.posClip) / final_v2.posClip.w;
+
+                        float min_x = std::max(-1.0f, std::min({ v0_ndc.x, v1_ndc.x, v2_ndc.x }));
+                        float max_x = std::min(1.0f, std::max({ v0_ndc.x, v1_ndc.x, v2_ndc.x }));
+                        float min_y = std::max(-1.0f, std::min({ v0_ndc.y, v1_ndc.y, v2_ndc.y }));
+                        float max_y = std::min(1.0f, std::max({ v0_ndc.y, v1_ndc.y, v2_ndc.y }));
+
+                        if (max_x < min_x || max_y < min_y) continue;
+
+                        // X축 뒤집기 적용
+                        auto ndcToTileX = [&](float ndc_x) {
+                            return ((ndc_x * 0.5f + 0.5f) * numTilesX);
+                            };
+
+                        auto ndcToTileY = [&](float ndc_y) {
+                            // 화면 좌표계(Y=0 위쪽)로 변환하려면 NDC의 Y를 뒤집어야 함
+                            return (((1.0f - ndc_y) * 0.5f) * numTilesY);
+                            };
+
+                        // AABB를 이용해 영향을 받는 타일 범위를 계산합니다.
+                        int minTileX = static_cast<int>(std::floor(ndcToTileX(min_x))) - 1;
+                        int maxTileX = static_cast<int>(std::floor(ndcToTileX(max_x)));
+                        int minTileY = static_cast<int>(std::floor(ndcToTileY(max_y))) - 1;
+                        int maxTileY = static_cast<int>(std::floor(ndcToTileY(min_y)));
+
+                        minTileX = std::clamp(minTileX, 0, numTilesX - 1);
+                        minTileY = std::clamp(minTileY, 0, numTilesY - 1);
+                        maxTileX = std::clamp(maxTileX, 0, numTilesX - 1);
+                        maxTileY = std::clamp(maxTileY, 0, numTilesY - 1);
+
+                        // 풀에서 TriangleRef 객체의 포인터를 가져옵니다.
+                        auto it = myPool.emplace_back(TriangleRef{});
+                        TriangleRef* finalTri = &(*it);
+
+                        // 포인터를 통해 멤버에 접근하여 데이터를 채웁니다.
+                        finalTri->sourceCommand = &cmd;
+                        finalTri->sv0 = myThreadClippedVertices[0];
+                        finalTri->sv1 = myThreadClippedVertices[j];
+                        finalTri->sv2 = myThreadClippedVertices[j + 1];
+
+                        for (int ty = minTileY; ty <= maxTileY; ++ty) {
+                            int baseIdx = ty * numTilesX + minTileX;
+                            auto* binStart = &m_finalTriangleBins[baseIdx];
+                            for (int tx = minTileX; tx <= maxTileX; ++tx) {
+                                binStart[tx - minTileX].emplace_back(finalTri);
+                            }
                         }
                     }
                 }
+			}
+            }, tbb::simple_partitioner()
+        );
+
+
+    // --- 병렬 렌더링 단계 ---
+    tbb::parallel_for(tbb::blocked_range<int>(0, totalTiles),
+        [&](const tbb::blocked_range<int>& r) {
+            for (int tileIdx = r.begin(); tileIdx != r.end(); ++tileIdx)
+            {
+                int tx = tileIdx % numTilesX;
+                int ty = tileIdx / numTilesX;
+				const auto& triangleBin = m_finalTriangleBins[tileIdx];
+
+                renderTile(tx, ty, numTilesX, triangleBin, camera.GetCameraPos(), lights);
             }
-        }
-
-        // --- 병렬 렌더링 단계 ---
-        int totalTiles = numTilesX * numTilesY;
-#pragma omp for schedule(dynamic)
-        for (int tileIdx = 0; tileIdx < totalTiles; ++tileIdx)
-        {
-            int tx = tileIdx % numTilesX;
-            int ty = tileIdx / numTilesX;
-
-            #pragma omp task
-            renderTile(tx, ty, numTilesX, m_threadLocalStorages, camera.GetCameraPos(), lights);
-        }
-
+        }, tbb::auto_partitioner()
+    );
     
-		int queueSize = queue.GetDebugCommands().size();
-#pragma omp for schedule(dynamic)
-        for(int i = 0; i < queueSize; ++i)
-        {
-            const auto& cmd = queue.GetDebugCommands()[i];
-            // 디버그 프리미티브를 렌더링합니다.
-            drawDebugPrimitive(cmd, vp, camera);
-		}
-    }
+	int queueSize = queue.GetDebugCommands().size();
+    tbb::parallel_for(tbb::blocked_range<int>(0, queueSize),
+        [&](const tbb::blocked_range<int>& r) {
+            for (int i = r.begin(); i != r.end(); ++i)
+            {
+                const auto& cmd = queue.GetDebugCommands()[i];
+                drawDebugPrimitive(cmd, vp, camera);
+            }
+        }, tbb::auto_partitioner()
+	);
 
     switch (m_currentAAAlgorithm)
     {
@@ -783,7 +783,7 @@ void Renderer::RenderScene(const RenderQueue& queue, const Camera& camera, const
         break;
     case EAAAlgorithm::FXAA:
         {
-		    // MSAA를 적용합니다.
+		    // FXAA를 적용합니다.
             std::vector<unsigned int> copyPixelData(m_width * m_height);
             std::copy(m_pPixelData, m_pPixelData + m_width * m_height, copyPixelData.data());        
 		    ApplyFXAA(copyPixelData.data(), m_pPixelData, m_width, m_height);
@@ -794,7 +794,7 @@ void Renderer::RenderScene(const RenderQueue& queue, const Camera& camera, const
     }
 }
 
-void Renderer::renderTile(int tx, int ty, int numTilesX, const std::vector<std::vector<std::vector<TriangleRef*>>>& threadLocalStorages,
+void Renderer::renderTile(int tx, int ty, int numTilesX, const tbb::concurrent_vector<TriangleRef*>& triangleBin,
     const SRMath::vec3& camPos, const std::vector<DirectionalLight>& lights)
 {
     // 타일의 화면 경계 계산
@@ -802,25 +802,15 @@ void Renderer::renderTile(int tx, int ty, int numTilesX, const std::vector<std::
     int tileMinY = ty * TILE_SIZE;
     int tileMaxX = std::min(tileMinX + TILE_SIZE, m_width);
     int tileMaxY = std::min(tileMinY + TILE_SIZE, m_height);
-
-    int tileIdx = ty * numTilesX + tx;
-
-    for (size_t t = 0; t < threadLocalStorages.size(); ++t)
+    
+    for (const auto& triRef : triangleBin)
     {
-        // t번 스레드가 이 타일(tileIdx)을 위해 분류해 둔 삼각형 목록(bin)을 가져옵니다.
-        const auto& triangleBin = threadLocalStorages[t][tileIdx];
+        const MeshRenderCommand* cmd = triRef->sourceCommand;
 
-        for (const auto& triRef : triangleBin)
-        {
-            const MeshRenderCommand* cmd = triRef->sourceCommand;
-            const Mesh* mesh = cmd->sourceMesh;
-
-            // 래스터라이제이션
-            resterizationForTile(triRef->sv0, triRef->sv1, triRef->sv2, cmd->material, lights, camPos,
-                *cmd, tileMinX, tileMinY, tileMaxX, tileMaxY);
-        }
+        // 래스터라이제이션
+        resterizationForTile(triRef->sv0, triRef->sv1, triRef->sv2, cmd->material, lights, camPos,
+            *cmd, tileMinX, tileMinY, tileMaxX, tileMaxY);
     }
-
 }
 
 void Renderer::resterizationForTile(const ShadedVertex& sv0, const ShadedVertex& sv1, const ShadedVertex& sv2, const Material* material,
@@ -1000,7 +990,6 @@ void Renderer::drawFilledTriangleForTile(const RasterizerVertex& v0, const Raste
                                  interpolatedWorldPos += v1.worldPosOverW * uBary;
                                  interpolatedWorldPos += v2.worldPosOverW * vBary;
                                  interpolatedWorldPos *= oneOverInterpolatedOneOverW;
-                                 interpolatedWorldPos = SRMath::normalize(interpolatedWorldPos);
 
                     SRMath::vec3 viewDir = SRMath::normalize(camPos - interpolatedWorldPos);
 
@@ -1050,9 +1039,9 @@ void Renderer::drawFilledTriangleForTile(const RasterizerVertex& v0, const Raste
             }
 
             // x가 1 증가했으므로, y의 변화량만큼 더해줍니다. (점진적 계산)
-            w0_fixed += dy12;
-            w1_fixed += dy20;
-            w2_fixed += dy01;
+            w0_fixed += dy12_fixed;
+            w1_fixed += dy20_fixed;
+            w2_fixed += dy01_fixed;
         }
 
         // y가 1 증가했으므로, 다음 행의 시작 값을 x의 변화량만큼 더해서 갱신합니다.
@@ -1062,9 +1051,124 @@ void Renderer::drawFilledTriangleForTile(const RasterizerVertex& v0, const Raste
     }
 }
 
+// 렌더러 재초기화 (윈도우 크기, 백버퍼/DIB 섹션 생성 등)
+bool Renderer::reInit(HWND hWnd)
+{
+    // 윈도우의 클라이언트 영역 크기를 얻어옵니다.
+    RECT clientRect;
+    GetClientRect(hWnd, &clientRect);
+    m_width = clientRect.right - clientRect.left;
+    m_height = clientRect.bottom - clientRect.top;
+
+    // 윈도우의 DC(Screen DC)를 얻어옵니다.
+    HDC hScreenDC = GetDC(hWnd);
+
+    // 백버퍼 역할을 할 메모리 DC와 비트맵을 생성합니다.
+    // Screen DC와 호환되는 메모리 DC를 만듭니다.
+    m_hMemDC = CreateCompatibleDC(hScreenDC);
+    if (!m_hMemDC)
+    {
+        // 실패 시 Screen DC를 해제하고 종료
+        ReleaseDC(hWnd, hScreenDC);
+        return false;
+    }
+
+    // DIB 정보를 담을 BITMAPINFO 구조체를 설정합니다.
+    BITMAPINFO bmi;
+    ZeroMemory(&bmi, sizeof(BITMAPINFO));
+    bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bmi.bmiHeader.biWidth = m_width;
+    bmi.bmiHeader.biHeight = -m_height; //  중요: 높이를 음수로 설정! [y * width + x]
+    bmi.bmiHeader.biPlanes = 1;
+    bmi.bmiHeader.biBitCount = 32;      // 32비트 컬러
+    bmi.bmiHeader.biCompression = BI_RGB; // 압축 안 함
+
+    // 메모리 DC에 그려질 비트맵(백버퍼)을 생성합니다.
+    m_hBitmap = CreateCompatibleBitmap(hScreenDC, m_width, m_height);
+
+    // DIB 섹션 생성: CPU에서 직접 픽셀 접근 가능
+    m_hBitmap = CreateDIBSection(m_hMemDC, &bmi, DIB_RGB_COLORS,
+        (void**)&m_pPixelData, NULL, 0);
+
+    if (!m_hBitmap)
+    {
+        // 실패 시 메모리 DC와 Screen DC를 해제하고 종료
+        DeleteDC(m_hMemDC);
+        ReleaseDC(hWnd, hScreenDC);
+        return false;
+    }
+
+    // 깊이 버퍼 크기 재할당 (width * height)
+    m_depthBuffer.resize(m_height * m_width);
+
+    // 생성한 비트맵을 메모리 DC에 선택시킵니다.
+    // 이 시점부터 m_hMemDC에 그리는 모든 것은 m_hBitmap에 그려집니다.
+    // 원래 있던 기본 비트맵 핸들은 나중에 복구시키기 위해 보관합니다.
+    m_hOldBitmap = (HBITMAP)SelectObject(m_hMemDC, m_hBitmap);
+
+    // 이제 Screen DC는 필요 없으므로 바로 해제합니다.
+    ReleaseDC(hWnd, hScreenDC);
+
+    // 이 예제에서는 백버퍼를 흰색으로 초기화합니다.
+    PatBlt(m_hMemDC, 0, 0, m_width, m_height, WHITENESS);
+
+    // 타일 데이터 버퍼 초기화
+    const int numTilesX = (m_width + TILE_SIZE - 1) / TILE_SIZE;
+    const int numTilesY = (m_height + TILE_SIZE - 1) / TILE_SIZE;
+    const int totalTiles = numTilesX * numTilesY;
+
+    m_finalTriangleBins.resize(totalTiles);
+    for (auto& bin : m_finalTriangleBins)
+    {
+        bin.reserve(256);
+    }
+
+    int maxThreads = tbb::this_task_arena::max_concurrency();
+    tbb::task_arena arena(maxThreads);
+    arena.execute([&] {
+        // 강제로 TLS 인스턴스들을 만들고 reserve 해준다
+        tbb::parallel_for(0, maxThreads, [&](int) {
+            auto& myPool = m_threadTrianglePools.local(); // 각 스레드의 삼각형 풀
+            auto& myThreadShadedVertex = m_threadShadedVertexBuffers.local();     // 각 스레드마다 타일에 클리프 공간 좌표를 저장
+            auto& myThreadStamp = m_threadStamps.local();                         // 각 스레드마다 타일에 스탬프를 저장
+            auto& myThreadClipBuffer1 = m_threadClipBuffer1.local();              // 클리핑 스왑 버퍼 1
+            auto& myThreadClipBuffer2 = m_threadClipBuffer2.local();              // 클리핑 스왑 버퍼 2
+            auto& myThreadClippedVertices = m_threadClippedVertices.local();      // 클리핑된 정점 저장
+            auto& myThreadNormalMatrixCache = m_threadNormalMatrixCache.local();  // 역행렬 캐시
+
+            myPool.reserve(MAX_TRIANGLES_PER_THREAD_POOL);
+            myThreadShadedVertex.resize(65535); // 충분히 큰 초기 크기 (튜닝 필요)
+            myThreadStamp.resize(65535, -1); // 초기 스탬프 값은 -1로 설정
+            myThreadClipBuffer1.reserve(6); // 6개의 평면 클리핑을 위한 충분한 공간
+            myThreadClipBuffer2.reserve(6); // 6개의 평면 클리핑을 위한 충분한 공간
+            myThreadClippedVertices.reserve(6); // 6개의 평면 클리핑을 위한 충분한 공간
+            myThreadNormalMatrixCache.rehash(65536); // 충분히 큰 초기 크기 (튜닝 필요)
+            });
+        });
+
+    return true;
+}
+
+// 생성의 역순으로 GDI 리소스 해제
+void Renderer::shutdownForResize() const
+{
+    // 생성의 역순으로 GDI 객체들을 해제합니다.
+    if (m_hMemDC)
+    {
+        // 1. 보관해둔 원래 비트맵으로 되돌립니다.
+        SelectObject(m_hMemDC, m_hOldBitmap);
+
+        // 2. 우리가 만든 비트맵을 삭제합니다.
+        DeleteObject(m_hBitmap);
+
+        // 3. 우리가 만든 메모리 DC를 삭제합니다.
+        DeleteDC(m_hMemDC);
+    }
+}
+
 // 윈도우 리사이즈 대응 (리소스 재할당)
 void Renderer::OnResize(HWND hWnd)
 {
-    Shutdown();
-    Initialize(hWnd);
+    shutdownForResize();
+    reInit(hWnd);
 }

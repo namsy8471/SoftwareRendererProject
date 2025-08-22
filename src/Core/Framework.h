@@ -40,7 +40,6 @@ private:
 	POINT m_lastMousePos;
 
 	// Model Variables
-	std::shared_ptr<GameObject> m_gameobject;				// 현재 게임오브젝트
 	std::vector<std::shared_ptr<GameObject>> m_gameobjects; // 게임오브젝트 리스트
 
 	// Camera Variables
@@ -51,14 +50,12 @@ private:
 		const SRMath::vec3& scale, const std::string modelName);
 
 public:
-	Framework();
+	Framework(HINSTANCE hInstance, int nCmdShow);
 	~Framework();
 
-	bool Initialize(HINSTANCE, int);
 	void Run();
 	void Update(float deltaTime);
 	void Render();
-	void Shutdown();
 
 	LRESULT HandleMessage(HWND, UINT, WPARAM, LPARAM);
 
