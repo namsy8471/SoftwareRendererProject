@@ -58,11 +58,13 @@ private:
 	// Renderer Optimization		
 	std::vector<tbb::concurrent_vector<TriangleRef*>> m_finalTriangleBins;
 	tbb::enumerable_thread_specific<tbb::concurrent_vector<TriangleRef>> m_threadTrianglePools; // 실제 TriangleRef 객체들이 저장될 스레드별 메모리 풀
-	tbb::enumerable_thread_specific<std::vector<ShadedVertex>> m_threadShadedVertexBuffers; // 클립 공간 좌표를 저장할 버퍼
-	tbb::enumerable_thread_specific<std::vector<int>> m_threadStamps;         // 정점별 스탬프 (변환 캐싱 용도)
 	tbb::enumerable_thread_specific<std::vector<ShadedVertex>> m_threadClipBuffer1, m_threadClipBuffer2, m_threadClippedVertices;
 	tbb::enumerable_thread_specific<std::unordered_map<const MeshRenderCommand*, SRMath::mat4>>m_threadNormalMatrixCache;
 
+	tbb::enumerable_thread_specific<std::vector<ShadedVertex>> m_threadShadedVertexBuffers; // 클립 공간 좌표를 저장할 버퍼
+	tbb::enumerable_thread_specific<std::vector<uint64_t>> m_threadStamps;         // 정점별 스탬프 (변환 캐싱 용도)
+	// 프레임 카운터 추가 (스레드 셰이더버퍼와 스탬프 데이터 오염 방지)
+	uint64_t m_frameCounter = 0;
 
 	// Resize용 재초기화 함수
 	bool reInit(HWND hWnd);

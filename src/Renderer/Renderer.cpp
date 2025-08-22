@@ -30,97 +30,7 @@ constexpr int MAX_TRIANGLES_PER_THREAD_POOL = 10000; // 각 스레드별 최대 
 Renderer::Renderer(HWND hWnd) : m_hBitmap(nullptr), m_hMemDC(nullptr),
 m_hOldBitmap(nullptr), m_height(), m_width(), m_pPixelData(nullptr)
 {
-    // 윈도우의 클라이언트 영역 크기를 얻어옵니다.
-    RECT clientRect;
-    GetClientRect(hWnd, &clientRect);
-    m_width = clientRect.right - clientRect.left;
-    m_height = clientRect.bottom - clientRect.top;
-
-    // 윈도우의 DC(Screen DC)를 얻어옵니다.
-    HDC hScreenDC = GetDC(hWnd);
-
-    // 백버퍼 역할을 할 메모리 DC와 비트맵을 생성합니다.
-    // Screen DC와 호환되는 메모리 DC를 만듭니다.
-    m_hMemDC = CreateCompatibleDC(hScreenDC);
-    if (!m_hMemDC)
-    {
-        // 실패 시 Screen DC를 해제하고 종료
-        ReleaseDC(hWnd, hScreenDC);
-		throw std::runtime_error("Failed to create memory DC");
-    }
-
-    // DIB 정보를 담을 BITMAPINFO 구조체를 설정합니다.
-    BITMAPINFO bmi;
-    ZeroMemory(&bmi, sizeof(BITMAPINFO));
-    bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    bmi.bmiHeader.biWidth = m_width;
-    bmi.bmiHeader.biHeight = -m_height; //  중요: 높이를 음수로 설정! [y * width + x]
-    bmi.bmiHeader.biPlanes = 1;
-    bmi.bmiHeader.biBitCount = 32;      // 32비트 컬러
-    bmi.bmiHeader.biCompression = BI_RGB; // 압축 안 함
-
-    // 메모리 DC에 그려질 비트맵(백버퍼)을 생성합니다.
-    m_hBitmap = CreateCompatibleBitmap(hScreenDC, m_width, m_height);
-
-    // DIB 섹션 생성: CPU에서 직접 픽셀 접근 가능
-    m_hBitmap = CreateDIBSection(m_hMemDC, &bmi, DIB_RGB_COLORS,
-        (void**)&m_pPixelData, NULL, 0);
-
-    if (!m_hBitmap)
-    {
-        // 실패 시 메모리 DC와 Screen DC를 해제하고 종료
-        DeleteDC(m_hMemDC);
-        ReleaseDC(hWnd, hScreenDC);
-		throw std::runtime_error("Failed to create DIB section");
-    }
-
-    // 깊이 버퍼 크기 재할당 (width * height)
-    m_depthBuffer.resize(m_height * m_width);
-
-    // 생성한 비트맵을 메모리 DC에 선택시킵니다.
-    // 이 시점부터 m_hMemDC에 그리는 모든 것은 m_hBitmap에 그려집니다.
-    // 원래 있던 기본 비트맵 핸들은 나중에 복구시키기 위해 보관합니다.
-    m_hOldBitmap = (HBITMAP)SelectObject(m_hMemDC, m_hBitmap);
-
-    // 이제 Screen DC는 필요 없으므로 바로 해제합니다.
-    ReleaseDC(hWnd, hScreenDC);
-
-    // 이 예제에서는 백버퍼를 흰색으로 초기화합니다.
-    PatBlt(m_hMemDC, 0, 0, m_width, m_height, WHITENESS);
-
-    // 타일 데이터 버퍼 초기화
-    const int numTilesX = (m_width + TILE_SIZE - 1) / TILE_SIZE;
-    const int numTilesY = (m_height + TILE_SIZE - 1) / TILE_SIZE;
-    const int totalTiles = numTilesX * numTilesY;
-
-	m_finalTriangleBins.resize(totalTiles);
-    for(auto& bin : m_finalTriangleBins) 
-    {
-		bin.reserve(256);
-	}
-
-    int maxThreads = tbb::this_task_arena::max_concurrency();
-    tbb::task_arena arena(maxThreads);
-    arena.execute([&] {
-        // 강제로 TLS 인스턴스들을 만들고 reserve 해준다
-        tbb::parallel_for(0, maxThreads, [&](int) {
-            auto& myPool = m_threadTrianglePools.local(); // 각 스레드의 삼각형 풀
-            auto& myThreadShadedVertex = m_threadShadedVertexBuffers.local();     // 각 스레드마다 타일에 클리프 공간 좌표를 저장
-            auto& myThreadStamp = m_threadStamps.local();                         // 각 스레드마다 타일에 스탬프를 저장
-            auto& myThreadClipBuffer1 = m_threadClipBuffer1.local();              // 클리핑 스왑 버퍼 1
-            auto& myThreadClipBuffer2 = m_threadClipBuffer2.local();              // 클리핑 스왑 버퍼 2
-            auto& myThreadClippedVertices = m_threadClippedVertices.local();      // 클리핑된 정점 저장
-            auto& myThreadNormalMatrixCache = m_threadNormalMatrixCache.local();  // 역행렬 캐시
-
-            myPool.reserve(MAX_TRIANGLES_PER_THREAD_POOL);
-            myThreadShadedVertex.resize(65535); // 충분히 큰 초기 크기 (튜닝 필요)
-            myThreadStamp.resize(65535, -1); // 초기 스탬프 값은 -1로 설정
-            myThreadClipBuffer1.reserve(6); // 6개의 평면 클리핑을 위한 충분한 공간
-            myThreadClipBuffer2.reserve(6); // 6개의 평면 클리핑을 위한 충분한 공간
-            myThreadClippedVertices.reserve(6); // 6개의 평면 클리핑을 위한 충분한 공간
-            myThreadNormalMatrixCache.rehash(65536); // 충분히 큰 초기 크기 (튜닝 필요)
-            });
-        });
+	if(!reInit(hWnd)) throw std::runtime_error("Failed to initialize Renderer");
 }
 
 // 설명: 리소스 해제는 Shutdown()에서 수행
@@ -270,18 +180,8 @@ void Renderer::Clear()
     // 깊이 버퍼는 가장 낮은 값으로 초기화 (더 큰 z^-1만 패스)
 	std::fill(m_depthBuffer.begin(), m_depthBuffer.end(), std::numeric_limits<float>::lowest());
 
-    for(auto& storage : m_finalTriangleBins)
-    {
-		storage.clear();
-	}
-
-	for (auto& bin : m_finalTriangleBins) bin.clear();
-    m_threadShadedVertexBuffers.clear();
-	m_threadStamps.clear();
-	m_threadClipBuffer1.clear();
-	m_threadClipBuffer2.clear();
-	m_threadClippedVertices.clear();
-	m_threadNormalMatrixCache.clear();
+    for(auto& storage : m_finalTriangleBins) storage.clear();
+	
 }
 
 // 설명: 백버퍼(m_hMemDC)의 내용을 화면 DC로 복사 (Present)
@@ -372,7 +272,6 @@ ShadedVertex Renderer::interpolate(const ShadedVertex& v0, const ShadedVertex& v
     result.posWorld = (v0.posWorld * inv_w0 * (1.0f - t) + v1.posWorld * inv_w1 * t) * interp_w;
     result.normalWorld = (v0.normalWorld * inv_w0 * (1.0f - t) + v1.normalWorld * inv_w1 * t) * interp_w;
     result.texcoord = (v0.texcoord * inv_w0 * (1.0f - t) + v1.texcoord * inv_w1 * t) * interp_w;
-	// --- 원근 보정 끝 ---
 
     return result;
 }
@@ -518,10 +417,11 @@ void Renderer::RenderScene(const RenderQueue& queue, const Camera& camera, const
     int numTilesY = (m_height + TILE_SIZE - 1) / TILE_SIZE;
 	int totalTiles = numTilesX * numTilesY;
 
+    m_frameCounter++;
+
     int maxThreads = tbb::this_task_arena::max_concurrency();
     tbb::task_arena arena(maxThreads);
     arena.execute([&] {
-        // 강제로 TLS 인스턴스들을 만들고 reserve 해준다
         tbb::parallel_for(0, maxThreads, [&](int) {
             auto& myPool = m_threadTrianglePools.local(); // 각 스레드의 삼각형 풀
             auto& myThreadShadedVertex = m_threadShadedVertexBuffers.local();     // 각 스레드마다 타일에 클리프 공간 좌표를 저장
@@ -532,15 +432,14 @@ void Renderer::RenderScene(const RenderQueue& queue, const Camera& camera, const
             auto& myThreadNormalMatrixCache = m_threadNormalMatrixCache.local();  // 역행렬 캐시
 
             myPool.clear();
-            myThreadShadedVertex.clear();
-            myThreadStamp.clear();
+            /*myThreadShadedVertex.resize(65536);
+            myThreadStamp.resize(65536, -1);*/
             myThreadClipBuffer1.clear();
             myThreadClipBuffer2.clear();
             myThreadClippedVertices.clear();
             myThreadNormalMatrixCache.clear();
             });
         });
-
 
     int cmd_count = queue.GetRenderCommands().size();
     // 병렬 Binning: 각 스레드는 자기 ID에 맞는 개인 사물함에만 접근
@@ -570,17 +469,20 @@ void Renderer::RenderScene(const RenderQueue& queue, const Camera& camera, const
                 const auto& vertices = mesh->vertices;
                 const auto& indices = *cmd.indicesToDraw; // 실제 그릴 인덱스 목록
 
-                if (myThreadShadedVertex.size() < (int)vertices.size()) {
-                    size_t newSize = std::max(vertices.size(), myThreadShadedVertex.capacity() * 2);
-                    myThreadShadedVertex.resize(newSize);
-                    myThreadStamp.resize(newSize, -1);
+                const uint64_t myStamp = (m_frameCounter << 32) | cmd_idx;
+
+                // --- High-Watermark 로직으로 캐시 크기 관리 ---
+                if (myThreadShadedVertex.size() < vertices.size())
+                {
+                    //size_t oldSize = myThreadStamp.size();
+                    myThreadShadedVertex.resize(vertices.size());
+                    myThreadStamp.resize(vertices.size(), -1);
+                    // 새로 생긴 공간만 -1로 초기화하여 이전 스탬프 값과 겹치지 않게 합니다.
+                    //std::fill(myThreadStamp.begin() + oldSize, myThreadStamp.end(), -1);
                 }
 
-                int myStamp = cmd_idx;
-                int indices_size = indices.size();
-
                 // 메쉬의 모든 '삼각형'을 순회합니다.
-                for (size_t i = 0; i < indices_size; i += 3)
+                for (size_t i = 0; i < indices.size(); i += 3)
                 {
                     // 삼각형의 세 정점 인덱스를 가져옵니다.
                     uint32_t i0 = indices[i];
@@ -1120,7 +1022,7 @@ bool Renderer::reInit(HWND hWnd)
     m_finalTriangleBins.resize(totalTiles);
     for (auto& bin : m_finalTriangleBins)
     {
-        bin.reserve(256);
+        bin.reserve(3000);
     }
 
     int maxThreads = tbb::this_task_arena::max_concurrency();
@@ -1139,10 +1041,11 @@ bool Renderer::reInit(HWND hWnd)
             myPool.reserve(MAX_TRIANGLES_PER_THREAD_POOL);
             myThreadShadedVertex.resize(65535); // 충분히 큰 초기 크기 (튜닝 필요)
             myThreadStamp.resize(65535, -1); // 초기 스탬프 값은 -1로 설정
+
             myThreadClipBuffer1.reserve(6); // 6개의 평면 클리핑을 위한 충분한 공간
             myThreadClipBuffer2.reserve(6); // 6개의 평면 클리핑을 위한 충분한 공간
             myThreadClippedVertices.reserve(6); // 6개의 평면 클리핑을 위한 충분한 공간
-            myThreadNormalMatrixCache.rehash(65536); // 충분히 큰 초기 크기 (튜닝 필요)
+            myThreadNormalMatrixCache.rehash(2000); // 충분히 큰 초기 크기 (튜닝 필요)
             });
         });
 
