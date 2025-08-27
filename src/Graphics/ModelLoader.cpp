@@ -223,7 +223,18 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
                 }
                 catch (const std::exception& e) {
                     // stoi 변환 중 오류가 발생하면 (예: 파일 손상), 해당 면은 건너뜁니다.
-                    // std::cerr << "Face parse error: " << e.what() << " on data: " << face_vertex_str << std::endl;
+                    std::wstringstream wss;
+                    wss << L"면(Face) 데이터를 처리하는 중 오류가 발생했습니다.\n\n"
+                        << L"오류 내용: " << e.what() << L"\n"
+                        << L"원본 데이터: " << face_data.c_str(); // std::string을 const char*로 변환
+
+                    // 메시지 박스를 화면에 표시합니다.
+                    MessageBoxW(
+                        nullptr,             // 부모 윈도우 핸들 (없으면 nullptr)
+                        wss.str().c_str(),   // 표시할 메시지
+                        L"데이터 처리 오류", // 메시지 박스 제목
+                        MB_OK | MB_ICONERROR // 확인 버튼과 오류 아이콘 표시
+                    );
                     continue;
                 }
 
@@ -248,7 +259,7 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
                     }
 
                     meshToAddTo.vertices.emplace_back(new_vertex);
-                    unsigned int new_index = meshToAddTo.vertices.size() - 1;
+                    unsigned int new_index = static_cast<unsigned int>(meshToAddTo.vertices.size() - 1);
                     vertexCache[key] = new_index;
                     face_indices[vertex_count_in_face] = new_index;
                 }

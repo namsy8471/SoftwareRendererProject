@@ -523,13 +523,14 @@ namespace SRMath {
 		{
 			// 내부 로직은 operator=와 완전히 동일합니다.
 			// 프록시로부터 각 열의 계산 결과를 가져와 새 행렬을 초기화합니다.
+			for (int i = 0; i < 4; i++) this->m128[i] = _mm_setzero_ps();
 			multiply(*this, proxy.lhs(), proxy.rhs());
 		}
 
 		template<typename T1, typename T2>
 		mat4& operator=(const Matrix4x4Proxy<T1, T2>& proxy)
 		{
-			if (std::is_same_v<T1, mat4> && std::is_same_v<T2, mat4>) {
+			if constexpr (std::is_same_v<T1, mat4> && std::is_same_v<T2, mat4>) {
 				multiply(*this, proxy.lhs(), proxy.rhs());
 			}
 			else {
@@ -607,6 +608,7 @@ namespace SRMath {
 		res = _mm_add_ps(res, _mm_mul_ps(a_col3, b_splat));
 		result.m128[0] = res;
 
+		// --- 결과 행렬의 두 번째 열 계산 ---
 		b_splat = _mm_set1_ps(b.cols[1].x);
 		res = _mm_mul_ps(a_col0, b_splat);
 
@@ -620,6 +622,7 @@ namespace SRMath {
 		res = _mm_add_ps(res, _mm_mul_ps(a_col3, b_splat));
 		result.m128[1] = res;
 
+		// --- 결과 행렬의 세 번째 열 계산 ---
 		b_splat = _mm_set1_ps(b.cols[2].x);
 		res = _mm_mul_ps(a_col0, b_splat);
 
@@ -633,6 +636,7 @@ namespace SRMath {
 		res = _mm_add_ps(res, _mm_mul_ps(a_col3, b_splat));
 		result.m128[2] = res;
 
+		// --- 결과 행렬의 네 번째 열 계산 ---
 		b_splat = _mm_set1_ps(b.cols[3].x);
 		res = _mm_mul_ps(a_col0, b_splat);
 

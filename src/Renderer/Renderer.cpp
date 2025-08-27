@@ -135,7 +135,7 @@ void Renderer::drawLineByDDA(int x0, int y0, int x1, int y1, unsigned int color)
     
     for (int i = 0; i <= steps; i++) {
         // 반올림하여 정수 픽셀에 기록
-        drawPixel(round(x), round(y), color);
+        drawPixel(static_cast<int> (round(x)), static_cast<int> (round(y)), color);
         x += x_inc;
         y += y_inc;
     }
@@ -168,7 +168,8 @@ void Renderer::drawTriangle(int x0, int y0, int x1, int y1, int x2, int y2, unsi
 // 3개의 점으로 삼각형 외곽선 렌더링 (vec2 좌표)
 void Renderer::drawTriangle(const SRMath::vec2 v0, const SRMath::vec2 v1, const SRMath::vec2 v2, unsigned int color)
 {
-    drawTriangle(v0.x, v0.y, v1.x, v1.y, v2.x, v2.y, color);
+    drawTriangle(static_cast<int> (v0.x), static_cast<int>(v0.y), static_cast<int>(v1.x), static_cast<int>(v1.y),
+        static_cast<int>(v2.x), static_cast<int>(v2.y), color);
 }
 
 // 렌더러 클리어
@@ -227,10 +228,10 @@ void Renderer::drawDebugPrimitive(const DebugPrimitiveCommand& cmd, const SRMath
             end_clip.x /= end_clip.w;
             end_clip.y /= end_clip.w;
 
-            int startX = (start_clip.x + 1.0f) * 0.5f * m_width;
-            int startY = (1.0f - start_clip.y) * 0.5f * m_height;
-            int endX = (end_clip.x + 1.0f) * 0.5f * m_width;
-            int endY = (1.0f - end_clip.y) * 0.5f * m_height;
+            int startX = static_cast<int>((start_clip.x + 1.0f) * 0.5f * m_width);
+            int startY = static_cast<int>((1.0f - start_clip.y) * 0.5f * m_height);
+            int endX = static_cast<int>((end_clip.x + 1.0f) * 0.5f * m_width);
+            int endY = static_cast<int>((1.0f - end_clip.y) * 0.5f * m_height);
 
             drawLine(startX, startY, endX, endY,
                 RGB(color.x * 255.f, color.y * 255.f, color.z * 255.f));
@@ -441,9 +442,9 @@ void Renderer::RenderScene(const RenderQueue& queue, const Camera& camera, const
             });
         });
 
-    int cmd_count = queue.GetRenderCommands().size();
+    size_t cmd_count = queue.GetRenderCommands().size();
     // 병렬 Binning: 각 스레드는 자기 ID에 맞는 개인 사물함에만 접근
-	tbb::parallel_for(tbb::blocked_range<int>(0, cmd_count),
+    tbb::parallel_for(tbb::blocked_range<int>(0, static_cast<int>(cmd_count)),
         [&](const tbb::blocked_range<int>& r) {
             
 			auto& myPool = m_threadTrianglePools.local(); // 각 스레드의 삼각형 풀
@@ -668,8 +669,8 @@ void Renderer::RenderScene(const RenderQueue& queue, const Camera& camera, const
         }, tbb::auto_partitioner()
     );
     
-	int queueSize = queue.GetDebugCommands().size();
-    tbb::parallel_for(tbb::blocked_range<int>(0, queueSize),
+    size_t queueSize = queue.GetDebugCommands().size();
+    tbb::parallel_for(tbb::blocked_range<int>(0, static_cast<int>(queueSize)),
         [&](const tbb::blocked_range<int>& r) {
             for (int i = r.begin(); i != r.end(); ++i)
             {
@@ -875,7 +876,7 @@ void Renderer::drawFilledTriangleForTile(const RasterizerVertex& v0, const Raste
 
                     if (material->diffuseTexture)
                     {
-                        base_color = material->diffuseTexture->GetPixels(uv_interpolated.x, uv_interpolated.y);
+                        //base_color = material->diffuseTexture->GetPixels(uv_interpolated.x, uv_interpolated.y);
                     }
                     else {
                         base_color = material->kd; // 재질의 기본 난반사 색상

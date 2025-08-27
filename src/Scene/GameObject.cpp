@@ -113,12 +113,12 @@ void GameObject::SubmitToRenderQueue(RenderQueue& renderQueue, const Frustum& fr
 	if (!frustum.IsAABBInFrustum(m_worldAABB)) return;
 	if (!m_model) return;
 
-	int modelSize = m_model->GetMeshes().size();
+	size_t modelSize = m_model->GetMeshes().size();
 
 	m_threadLocalCmd.clear();
 	m_threadLocalDebugCmd.clear();
 
-	tbb::parallel_for(tbb::blocked_range<int>(0, modelSize),
+	tbb::parallel_for(tbb::blocked_range<int>(0, static_cast<int>(modelSize)),
 		[&](const tbb::blocked_range<int>& r) {
 
 			std::vector<MeshRenderCommand>& localCmd = m_threadLocalCmd.local();

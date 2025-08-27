@@ -136,8 +136,11 @@
       <LanguageStandard>stdcpp17</LanguageStandard>
       <AdditionalIncludeDirectories>$(SolutionDir)src;$(SolutionDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <EnableModules>false</EnableModules>
-      <AdditionalOptions>-openmp:llvm</AdditionalOptions>
-      <OpenMPSupport>true</OpenMPSupport>
+      <AdditionalOptions>
+      </AdditionalOptions>
+      <OpenMPSupport>false</OpenMPSupport>
+      <ExternalWarningLevel>Level1</ExternalWarningLevel>
+      <DisableAnalyzeExternal>true</DisableAnalyzeExternal>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>

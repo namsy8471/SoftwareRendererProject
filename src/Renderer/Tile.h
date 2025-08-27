@@ -4,7 +4,7 @@
 
 #define CACHE_LINE_SIZE 64
 
-class MeshRenderCommand;
+struct MeshRenderCommand;
 
 constexpr int TILE_SIZE = 16; // 타일의 크기 (16x16 픽셀)
 
