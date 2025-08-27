@@ -466,11 +466,8 @@ void Renderer::RenderScene(const RenderQueue& queue, const Camera& camera, const
                 // --- High-Watermark 로직으로 캐시 크기 관리 ---
                 if (myThreadShadedVertex.size() < vertices.size())
                 {
-                    //size_t oldSize = myThreadStamp.size();
                     myThreadShadedVertex.resize(vertices.size());
                     myThreadStamp.resize(vertices.size(), -1);
-                    // 새로 생긴 공간만 -1로 초기화하여 이전 스탬프 값과 겹치지 않게 합니다.
-                    //std::fill(myThreadStamp.begin() + oldSize, myThreadStamp.end(), -1);
                 }
 
                 // 메쉬의 모든 '삼각형'을 순회합니다.
