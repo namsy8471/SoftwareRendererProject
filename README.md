@@ -83,4 +83,4 @@ Before Anti-Aliasing
 
 After Anti-Aliasing(FXAA)
 
-* Result by 08/17
+* Result by 08/27/2025
