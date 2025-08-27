@@ -64,6 +64,7 @@ namespace SRMath {
 		return static_cast<float>(fp.value) / (1 << fractBits);
 	}
 
+	using Fixed8 = FixedPoint<8>;
 	using Fixed16 = FixedPoint<16>;
 	using Fixed24 = FixedPoint<24>;
 	using Fixed30 = FixedPoint<30>;
@@ -530,7 +531,7 @@ namespace SRMath {
 		template<typename T1, typename T2>
 		mat4& operator=(const Matrix4x4Proxy<T1, T2>& proxy)
 		{
-			if constexpr (std::is_same_v<T1, mat4> && std::is_same_v<T2, mat4>) {
+			if (std::is_same_v<T1, mat4> && std::is_same_v<T2, mat4>) {
 				multiply(*this, proxy.lhs(), proxy.rhs());
 			}
 			else {

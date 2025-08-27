@@ -284,7 +284,7 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
     // 메시별 후처리(법선 생성, AABB 계산, 옥트리 빌드)를 병렬 처리
     tbb::combinable<AABB> localAABB([] { return AABB(); }); // 스레드 로컬 AABB
 
-    tbb::parallel_for(tbb::blocked_range<int>(0, (int)outModel->m_meshes.size()),
+    tbb::parallel_for(tbb::blocked_range<int>(0, static_cast<int>(outModel->m_meshes.size())),
         [&](const tbb::blocked_range<int>& r) {
         for (int i = r.begin(); i != r.end(); i++)
         {

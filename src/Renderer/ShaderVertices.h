@@ -27,10 +27,10 @@ struct RasterizerVertex {
     SRMath::vec3 worldPosOverW;     // 원근 보정된 월드 좌표
 
 	// 생성자 추가
-	RasterizerVertex() = default;
+	/*RasterizerVertex() = default;
     RasterizerVertex(const SRMath::vec2& screenPos, float oneOverW, const SRMath::vec3& normalWorldOverW,
         const SRMath::vec2& texcoordOverW, const SRMath::vec3& worldPosOverW)
         : screenPos(screenPos), oneOverW(oneOverW), normalWorldOverW(normalWorldOverW),
         texcoordOverW(texcoordOverW), worldPosOverW(worldPosOverW) {
-	}
+	}*/
 };

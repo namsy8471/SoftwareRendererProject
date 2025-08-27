@@ -43,19 +43,26 @@ void ApplyFXAA(const unsigned int* inBuffer, unsigned int* outBuffer, int width,
     // lumaBuffer를 병렬 영역 '바깥'에서 선언 (올바른 구조)
     std::vector<float> lumaBuffer(width * height);
 
-    tbb::parallel_for(tbb::blocked_range<int>(0, width * height),
-        [&](const tbb::blocked_range<int>& r) {
-            // 1. 휘도(Luma) 맵 만들기 (기존과 동일)
-            for (int i = r.begin(); i != r.end(); ++i) {
-                SRMath::Color tempColor;
-                unpackColor(inBuffer[i], tempColor);
-                lumaBuffer[i] = RGBToLuma(tempColor);
-            }
-		});
 
     // --- 모든 픽셀을 순회 ---
     tbb::parallel_for(tbb::blocked_range(1, height - 1),
         [&](const tbb::blocked_range<int>& r) {
+
+            //    Luma 계산 영역 설정: 현재 스레드가 맡은 행(r)의 위아래 1픽셀씩을 포함
+            //    FXAA 연산 시 이웃 픽셀의 luma 값이 필요하기 때문입니다.
+            const int luma_y_start = std::max(0, r.begin() - 1);
+            const int luma_y_end = std::min(height, r.end() + 1);
+
+            //   '필요한 만큼만' Luma 맵 만들기
+            //    이 데이터는 현재 스레드의 CPU 캐시에 저장될 확률이 매우 높습니다.
+            for (int y = luma_y_start; y < luma_y_end; ++y) {
+                for (int x = 0; x < width; ++x) {
+                    SRMath::Color tempColor;
+                    unpackColor(inBuffer[y * width + x], tempColor);
+                    lumaBuffer[y * width + x] = RGBToLuma(tempColor);
+                }
+            }
+
             for (int y = r.begin(); y < r.end(); ++y) {
                 for (int x = 1; x < width - 1; ++x) {
                     const int idx = y * width + x;
@@ -66,8 +73,9 @@ void ApplyFXAA(const unsigned int* inBuffer, unsigned int* outBuffer, int width,
                     const float lS = lumaBuffer[(y + 1) * width + x];
                     const float lW = lumaBuffer[y * width + (x - 1)];
                     const float lE = lumaBuffer[y * width + (x + 1)];
-                    const float lMin = std::min({ lC, lN, lS, lW, lE });
-                    const float lMax = std::max({ lC, lN, lS, lW, lE });
+
+                    const float lMin = std::min(lC, std::min(lN, (std::min(lS, std::min(lW, lE)))));
+                    const float lMax = std::max(lC, std::max(lN, (std::max(lS, std::max(lW, lE)))));
                     const float contrast = lMax - lMin;
                     const float thresh = std::max(EDGE_THRESHOLD_MIN, lMax * EDGE_THRESHOLD);
                     if (contrast < thresh) { outBuffer[idx] = inBuffer[idx]; continue; }

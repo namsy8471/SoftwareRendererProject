@@ -420,28 +420,6 @@ void Renderer::RenderScene(const RenderQueue& queue, const Camera& camera, const
 
     m_frameCounter++;
 
-    int maxThreads = tbb::this_task_arena::max_concurrency();
-    tbb::task_arena arena(maxThreads);
-    arena.execute([&] {
-        tbb::parallel_for(0, maxThreads, [&](int) {
-            auto& myPool = m_threadTrianglePools.local(); // 각 스레드의 삼각형 풀
-            auto& myThreadShadedVertex = m_threadShadedVertexBuffers.local();     // 각 스레드마다 타일에 클리프 공간 좌표를 저장
-            auto& myThreadStamp = m_threadStamps.local();                         // 각 스레드마다 타일에 스탬프를 저장
-            auto& myThreadClipBuffer1 = m_threadClipBuffer1.local();              // 클리핑 스왑 버퍼 1
-            auto& myThreadClipBuffer2 = m_threadClipBuffer2.local();              // 클리핑 스왑 버퍼 2
-            auto& myThreadClippedVertices = m_threadClippedVertices.local();      // 클리핑된 정점 저장
-            auto& myThreadNormalMatrixCache = m_threadNormalMatrixCache.local();  // 역행렬 캐시
-
-            myPool.clear();
-            /*myThreadShadedVertex.resize(65536);
-            myThreadStamp.resize(65536, -1);*/
-            myThreadClipBuffer1.clear();
-            myThreadClipBuffer2.clear();
-            myThreadClippedVertices.clear();
-            myThreadNormalMatrixCache.clear();
-            });
-        });
-
     size_t cmd_count = queue.GetRenderCommands().size();
     // 병렬 Binning: 각 스레드는 자기 ID에 맞는 개인 사물함에만 접근
     tbb::parallel_for(tbb::blocked_range<int>(0, static_cast<int>(cmd_count)),
@@ -454,6 +432,19 @@ void Renderer::RenderScene(const RenderQueue& queue, const Camera& camera, const
             auto& myThreadClipBuffer2 = m_threadClipBuffer2.local();              // 클리핑 스왑 버퍼 2
             auto& myThreadClippedVertices = m_threadClippedVertices.local();      // 클리핑된 정점 저장
             auto& myThreadNormalMatrixCache = m_threadNormalMatrixCache.local();  // 역행렬 캐시
+
+			thread_local uint64_t lastCleaned_frame = -1;
+
+            if (lastCleaned_frame != m_frameCounter) {
+
+                myPool.clear();
+                myThreadClipBuffer1.clear();
+                myThreadClipBuffer2.clear();
+                myThreadClippedVertices.clear();
+                myThreadNormalMatrixCache.clear();
+
+                lastCleaned_frame = m_frameCounter;
+			}
 
             for (int cmd_idx = r.begin(); cmd_idx != r.end(); ++cmd_idx)
             {
@@ -815,24 +806,24 @@ void Renderer::drawFilledTriangleForTile(const RasterizerVertex& v0, const Raste
     float w2Row = dy01 * (finalMinX + 0.5f - p0.x) - dx01 * (finalMinY + 0.5f - p0.y);
 
 	// 고정 소수점으로 변환
-    const SRMath::FixedPoint<16> dx01_fixed = SRMath::FixedPoint<16>(dx01);
-    const SRMath::FixedPoint<16> dy01_fixed = SRMath::FixedPoint<16>(dy01);
-    const SRMath::FixedPoint<16> dx12_fixed = SRMath::FixedPoint<16>(dx12);
-    const SRMath::FixedPoint<16> dy12_fixed = SRMath::FixedPoint<16>(dy12);
-    const SRMath::FixedPoint<16> dx20_fixed = SRMath::FixedPoint<16>(dx20);
-    const SRMath::FixedPoint<16> dy20_fixed = SRMath::FixedPoint<16>(dy20);
+    const SRMath::Fixed8 dx01_fixed = SRMath::Fixed8(dx01);
+    const SRMath::Fixed8 dy01_fixed = SRMath::Fixed8(dy01);
+    const SRMath::Fixed8 dx12_fixed = SRMath::Fixed8(dx12);
+    const SRMath::Fixed8 dy12_fixed = SRMath::Fixed8(dy12);
+    const SRMath::Fixed8 dx20_fixed = SRMath::Fixed8(dx20);
+    const SRMath::Fixed8 dy20_fixed = SRMath::Fixed8(dy20);
 
-	SRMath::FixedPoint<16> w0Row_fixed = SRMath::FixedPoint<16>(w0Row);
-	SRMath::FixedPoint<16> w1Row_fixed = SRMath::FixedPoint<16>(w1Row);
-	SRMath::FixedPoint<16> w2Row_fixed = SRMath::FixedPoint<16>(w2Row);
+	SRMath::Fixed8 w0Row_fixed = SRMath::Fixed8(w0Row);
+	SRMath::Fixed8 w1Row_fixed = SRMath::Fixed8(w1Row);
+	SRMath::Fixed8 w2Row_fixed = SRMath::Fixed8(w2Row);
 
     // --- 래스터화 루프 ---
     for (int y = finalMinY; y <= finalMaxY; ++y)
     {
         // 현재 행의 시작 값을 복사
-        SRMath::FixedPoint<16> w0_fixed = w0Row_fixed;
-        SRMath::FixedPoint<16> w1_fixed = w1Row_fixed;
-        SRMath::FixedPoint<16> w2_fixed = w2Row_fixed;
+        SRMath::Fixed8 w0_fixed = w0Row_fixed;
+        SRMath::Fixed8 w1_fixed = w1Row_fixed;
+        SRMath::Fixed8 w2_fixed = w2Row_fixed;
 
         for (int x = finalMinX; x <= finalMaxX; ++x)
         {
@@ -843,7 +834,7 @@ void Renderer::drawFilledTriangleForTile(const RasterizerVertex& v0, const Raste
 				float w1 = w1_fixed.toFloat();
 				float w2 = w2_fixed.toFloat();
 
-                float total_w = static_cast<float>(w0 + w1 + w2);
+                float total_w = (w0 + w1 + w2);
 
                 if (std::abs(total_w) < 1e-5f) continue;
 
@@ -876,7 +867,7 @@ void Renderer::drawFilledTriangleForTile(const RasterizerVertex& v0, const Raste
 
                     if (material->diffuseTexture)
                     {
-                        //base_color = material->diffuseTexture->GetPixels(uv_interpolated.x, uv_interpolated.y);
+                        base_color = static_cast<float>(material->diffuseTexture->GetPixels(uv_interpolated.x, uv_interpolated.y));
                     }
                     else {
                         base_color = material->kd; // 재질의 기본 난반사 색상
@@ -945,6 +936,7 @@ void Renderer::drawFilledTriangleForTile(const RasterizerVertex& v0, const Raste
             w0_fixed += dy12_fixed;
             w1_fixed += dy20_fixed;
             w2_fixed += dy01_fixed;
+
         }
 
         // y가 1 증가했으므로, 다음 행의 시작 값을 x의 변화량만큼 더해서 갱신합니다.

@@ -26,7 +26,7 @@ struct MeshRenderCommand {
 struct DebugPrimitiveCommand {
 	std::vector<DebugVertex> vertices; // 그릴 정점들
 	SRMath::mat4 worldTransform;
-	DebugPrimitiveType type; // 디버그 프리미티브 타입
+	DebugPrimitiveType type = DebugPrimitiveType::Line; // 디버그 프리미티브 타입
 
 	DebugPrimitiveCommand() = default;
 };
