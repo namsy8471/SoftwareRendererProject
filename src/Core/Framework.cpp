@@ -103,30 +103,32 @@ void Framework::Run()
             DispatchMessage(&msg);
         }
 
-        int prevFPS = m_perfAnalyzer.GetAvgFPSForSecond();
-        // 메시지가 없는 이 시간에 렌더링 코드를 실행!
-        m_perfAnalyzer.Update();
+        else {
+            int prevFPS = m_perfAnalyzer.GetAvgFPSForSecond();
+            // 메시지가 없는 이 시간에 렌더링 코드를 실행!
+            m_perfAnalyzer.Update();
 
-        if (m_perfAnalyzer.GetAvgFPSForSecond() != prevFPS) {
-            // 문자열 버퍼를 준비하고
-            wchar_t buffer[100];
-            // "SoftrendererProject - FPS: 60" 같은 형식으로 문자열을 만듭니다.
-            swprintf_s(buffer, 100, L"%s - AvgFPS: %d",
-                m_szTitle, m_perfAnalyzer.GetAvgFPSForSecond());
+            if (m_perfAnalyzer.GetAvgFPSForSecond() != prevFPS) {
+                // 문자열 버퍼를 준비하고
+                wchar_t buffer[100];
+                // "SoftrendererProject - FPS: 60" 같은 형식으로 문자열을 만듭니다.
+                swprintf_s(buffer, 100, L"%s - AvgFPS: %d",
+                    m_szTitle, m_perfAnalyzer.GetAvgFPSForSecond());
 
-            // 창 제목을 설정합니다.
-            SetWindowText(m_hWnd, buffer);
+                // 창 제목을 설정합니다.
+                SetWindowText(m_hWnd, buffer);
+            }
+
+            Framework::Update(m_perfAnalyzer.GetDeltaTime());
+            Framework::Render();
+
+            HDC hdc = GetDC(m_hWnd);
+            if (m_pRenderer)
+            {
+                m_pRenderer->Present(hdc);
+            }
+            ReleaseDC(m_hWnd, hdc);
         }
-
-        Framework::Update(m_perfAnalyzer.GetDeltaTime());
-        Framework::Render();
-
-        HDC hdc = GetDC(m_hWnd);
-        if (m_pRenderer)
-        {
-            m_pRenderer->Present(hdc);
-        }
-        ReleaseDC(m_hWnd, hdc);
     }
 }
 
