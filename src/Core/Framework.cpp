@@ -5,7 +5,7 @@
 #include "Scene/GameObject.h"
 #include "Graphics/ModelLoader.h"
 #include "Graphics/Model.h"
-#include <omp.h>
+#include "Utils/Utils.h"
 
 Framework::Framework(HINSTANCE hInstance, int nCmdShow)
 {
@@ -72,7 +72,7 @@ bool Framework::initializeGameobject(const SRMath::vec3& pos, const SRMath::vec3
 {
     try
     {
-        std::string modelPath = "assets/" + modelName;
+        std::string modelPath = MakeAssetPath(modelName);
         auto m_gameobject = std::make_shared<GameObject>(pos, rotation, scale, ModelLoader::LoadOBJ(modelPath));
 
         m_gameobjects.push_back(std::move(m_gameobject));

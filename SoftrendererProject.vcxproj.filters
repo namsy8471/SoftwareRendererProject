@@ -168,5 +168,8 @@
     <ClInclude Include="src\Renderer\ShaderVertices.h">
       <Filter>헤더 파일</Filter>
     </ClInclude>
+    <ClInclude Include="src\Utils\Utils.h">
+      <Filter>헤더 파일</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>
