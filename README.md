@@ -1,7 +1,7 @@
 # SoftwareRendererProject
 
 ## **결과물 (Output Screenshots/GIFs)**
-동영상 링크: https://youtu.be/aXOsA8hP668
+동영상 링크: [https://youtu.be/aXOsA8hP668](https://youtu.be/AWwQuzhvvnM)
 
 ![2025-08-14](https://github.com/user-attachments/assets/a8bf1116-44d3-42cb-b58f-d5229d874cd4)  
 Before Optimization  (8 FPS)  
