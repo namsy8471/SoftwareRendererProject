@@ -1,4 +1,4 @@
-#pragma once
+ï»¿#pragma once
 #include <vector>
 #include <string>
 #include <memory>
@@ -15,10 +15,10 @@ struct Vertex {
 };
 
 struct Mesh {
-	std::vector<Vertex>       vertices;     // ÀÌ ¸Þ½Ã¿¡ ¼ÓÇÑ °íÀ¯ Á¤Á¡ µ¥ÀÌÅÍ (VBO¿ë)
-	std::vector<unsigned int> indices;      // Á¤Á¡À» ¿¬°áÇØ »ï°¢ÇüÀ» ¸¸µå´Â ¹æ¹ý (IBO¿ë)
-	Material				  material;		// ÀÌ ¸Þ½Ã¿¡ Àû¿ëÇÒ ÀçÁú
-	AABB					  localAABB;	// ÀÌ ¸Þ½Ã¿¡ Àû¿ëÇÒ ·ÎÄÃ AABB
+	std::vector<Vertex>       vertices;     // ï¿½ï¿½ ï¿½Þ½Ã¿ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ (VBOï¿½ï¿½)
+	std::vector<unsigned int> indices;      // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï°¢ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ (IBOï¿½ï¿½)
+	Material				  material;		// ï¿½ï¿½ ï¿½Þ½Ã¿ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
+	AABB					  localAABB;	// ï¿½ï¿½ ï¿½Þ½Ã¿ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ AABB
 	std::unique_ptr<Octree>	  octree;
 
 	Mesh();
@@ -28,4 +28,3 @@ struct Mesh {
 
 	const AABB& GetLocalAABB() const { return localAABB; }
 };
-

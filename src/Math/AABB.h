@@ -1,4 +1,4 @@
-#pragma once
+ï»¿#pragma once
 #include "Math/SRMath.h"
 #include <array>
 #include <limits>
@@ -12,17 +12,16 @@ struct AABB
 	SRMath::vec3 max = 
 	{ std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest()};
 	
-	void Encapsulate(const AABB& other); // ´Ù¸¥ AABB¸¦ Æ÷ÇÔÇÏµµ·Ï È®ÀåÇÏ´Â ÇÔ¼ö
-	void Encapsulate(const SRMath::vec3& point); // Á¡ ÇÏ³ª¸¦ Æ÷ÇÔÇÏµµ·Ï È®ÀåÇÏ´Â ÇÔ¼ö
+	void Encapsulate(const AABB& other); // ï¿½Ù¸ï¿½ AABBï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½Ïµï¿½ï¿½ï¿½ È®ï¿½ï¿½ï¿½Ï´ï¿½ ï¿½Ô¼ï¿½
+	void Encapsulate(const SRMath::vec3& point); // ï¿½ï¿½ ï¿½Ï³ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½Ïµï¿½ï¿½ï¿½ È®ï¿½ï¿½ï¿½Ï´ï¿½ ï¿½Ô¼ï¿½
 	const bool AABBIntersects(const AABB& other) const;
 	const bool AABBContains(const AABB& other) const;
 
-	const SRMath::vec3 GetCenter() const; // Áß½ÉÁ¡À» ¹ÝÈ¯ÇÏ´Â ÇÔ¼ö
-	const std::array<SRMath::vec3, 8> GetVertice() const; // 8°³ÀÇ ²ÀÁþÁ¡À» ¹ÝÈ¯ÇÏ´Â ÇÔ¼ö
-	const AABB GetAABB() const; // AABB¸¦ ¹ÝÈ¯ÇÏ´Â ÇÔ¼ö
+	const SRMath::vec3 GetCenter() const; // ï¿½ß½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½È¯ï¿½Ï´ï¿½ ï¿½Ô¼ï¿½
+	const std::array<SRMath::vec3, 8> GetVertice() const; // 8ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½È¯ï¿½Ï´ï¿½ ï¿½Ô¼ï¿½
+	const AABB GetAABB() const; // AABBï¿½ï¿½ ï¿½ï¿½È¯ï¿½Ï´ï¿½ ï¿½Ô¼ï¿½
 	bool IsValid() const;
 
 	static AABB CreateFromMesh(const Mesh& mesh);
 	const AABB Transform(const SRMath::mat4& transform) const;
 };
-

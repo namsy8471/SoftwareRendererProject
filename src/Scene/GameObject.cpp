@@ -1,4 +1,4 @@
-#include "GameObject.h"
+ï»¿#include "GameObject.h"
 #include "Graphics/Model.h"
 #include "Math/Frustum.h"
 #include "Graphics/Octree.h"
@@ -59,7 +59,7 @@ void GameObject::UpdateTransform(float deltaTime, bool isRotate)
 	SRMath::mat4 rotationMatrix = SRMath::rotate(m_rotation);
 	SRMath::mat4 translationMatrix = SRMath::translate(m_position);
 	m_worldMatrix = translationMatrix * rotationMatrix * scaleMatrix;
-	m_normalMatrix = SRMath::inverse_transpose(m_worldMatrix).value_or(SRMath::mat4(1.f)); // ¹ý¼± Çà·Ä °è»ê
+	m_normalMatrix = SRMath::inverse_transpose(m_worldMatrix).value_or(SRMath::mat4(1.f)); // ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½
 
 	const AABB& localAABB = m_model->GetLocalAABB();
 	m_worldAABB = localAABB.Transform(m_worldMatrix);
@@ -155,7 +155,7 @@ void GameObject::SubmitToRenderQueue(RenderQueue& renderQueue, const Frustum& fr
 				if (debugFlags.bShowNormal)
 				{
 					std::vector<DebugVertex> normalLines;
-					normalLines.reserve(mesh.vertices.size() * 2); // °¢ Á¤Á¡¸¶´Ù ½ÃÀÛÁ¡°ú ³¡Á¡ÀÌ ÀÖÀ¸¹Ç·Î 2¹è Å©±â
+					normalLines.reserve(mesh.vertices.size() * 2); // ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½Ç·ï¿½ 2ï¿½ï¿½ Å©ï¿½ï¿½
 
 					const float normalLength = 0.1f; // Normal vector length for visualization
 
@@ -163,8 +163,8 @@ void GameObject::SubmitToRenderQueue(RenderQueue& renderQueue, const Frustum& fr
 					{
 						SRMath::vec3 startPoint_local = m_worldMatrix * vertex.position;
 
-						// 3. ¹æÇâ(normal)Àº ¿ªÀüÄ¡ Çà·Ä·Î º¯È¯ÇÏ¿© ¿ùµå °ø°£ÀÇ ¹ý¼± ¹æÇâÀ» °è»êÇÕ´Ï´Ù.
-						// (w=0À¸·Î ¼³Á¤ÇÏ¿© ¹æÇâ º¤ÅÍÀÓÀ» ¸í½Ã)
+						// 3. ï¿½ï¿½ï¿½ï¿½(normal)ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½Ä¡ ï¿½ï¿½Ä·ï¿½ ï¿½ï¿½È¯ï¿½Ï¿ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½Õ´Ï´ï¿½.
+						// (w=0ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½Ï¿ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½)
 						SRMath::vec3 normalDir_world = m_normalMatrix * SRMath::vec4(vertex.normal, 0.f);
 						SRMath::vec3 endPoint_local = startPoint_local + SRMath::normalize(normalDir_world) * normalLength;
 
@@ -208,5 +208,4 @@ void GameObject::SubmitToRenderQueue(RenderQueue& renderQueue, const Frustum& fr
 		}
 	}
 }
-
 

@@ -1,15 +1,15 @@
-#include "AABB.h"
+ï»¿#include "AABB.h"
 #include "Graphics/Mesh.h"
 #include "Frustum.h"
 
 void AABB::Encapsulate(const AABB& other)
 {
-    // ÇöÀç min°ú ´Ù¸¥ AABBÀÇ min Áß ´õ ÀÛÀº °ªÀ» »õ·Î¿î minÀ¸·Î ¼³Á¤
+    // ï¿½ï¿½ï¿½ï¿½ minï¿½ï¿½ ï¿½Ù¸ï¿½ AABBï¿½ï¿½ min ï¿½ï¿½ ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½Î¿ï¿½ minï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
     min.x = std::min(min.x, other.min.x);
     min.y = std::min(min.y, other.min.y);
     min.z = std::min(min.z, other.min.z);
 
-    // ÇöÀç max¿Í ´Ù¸¥ AABBÀÇ max Áß ´õ Å« °ªÀ» »õ·Î¿î max·Î ¼³Á¤
+    // ï¿½ï¿½ï¿½ï¿½ maxï¿½ï¿½ ï¿½Ù¸ï¿½ AABBï¿½ï¿½ max ï¿½ï¿½ ï¿½ï¿½ Å« ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½Î¿ï¿½ maxï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
     max.x = std::max(max.x, other.max.x);
     max.y = std::max(max.y, other.max.y);
     max.z = std::max(max.z, other.max.z);
@@ -17,22 +17,22 @@ void AABB::Encapsulate(const AABB& other)
 
 void AABB::Encapsulate(const SRMath::vec3& point)
 {
-    // ÇöÀç min°ú Á¡ÀÇ À§Ä¡ Áß ´õ ÀÛÀº °ªÀ» »õ·Î¿î minÀ¸·Î ¼³Á¤
+    // ï¿½ï¿½ï¿½ï¿½ minï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½Ä¡ ï¿½ï¿½ ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½Î¿ï¿½ minï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
     min.x = std::min(min.x, point.x);
     min.y = std::min(min.y, point.y);
     min.z = std::min(min.z, point.z);
 
-    // ÇöÀç max¿Í Á¡ÀÇ À§Ä¡ Áß ´õ Å« °ªÀ» »õ·Î¿î max·Î ¼³Á¤
+    // ï¿½ï¿½ï¿½ï¿½ maxï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½Ä¡ ï¿½ï¿½ ï¿½ï¿½ Å« ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½Î¿ï¿½ maxï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
     max.x = std::max(max.x, point.x);
     max.y = std::max(max.y, point.y);
     max.z = std::max(max.z, point.z);
 }
 
-// µÎ AABB°¡ °ãÄ¡´ÂÁö(±³Â÷ÇÏ´ÂÁö) È®ÀÎÇÏ´Â ÇÔ¼ö
+// ï¿½ï¿½ AABBï¿½ï¿½ ï¿½ï¿½Ä¡ï¿½ï¿½ï¿½ï¿½(ï¿½ï¿½ï¿½ï¿½ï¿½Ï´ï¿½ï¿½ï¿½) È®ï¿½ï¿½ï¿½Ï´ï¿½ ï¿½Ô¼ï¿½
 const bool AABB::AABBIntersects(const AABB& other) const
 {
-    // X, Y, Z ¸ðµç Ãà¿¡¼­ °ãÄ¡´Â ºÎºÐÀÌ ÀÖ´ÂÁö È®ÀÎÇÕ´Ï´Ù.
-    // ¾î´À ÇÑ ÃàÀÌ¶óµµ ¿ÏÀüÈ÷ ºÐ¸®µÇ¾î ÀÖ´Ù¸é µÎ »óÀÚ´Â °ãÄ¡Áö ¾Ê½À´Ï´Ù.
+    // X, Y, Z ï¿½ï¿½ï¿½ ï¿½à¿¡ï¿½ï¿½ ï¿½ï¿½Ä¡ï¿½ï¿½ ï¿½Îºï¿½ï¿½ï¿½ ï¿½Ö´ï¿½ï¿½ï¿½ È®ï¿½ï¿½ï¿½Õ´Ï´ï¿½.
+    // ï¿½ï¿½ï¿½ ï¿½ï¿½ ï¿½ï¿½ï¿½Ì¶ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½Ð¸ï¿½ï¿½Ç¾ï¿½ ï¿½Ö´Ù¸ï¿½ ï¿½ï¿½ ï¿½ï¿½ï¿½Ú´ï¿½ ï¿½ï¿½Ä¡ï¿½ï¿½ ï¿½Ê½ï¿½ï¿½Ï´ï¿½.
     return (min.x <= other.max.x && max.x >= other.min.x) &&
         (min.y <= other.max.y && max.y >= other.min.y) &&
         (min.z <= other.max.z && max.z >= other.min.z);
@@ -40,7 +40,7 @@ const bool AABB::AABBIntersects(const AABB& other) const
 
 const bool AABB::AABBContains(const AABB& other) const
 {
-    // ´Ù¸¥ AABB°¡ ÇöÀç AABB¿¡ ¿ÏÀüÈ÷ Æ÷ÇÔµÇ´ÂÁö È®ÀÎÇÕ´Ï´Ù.
+    // ï¿½Ù¸ï¿½ AABBï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ AABBï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ÔµÇ´ï¿½ï¿½ï¿½ È®ï¿½ï¿½ï¿½Õ´Ï´ï¿½.
     return (min.x <= other.min.x && max.x >= other.max.x) &&
            (min.y <= other.min.y && max.y >= other.max.y) &&
            (min.z <= other.min.z && max.z >= other.max.z);
@@ -76,7 +76,7 @@ const SRMath::vec3 AABB::GetCenter() const
 
 const std::array<SRMath::vec3, 8> AABB::GetVertice() const
 {
-    std::array<SRMath::vec3, 8> array; // 8°³ÀÇ ²ÀÁþÁ¡
+    std::array<SRMath::vec3, 8> array; // 8ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
     array[0] = { min.x, min.y, min.z };
     array[1] = { max.x, min.y, min.z };
     array[2] = { min.x, max.y, min.z };
@@ -103,7 +103,7 @@ AABB AABB::CreateFromMesh(const Mesh& mesh)
 {
     if(mesh.vertices.empty())
     {
-        return AABB{ {0, 0, 0}, {0, 0, 0} }; // ºó ¸Þ½ÃÀÇ °æ¿ì, AABB´Â (0,0,0)À¸·Î ¼³Á¤
+        return AABB{ {0, 0, 0}, {0, 0, 0} }; // ï¿½ï¿½ ï¿½Þ½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½, AABBï¿½ï¿½ (0,0,0)ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
 	}
 
     AABB bounds;

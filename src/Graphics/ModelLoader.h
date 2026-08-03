@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <string>
 #include <memory>
 
@@ -9,4 +9,3 @@ class ModelLoader
 public:
 	static std::unique_ptr<Model> LoadOBJ(const std::string& filepath);
 };
-

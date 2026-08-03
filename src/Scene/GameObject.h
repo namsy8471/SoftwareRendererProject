@@ -1,4 +1,4 @@
-#pragma once
+ï»¿#pragma once
 
 #include "Core/pch.h"
 #include <vector>
@@ -20,12 +20,12 @@ private:
 	SRMath::vec3 m_rotation;
 	SRMath::vec3 m_scale;
 
-	SRMath::mat4 m_worldMatrix; // ¿ùµå º¯È¯ Çà·Ä
-	SRMath::mat4 m_normalMatrix; // ¹ý¼± Çà·Ä (¿ªÀüÄ¡ Çà·Ä)
+	SRMath::mat4 m_worldMatrix; // ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½È¯ ï¿½ï¿½ï¿½
+	SRMath::mat4 m_normalMatrix; // ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ (ï¿½ï¿½ï¿½ï¿½Ä¡ ï¿½ï¿½ï¿½)
 
 	// Model
 	std::unique_ptr<Model> m_model;
-	AABB m_worldAABB; // ¿ùµå °ø°£¿¡¼­ÀÇ AABB
+	AABB m_worldAABB; // ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ AABB
 
 	// Hierarchy
 	std::weak_ptr<GameObject> m_parent;
@@ -47,7 +47,7 @@ public:
 
 	bool Initialize(const SRMath::vec3& position, const SRMath::vec3& rotation, const SRMath::vec3& scale, std::unique_ptr<Model> model);
 	void Update(float deltaTime, bool isRotate);
-	void UpdateTransform(float deltaTime, bool isRotate); // Transform ¾÷µ¥ÀÌÆ® ½Ã È£ÃâµÉ ÇÔ¼ö
+	void UpdateTransform(float deltaTime, bool isRotate); // Transform ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Æ® ï¿½ï¿½ È£ï¿½ï¿½ï¿½ ï¿½Ô¼ï¿½
 
 	const SRMath::vec3 GetPosition() const;
 	const SRMath::vec3 GetRotation() const;
@@ -62,4 +62,3 @@ public:
 	// Rendering
 	void SubmitToRenderQueue(RenderQueue& renderQueue, const Frustum& frustum, const DebugFlags& debugFlags);
 };
-

@@ -1,12 +1,12 @@
-#include "Utils/PerformanceAnalyzer.h"
+ï»¿#include "Utils/PerformanceAnalyzer.h"
 
 #define INTERVAL 1.f;
 
 PerformanceAnalyzer::PerformanceAnalyzer() : m_frequency(), m_prevTime()
 {
-    // °íÇØ»óµµ Å¸ÀÌ¸ÓÀÇ ÁÖÆÄ¼ö¸¦ ¾ò¾î¿É´Ï´Ù.
+    // ï¿½ï¿½ï¿½Ø»ï¿½ Å¸ï¿½Ì¸ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½Ä¼ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½É´Ï´ï¿½.
     QueryPerformanceFrequency(&m_frequency);
-    // ÇöÀç ½Ã°£À» ±â·ÏÇÕ´Ï´Ù.
+    // ï¿½ï¿½ï¿½ï¿½ ï¿½Ã°ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½Õ´Ï´ï¿½.
     QueryPerformanceCounter(&m_prevTime);
 }
 
@@ -16,11 +16,11 @@ PerformanceAnalyzer::~PerformanceAnalyzer()
 
 void PerformanceAnalyzer::Update()
 {
-    // --- FPS °è»ê ·ÎÁ÷ ---
+    // --- FPS ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ---
     LARGE_INTEGER currentTime;
     QueryPerformanceCounter(&currentTime);
 
-    // ÀÌÀü ÇÁ·¹ÀÓ°úÀÇ ½Ã°£Â÷(delta time)¸¦ °è»êÇÕ´Ï´Ù.
+    // ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½Ó°ï¿½ï¿½ï¿½ ï¿½Ã°ï¿½ï¿½ï¿½(delta time)ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½Õ´Ï´ï¿½.
     deltaTime = static_cast<float>(currentTime.QuadPart - m_prevTime.QuadPart) / m_frequency.QuadPart;
     m_prevTime = currentTime;
 
@@ -28,7 +28,7 @@ void PerformanceAnalyzer::Update()
     m_elapsedTime += deltaTime;
 
     float interval = INTERVAL;
-    // 1ÃÊ°¡ Áö³µÀ¸¸é FPS¸¦ °è»êÇÏ°í ÃÊ±âÈ­ÇÕ´Ï´Ù.
+    // 1ï¿½Ê°ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ FPSï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½Ï°ï¿½ ï¿½Ê±ï¿½È­ï¿½Õ´Ï´ï¿½.
     if (m_elapsedTime > interval)
     {
         m_avgfps = m_frameCount;

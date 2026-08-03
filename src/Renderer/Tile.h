@@ -1,4 +1,4 @@
-#pragma once
+ï»¿#pragma once
 #include <vector>
 #include "Renderer/ShaderVertices.h"
 
@@ -6,15 +6,15 @@
 
 struct MeshRenderCommand;
 
-constexpr int TILE_SIZE = 16; // Å¸ÀÏÀÇ Å©±â (16x16 ÇÈ¼¿)
+constexpr int TILE_SIZE = 16; // Å¸ï¿½ï¿½ï¿½ï¿½ Å©ï¿½ï¿½ (16x16 ï¿½È¼ï¿½)
 
-// ¾î¶² ¸Þ½¬ÀÇ ¸î ¹øÂ° »ï°¢ÇüÀÎÁö¸¦ °¡¸®Å°´Â ±¸Á¶Ã¼
+// ï¿½î¶² ï¿½Þ½ï¿½ï¿½ï¿½ ï¿½ï¿½ ï¿½ï¿½Â° ï¿½ï°¢ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½Å°ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½Ã¼
 struct alignas(CACHE_LINE_SIZE) TriangleRef
 {
-    const MeshRenderCommand* sourceCommand;        // ¿øº» ·»´õ ¸í·É (¿ùµå Çà·Ä, ÀçÁú µîÀÇ Á¤º¸ Æ÷ÇÔ)
-    ShadedVertex sv0;                              // ¼ÎÀÌµùµÈ ¹öÅØ½ºµé
-	ShadedVertex sv1;                              // ¼ÎÀÌµùµÈ ¹öÅØ½ºµé
-    ShadedVertex sv2;                              // ¼ÎÀÌµùµÈ ¹öÅØ½ºµé
+    const MeshRenderCommand* sourceCommand;        // ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ (ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½, ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½)
+    ShadedVertex sv0;                              // ï¿½ï¿½ï¿½Ìµï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½Ø½ï¿½ï¿½ï¿½
+	ShadedVertex sv1;                              // ï¿½ï¿½ï¿½Ìµï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½Ø½ï¿½ï¿½ï¿½
+    ShadedVertex sv2;                              // ï¿½ï¿½ï¿½Ìµï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½Ø½ï¿½ï¿½ï¿½
 };
 
 struct Tile {

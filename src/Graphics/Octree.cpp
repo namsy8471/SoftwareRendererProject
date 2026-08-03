@@ -1,4 +1,4 @@
-#include "Octree.h"
+ï»¿#include "Octree.h"
 #include <vector>
 #include <array>
 #include "Math/SRMath.h"
@@ -23,124 +23,124 @@ Octree::OctreeNode::OctreeNode(const AABB& bounds) : bounds(bounds) {
 	}
 }
 
-// ¿ÁÆ®¸® »ý¼º/¼Ò¸êÀÚ (±âº» ±¸Çö)
+// ï¿½ï¿½Æ®ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½/ï¿½Ò¸ï¿½ï¿½ï¿½ (ï¿½âº» ï¿½ï¿½ï¿½ï¿½)
 Octree::Octree() = default;
 Octree::~Octree() = default;
 
-// ¸®ÇÁ ³ëµå°¡ °úµµÇÑ »ï°¢ÇüÀ» °¡Áú ¶§ 8°³ ¿ÁÅºÆ®·Î ºÐÇÒÇÏ´Â ÇÔ¼ö
+// ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½å°¡ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï°¢ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ 8ï¿½ï¿½ ï¿½ï¿½ÅºÆ®ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½Ï´ï¿½ ï¿½Ô¼ï¿½
 void Octree::subdivide(OctreeNode* node)
 {
-	// ÇöÀç ³ëµå AABBÀÇ Áß½ÉÁ¡°ú Àý¹Ý Å©±â
+	// ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ AABBï¿½ï¿½ ï¿½ß½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ Å©ï¿½ï¿½
 	SRMath::vec3 center = (node->bounds.min + node->bounds.max) * 0.5f;
 	SRMath::vec3 half_size = (node->bounds.max - node->bounds.min) * 0.5f;
 
-	// 1. 8°³ÀÇ ÀÚ½Ä ³ëµå¸¦ »ý¼ºÇÏ°í °æ°è¸¦ ¼³Á¤ÇÕ´Ï´Ù.
-	//    ÀÎµ¦½º ºñÆ® ÀÇ¹Ì: (i & 1) ¡æ X(+), (i & 2) ¡æ Y(+), (i & 4) ¡æ Z(+)
+	// 1. 8ï¿½ï¿½ï¿½ï¿½ ï¿½Ú½ï¿½ ï¿½ï¿½å¸¦ ï¿½ï¿½ï¿½ï¿½ï¿½Ï°ï¿½ ï¿½ï¿½è¸¦ ï¿½ï¿½ï¿½ï¿½ï¿½Õ´Ï´ï¿½.
+	//    ï¿½Îµï¿½ï¿½ï¿½ ï¿½ï¿½Æ® ï¿½Ç¹ï¿½: (i & 1) ï¿½ï¿½ X(+), (i & 2) ï¿½ï¿½ Y(+), (i & 4) ï¿½ï¿½ Z(+)
 	for (int i = 0; i < 8; i++)
 	{
 		AABB childBounds;
-		// minÀº ºñÆ®¿¡ µû¶ó center ¶Ç´Â ºÎ¸ð min¿¡¼­ ½ÃÀÛ
+		// minï¿½ï¿½ ï¿½ï¿½Æ®ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ center ï¿½Ç´ï¿½ ï¿½Î¸ï¿½ minï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
 		childBounds.min.x = (i & 1) ? center.x : node->bounds.min.x;
 		childBounds.min.y = (i & 2) ? center.y : node->bounds.min.y;
 		childBounds.min.z = (i & 4) ? center.z : node->bounds.min.z;
-		// max´Â min + half_size·Î ¼³Á¤ (Ãà Á¤·Ä À¯Áö)
+		// maxï¿½ï¿½ min + half_sizeï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ (ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½)
 		childBounds.max = childBounds.min + half_size;
-		// ÀÚ½Ä ³ëµå »ý¼º
+		// ï¿½Ú½ï¿½ ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
 		node->children[i] = std::make_unique<OctreeNode>(childBounds);
 	}
 
-	// 2. ±âÁ¸ ³ëµåÀÇ »ï°¢Çü ¸ñ·ÏÀ» ÀÓ½Ã·Î ¿Å°ÜµÓ´Ï´Ù. (ÀÌÈÄ Àç¹èÄ¡)
+	// 2. ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï°¢ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½Ó½Ã·ï¿½ ï¿½Å°ÜµÓ´Ï´ï¿½. (ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½Ä¡)
 	std::vector<unsigned int> tempVertexIndices = std::move(node->triangleIndices);
-	node->triangleIndices.clear(); // ÀÌÁ¦ ºÎ¸ð ³ëµå´Â °æ°è¿¡ °ÉÄ£ »ï°¢Çü¸¸ °¡Áú °ÍÀÔ´Ï´Ù.
+	node->triangleIndices.clear(); // ï¿½ï¿½ï¿½ï¿½ ï¿½Î¸ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½è¿¡ ï¿½ï¿½Ä£ ï¿½ï°¢ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½Ô´Ï´ï¿½.
 
-	// 3. ÀÓ½Ã ¸ñ·ÏÀÇ ¸ðµç »ï°¢ÇüµéÀ» ´Ù½Ã 'insert'ÇÏ¿© ¿Ã¹Ù¸¥ À§Ä¡(ÀÚ½Å ¶Ç´Â ÀÚ½Ä)¿¡ Àç¹èÄ¡ÇÕ´Ï´Ù.
+	// 3. ï¿½Ó½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ ï¿½ï°¢ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½Ù½ï¿½ 'insert'ï¿½Ï¿ï¿½ ï¿½Ã¹Ù¸ï¿½ ï¿½ï¿½Ä¡(ï¿½Ú½ï¿½ ï¿½Ç´ï¿½ ï¿½Ú½ï¿½)ï¿½ï¿½ ï¿½ï¿½ï¿½Ä¡ï¿½Õ´Ï´ï¿½.
 	for (size_t i = 0; i < tempVertexIndices.size(); i += 3)
 	{
 		unsigned int i0 = tempVertexIndices[i];
 		unsigned int i1 = tempVertexIndices[i + 1];
 		unsigned int i2 = tempVertexIndices[i + 2];
-		insert(node, i0, i1, i2); // Àç±Í È£ÃâÀÌ ¾Æ´Ñ, ÇöÀç ³ëµåºÎÅÍ ´Ù½Ã »ðÀÔ ½ÃÀÛ
+		insert(node, i0, i1, i2); // ï¿½ï¿½ï¿½ È£ï¿½ï¿½ï¿½ï¿½ ï¿½Æ´ï¿½, ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½Ù½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
 	}
 }
 
-// »ï°¢Çü(i0,i1,i2)À» ÇöÀç ³ëµå/ÀÚ½Ä ³ëµå¿¡ »ðÀÔ
+// ï¿½ï°¢ï¿½ï¿½(i0,i1,i2)ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½/ï¿½Ú½ï¿½ ï¿½ï¿½å¿¡ ï¿½ï¿½ï¿½ï¿½
 void Octree::insert(OctreeNode* node, unsigned int i0, unsigned int i1, unsigned int i2)
 {
-	// »ï°¢Çü Á¤Á¡ÀÇ ·ÎÄÃ(¸Þ½Ã) °ø°£ ÁÂÇ¥
+	// ï¿½ï°¢ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½(ï¿½Þ½ï¿½) ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½Ç¥
 	const auto& v0 = sourceMesh->vertices[i0].position;
 	const auto& v1 = sourceMesh->vertices[i1].position;
 	const auto& v2 = sourceMesh->vertices[i2].position;;
 
-	// »ï°¢ÇüÀÇ AABB °è»ê (Á¤È®ÇÑ Æ÷ÇÔ ÆÇº°¿ë)
+	// ï¿½ï°¢ï¿½ï¿½ï¿½ï¿½ AABB ï¿½ï¿½ï¿½ (ï¿½ï¿½È®ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½Çºï¿½ï¿½ï¿½)
 	AABB triBounds;
 	triBounds.min = { std::min({v0.x, v1.x, v2.x}), std::min({v0.y, v1.y, v2.y}), std::min({v0.z, v1.z, v2.z}) };
 	triBounds.max = { std::max({v0.x, v1.x, v2.x}), std::max({v0.y, v1.y, v2.y}), std::max({v0.z, v1.z, v2.z}) };
 
-	// ÇöÀç ³ëµå°¡ ³»ºÎ ³ëµå(ÀÚ½ÄÀÌ ÀÖÀ½)ÀÏ °æ¿ì
+	// ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½å°¡ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½(ï¿½Ú½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½)ï¿½ï¿½ ï¿½ï¿½ï¿½
 	if (node->children[0] != nullptr)
 	{
-		// »ï°¢ÇüÀÌ ¾î¶² ÀÚ½Ä ³ëµå ÇÏ³ª¿¡ '¿ÏÀüÈ÷' Æ÷ÇÔµÇ´ÂÁö È®ÀÎ
+		// ï¿½ï°¢ï¿½ï¿½ï¿½ï¿½ ï¿½î¶² ï¿½Ú½ï¿½ ï¿½ï¿½ï¿½ ï¿½Ï³ï¿½ï¿½ï¿½ 'ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½' ï¿½ï¿½ï¿½ÔµÇ´ï¿½ï¿½ï¿½ È®ï¿½ï¿½
 		for (int i = 0; i < 8; ++i)
 		{
 			if (node->children[i]->bounds.AABBContains(triBounds))
 			{
-				// ¿ÏÀüÈ÷ Æ÷ÇÔµÇ¸é ÇØ´ç ÀÚ½ÄÀ¸·Î »ðÀÔ (´õ ¾Æ·¡·Î ³»·Á°¨)
+				// ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ÔµÇ¸ï¿½ ï¿½Ø´ï¿½ ï¿½Ú½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ (ï¿½ï¿½ ï¿½Æ·ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½)
 				insert(node->children[i].get(), i0, i1, i2);
-				return; // ÀÚ½Ä¿¡°Ô »ðÀÔÇßÀ¸¹Ç·Î ÇöÀç ³ëµå¿¡¼­ÀÇ ¿ªÇÒÀº ³¡³²
+				return; // ï¿½Ú½Ä¿ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ç·ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½å¿¡ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
 			}
 		}
 	}
 
-	// ´ÙÀ½ µÎ °¡Áö °æ¿ì¿¡ »ï°¢ÇüÀ» ÇöÀç ³ëµå¿¡ Ãß°¡ÇÕ´Ï´Ù:
-	// 1. ÇöÀç ³ëµå°¡ ¸®ÇÁ ³ëµåÀÏ °æ¿ì
-	// 2. ÇöÀç ³ëµå´Â ³»ºÎ ³ëµåÁö¸¸, »ï°¢ÇüÀÌ °æ°è¿¡ °ÉÃÄ ÀÖ¾î ÀÚ½Ä¿¡°Ô ÁÙ ¼ö ¾ø´Â °æ¿ì
+	// ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ì¿¡ ï¿½ï°¢ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½å¿¡ ï¿½ß°ï¿½ï¿½Õ´Ï´ï¿½:
+	// 1. ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½å°¡ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½
+	// 2. ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½, ï¿½ï°¢ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½è¿¡ ï¿½ï¿½ï¿½ï¿½ ï¿½Ö¾ï¿½ ï¿½Ú½Ä¿ï¿½ï¿½ï¿½ ï¿½ï¿½ ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½
 	node->triangleIndices.push_back(i0);
 	node->triangleIndices.push_back(i1);
 	node->triangleIndices.push_back(i2);
 
-	// ¸®ÇÁ ³ëµå°¡ ³Ê¹« ¸¹Àº »ï°¢ÇüÀ» °¡Áö¸é ºÐÇÒ (ºÐÇÒ ÈÄ Àç¹èÄ¡´Â subdivide ÇÔ¼ö°¡ ´ã´ç)
+	// ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½å°¡ ï¿½Ê¹ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï°¢ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ (ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ ï¿½ï¿½ï¿½Ä¡ï¿½ï¿½ subdivide ï¿½Ô¼ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½)
 	if (node->children[0] == nullptr && (node->triangleIndices.size() / 3) > MAX_TRIANGLES_PER_NODE)
 	{
 		subdivide(node);
 	}
 }
 
-// ¸Þ½Ã¸¦ ¹ÙÅÁÀ¸·Î ¿ÁÆ®¸®¸¦ ºôµå(·çÆ® »ý¼º ¡æ ¸ðµç »ï°¢Çü »ðÀÔ)
+// ï¿½Þ½Ã¸ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½Æ®ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½(ï¿½ï¿½Æ® ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ ï¿½ï¿½ï¿½ ï¿½ï°¢ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½)
 void Octree::Build(const Mesh& mesh)
 {
-	this->sourceMesh = &mesh;                 // »ï°¢Çü Á¤Á¡ ÂüÁ¶¿ë ¿øº» ¸Þ½Ã Æ÷ÀÎÅÍ º¸°ü
+	this->sourceMesh = &mesh;                 // ï¿½ï°¢ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½Þ½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
 
-	AABB rootBounds = AABB::CreateFromMesh(mesh); // ¸Þ½Ã ÀüÃ¼¸¦ °¨½Î´Â AABB
+	AABB rootBounds = AABB::CreateFromMesh(mesh); // ï¿½Þ½ï¿½ ï¿½ï¿½Ã¼ï¿½ï¿½ ï¿½ï¿½ï¿½Î´ï¿½ AABB
 
-	root = std::make_unique<OctreeNode>(rootBounds); // ·çÆ® ³ëµå »ý¼º
+	root = std::make_unique<OctreeNode>(rootBounds); // ï¿½ï¿½Æ® ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
 
-	// ¸Þ½ÃÀÇ ¸ðµç »ï°¢ÇüÀ» ·çÆ®·ÎºÎÅÍ »ðÀÔ
+	// ï¿½Þ½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ ï¿½ï°¢ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½Æ®ï¿½Îºï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
 	for (size_t i = 0; i < mesh.indices.size(); i += 3)
 	{
 		insert(root.get(), mesh.indices[i], mesh.indices[i + 1], mesh.indices[i + 2]);
 	}
 }
 
-// Àç±ÍÀûÀ¸·Î ÇÁ·¯½ºÅÒ ÄÃ¸µ ¹× ·»´õ Å¥ Á¦Ãâ(µð¹ö±× AABB Æ÷ÇÔ)
+// ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½Ã¸ï¿½ ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ Å¥ ï¿½ï¿½ï¿½ï¿½(ï¿½ï¿½ï¿½ï¿½ï¿½ AABB ï¿½ï¿½ï¿½ï¿½)
 void Octree::submitNodeRecursive(RenderQueue& renderQueue, const Frustum& frustum, const SRMath::mat4& worldTransform, 
 	std::vector<MeshRenderCommand>& threadLocalCmd, std::vector<DebugPrimitiveCommand>& threadlocalDebugCmd, 
 	const DebugFlags& debugFlags, const OctreeNode* node)
 {
-	// ³ëµå °æ°è¸¦ ¿ùµå °ø°£À¸·Î º¯È¯
+	// ï¿½ï¿½ï¿½ ï¿½ï¿½è¸¦ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½È¯
 	const AABB worldNodeAABB = node->bounds.Transform(worldTransform);
-	// ÇÁ·¯½ºÅÒ ¹ÛÀÌ¸é Á¶±â ¸®ÅÏ (ÄÃ¸µ)
-	if(!frustum.IsAABBInFrustum(worldNodeAABB)) return; // ÀýµÎÃ¼ ¹Û¿¡ ÀÖÀ¸¸é ÄÃ¸µ
+	// ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½Ì¸ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ (ï¿½Ã¸ï¿½)
+	if(!frustum.IsAABBInFrustum(worldNodeAABB)) return; // ï¿½ï¿½ï¿½ï¿½Ã¼ ï¿½Û¿ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½Ã¸ï¿½
 
-	// ÀÌ ³ëµå¿¡ »ï°¢ÇüÀÌ ÀÖÀ¸¸é ·»´õ Å¥¿¡ ¸Þ½Ã ·»´õ ¸í·É Á¦Ãâ
+	// ï¿½ï¿½ ï¿½ï¿½å¿¡ ï¿½ï°¢ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ Å¥ï¿½ï¿½ ï¿½Þ½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
 	if(!node->triangleIndices.empty())
 	{
 		MeshRenderCommand cmd;
-		cmd.sourceMesh = this->sourceMesh;                 // ¿øº» ¸Þ½Ã
-		cmd.indicesToDraw = &node->triangleIndices;        // ÀÌ ³ëµå¿¡ ¼ÓÇÑ »ï°¢Çü ÀÎµ¦½º ¼­ºê¼Â
-		cmd.worldTransform = worldTransform;               // ¿ÀºêÁ§Æ®ÀÇ ¿ùµå º¯È¯
-		cmd.material = &this->sourceMesh->material;        // ¸Þ½ÃÀÇ ÀçÁúÀ» »ç¿ë
+		cmd.sourceMesh = this->sourceMesh;                 // ï¿½ï¿½ï¿½ï¿½ ï¿½Þ½ï¿½
+		cmd.indicesToDraw = &node->triangleIndices;        // ï¿½ï¿½ ï¿½ï¿½å¿¡ ï¿½ï¿½ï¿½ï¿½ ï¿½ï°¢ï¿½ï¿½ ï¿½Îµï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½
+		cmd.worldTransform = worldTransform;               // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Æ®ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½È¯
+		cmd.material = &this->sourceMesh->material;        // ï¿½Þ½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½
 			
-		// ¿ÍÀÌ¾î/ÇÊ ¸ðµå ÀüÈ¯ (µð¹ö±× ÇÃ·¡±×¿¡ µû¸§)
+		// ï¿½ï¿½ï¿½Ì¾ï¿½/ï¿½ï¿½ ï¿½ï¿½ï¿½ ï¿½ï¿½È¯ (ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½Ã·ï¿½ï¿½×¿ï¿½ ï¿½ï¿½ï¿½ï¿½)
 		if(debugFlags.bShowWireframe)
 		{
 			cmd.rasterizeMode = ERasterizeMode::Wireframe;
@@ -150,44 +150,44 @@ void Octree::submitNodeRecursive(RenderQueue& renderQueue, const Frustum& frustu
 			cmd.rasterizeMode = ERasterizeMode::Fill;
 		}
 
-		threadLocalCmd.push_back(cmd); // ¸ÖÆ¼½º·¹µå ·ÎÄÃ ·»´õ ¸í·É Å¥¿¡ Ãß°¡
+		threadLocalCmd.push_back(cmd); // ï¿½ï¿½Æ¼ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ Å¥ï¿½ï¿½ ï¿½ß°ï¿½
 	}
 
-	// µð¹ö±×: ³ëµå AABB¸¦ ¼±ºÐÀ¸·Î ·»´õ Å¥¿¡ Á¦Ãâ
+	// ï¿½ï¿½ï¿½ï¿½ï¿½: ï¿½ï¿½ï¿½ AABBï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ Å¥ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
 	if (debugFlags.bShowAABB)
 	{
-		// AABB 8°³ ²ÀÁþÁ¡ °è»ê
+		// AABB 8ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½
 		std::array<SRMath::vec3, 8> vertices = worldNodeAABB.GetVertice();
-		SRMath::vec4 color = SRMath::vec4(1.0f, 0.0f, 0.0f, 1.0f); // »¡°£»ö
+		SRMath::vec4 color = SRMath::vec4(1.0f, 0.0f, 0.0f, 1.0f); // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 		std::vector<DebugVertex> debugVertices;
 
-		// 12°³ÀÇ ¿§Áö¸¦ ¼±ºÐÀ¸·Î Ãß°¡ (Bottom/Top/Sides)
+		// 12ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ß°ï¿½ (Bottom/Top/Sides)
 		debugVertices.insert(debugVertices.end(), {
 			{vertices[0], color}, {vertices[1], color}, {vertices[1], color}, {vertices[3], color}, {vertices[3], color}, {vertices[2], color}, {vertices[2], color}, {vertices[0], color}, // Bottom
 			{vertices[4], color}, {vertices[5], color}, {vertices[5], color}, {vertices[7], color}, {vertices[7], color}, {vertices[6], color}, {vertices[6], color}, {vertices[4], color}, // Top
 			{vertices[0], color}, {vertices[4], color}, {vertices[1], color}, {vertices[5], color}, {vertices[2], color}, {vertices[6], color}, {vertices[3], color}, {vertices[7], color}  // Sides
 			});
 
-		// µð¹ö±× ÇÁ¸®¹ÌÆ¼ºê(¼±ºÐ) Á¦Ãâ
+		// ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Æ¼ï¿½ï¿½(ï¿½ï¿½ï¿½ï¿½) ï¿½ï¿½ï¿½ï¿½
 		DebugPrimitiveCommand cmd;
 		cmd.vertices = debugVertices;
-		cmd.worldTransform = SRMath::mat4::identity(); // ÀÌ¹Ì ¿ùµå·Î º¯È¯µÈ ÁÂÇ¥ÀÌ¹Ç·Î ´ÜÀ§Çà·Ä
+		cmd.worldTransform = SRMath::mat4::identity(); // ï¿½Ì¹ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½È¯ï¿½ï¿½ ï¿½ï¿½Ç¥ï¿½Ì¹Ç·ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 		cmd.type = DebugPrimitiveType::Line;
 		threadlocalDebugCmd.push_back(cmd);
 	}
 	
-	// ÀÚ½Ä ³ëµåµé¿¡ ´ëÇØ µ¿ÀÏ Ã³¸® (Á¸ÀçÇÏ´Â °æ¿ì¿¡¸¸)
+	// ï¿½Ú½ï¿½ ï¿½ï¿½ï¿½é¿¡ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ Ã³ï¿½ï¿½ (ï¿½ï¿½ï¿½ï¿½ï¿½Ï´ï¿½ ï¿½ï¿½ì¿¡ï¿½ï¿½)
 	for(const auto & child : node->children)
 	{
 		if (child) submitNodeRecursive(renderQueue, frustum, worldTransform, threadLocalCmd, threadlocalDebugCmd, debugFlags, child.get());
 	}
 }
 
-// ·çÆ®ºÎÅÍ ½ÃÀÛÇÏ¿© º¸ÀÌ´Â ³ëµåµéÀ» ·»´õ Å¥¿¡ Á¦ÃâÇÏ´Â ÁøÀÔÁ¡
+// ï¿½ï¿½Æ®ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½Ï¿ï¿½ ï¿½ï¿½ï¿½Ì´ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ Å¥ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½Ï´ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 void Octree::SubmitNodesToRenderQueue(RenderQueue& renderQueue, const Frustum& frustum, const SRMath::mat4& worldTransform,
 	std::vector<MeshRenderCommand>& threadLocalCmd, std::vector<DebugPrimitiveCommand>& threadlocalDebugCmd, const DebugFlags& debugFlags)
 {
-	if (!root) return; // ºôµåµÇÁö ¾ÊÀº °æ¿ì ¹«½Ã
+	if (!root) return; // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
 
 	submitNodeRecursive(renderQueue, frustum, worldTransform, threadLocalCmd, threadlocalDebugCmd, debugFlags, root.get());
 }

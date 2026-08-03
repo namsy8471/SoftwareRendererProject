@@ -1,4 +1,4 @@
-#pragma once
+ï»¿#pragma once
 #include "Math/SRMath.h"
 
 enum class DebugPrimitiveType
@@ -9,18 +9,18 @@ enum class DebugPrimitiveType
 	Circle,
 	Triangle,
 	Quad,
-	Count // µð¹ö±× ÇÁ¸®¹ÌÆ¼ºêÀÇ °³¼ö¸¦ ³ªÅ¸³»´Â ¿ëµµ·Î »ç¿ë
+	Count // ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Æ¼ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½Å¸ï¿½ï¿½ï¿½ï¿½ ï¿½ëµµï¿½ï¿½ ï¿½ï¿½ï¿½
 };
 
 struct DebugVertex
 {
-	SRMath::vec3 position; // À§Ä¡
-	SRMath::vec4 color;    // »ö»ó
+	SRMath::vec3 position; // ï¿½ï¿½Ä¡
+	SRMath::vec4 color;    // ï¿½ï¿½ï¿½ï¿½
 };
 
 struct DebugFlags
 {
-	bool bShowNormal = false; // ¹ý¼± º¤ÅÍ Ç¥½Ã ¿©ºÎ
-	bool bShowAABB = false;   // AABB Ç¥½Ã ¿©ºÎ
-	bool bShowWireframe = false; // ¿ÍÀÌ¾îÇÁ·¹ÀÓ Ç¥½Ã ¿©ºÎ
+	bool bShowNormal = false; // ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ Ç¥ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
+	bool bShowAABB = false;   // AABB Ç¥ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
+	bool bShowWireframe = false; // ï¿½ï¿½ï¿½Ì¾ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ Ç¥ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
 };

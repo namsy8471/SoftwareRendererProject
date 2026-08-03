@@ -1,11 +1,11 @@
-#pragma once
+ï»¿#pragma once
 #include <vector>
 #include "Graphics/ModelLoader.h"
 #include "Math/SRMath.h"
 #include "Graphics/Mesh.h"
 #include "Math/AABB.h"
 
-class RenderQueue; // Àü¹æ ¼±¾ð
+class RenderQueue; // ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
 
 class Model
 {
@@ -14,7 +14,7 @@ class Model
 
 private:
 	std::vector<Mesh> m_meshes;
-	AABB m_localAABB; // <-- ¸ðµ¨ ÀüÃ¼ÀÇ ·ÎÄÃ AABB ¸â¹ö Ãß°¡
+	AABB m_localAABB; // <-- ï¿½ï¿½ ï¿½ï¿½Ã¼ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ AABB ï¿½ï¿½ï¿½ ï¿½ß°ï¿½
 
 public:
 	const std::vector<Mesh>& GetMeshes() const { return m_meshes; }

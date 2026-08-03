@@ -1,4 +1,4 @@
-#pragma once
+ï»¿#pragma once
 
 #include <cmath>
 #include <optional>
@@ -348,7 +348,7 @@ namespace SRMath {
 	};
 
 	inline Vector<3>::Vector(const Vector<4>& v)
-		: m128(_mm_set_ps(0.0f, v.z, v.y, v.x)) // w´Â 0À¸·Î ¼³Á¤
+		: m128(_mm_set_ps(0.0f, v.z, v.y, v.x)) // wï¿½ï¿½ 0ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
 	{ }
 	// inline operator overloading function
 	template<size_t N>
@@ -419,7 +419,7 @@ namespace SRMath {
 		return ret != b;
 	}
 
-	// -- Matrix ¼±¾ð ¹× Á¤ÀÇ
+	// -- Matrix ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
 	template <size_t N> struct alignas(16) Matrix;
 	using mat3 = Matrix<3>;
 	using mat4 = Matrix<4>;
@@ -469,7 +469,7 @@ namespace SRMath {
 				"Second template argument must be mat4 or Matrix<4>");
 		}
 
-		// Çà·Ä °ö¼À ¿¬»êÀÚ ¿À¹ö·Îµù
+		// ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½Îµï¿½
 		vec4 operator[](size_t col_idx) const
 		{
 			// m_lhs * v
@@ -494,15 +494,15 @@ namespace SRMath {
 			float data[4 * 4];
 		};
 
-		// ±âº» »ý¼ºÀÚ¸¦ ¸í½ÃÀûÀ¸·Î Á¤ÀÇ
+		// ï¿½âº» ï¿½ï¿½ï¿½ï¿½ï¿½Ú¸ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
 		Matrix() : Matrix(1.f) {}
 
-		// ´ë°¢¼± °ªÀ» ¹Þ´Â »ý¼ºÀÚµµ È°¼ºÈ­
+		// ï¿½ë°¢ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½Þ´ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½Úµï¿½ È°ï¿½ï¿½È­
 		Matrix(float diagonal)
 		{
-			// unionÀÇ ÇÑ ¸â¹ö¸¦ ¼±ÅÃÇÏ¿© ÃÊ±âÈ­
-			// ¿¹¸¦ µé¾î ´ÜÀ§ Çà·Ä·Î ÃÊ±âÈ­
-			// ¿ª¼øÀ¸·Î ³Ö¾î¾ß ÇÔ
+			// unionï¿½ï¿½ ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½Ï¿ï¿½ ï¿½Ê±ï¿½È­
+			// ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½Ä·ï¿½ ï¿½Ê±ï¿½È­
+			// ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½Ö¾ï¿½ï¿½ ï¿½ï¿½
 			m128[0] = _mm_set_ps(0.0f, 0.0f, 0.0f, diagonal); // col 0
 			m128[1] = _mm_set_ps(0.0f, 0.0f, diagonal, 0.0f); // col 1
 			m128[2] = _mm_set_ps(0.0f, diagonal, 0.0f, 0.0f); // col 2
@@ -511,8 +511,8 @@ namespace SRMath {
 
 		static Matrix<4> identity()
 		{
-			// ÀÌÁ¦ ±âº» »ý¼ºÀÚ¸¦ È£ÃâÇÒ ¼ö ¾øÀ¸¹Ç·Î,
-			// ¾Æ·¡¿Í °°ÀÌ ¸í½ÃÀûÀ¸·Î »ý¼ºÀÚ¸¦ È£ÃâÇØ¾ß ÇÔ
+			// ï¿½ï¿½ï¿½ï¿½ ï¿½âº» ï¿½ï¿½ï¿½ï¿½ï¿½Ú¸ï¿½ È£ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½Ç·ï¿½,
+			// ï¿½Æ·ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½Ú¸ï¿½ È£ï¿½ï¿½ï¿½Ø¾ï¿½ ï¿½ï¿½
 			return Matrix<4>(1.f);
 		}
 
@@ -522,8 +522,8 @@ namespace SRMath {
 		template<typename T1, typename T2>
 		Matrix(const Matrix4x4Proxy<T1, T2>& proxy)
 		{
-			// ³»ºÎ ·ÎÁ÷Àº operator=¿Í ¿ÏÀüÈ÷ µ¿ÀÏÇÕ´Ï´Ù.
-			// ÇÁ·Ï½Ã·ÎºÎÅÍ °¢ ¿­ÀÇ °è»ê °á°ú¸¦ °¡Á®¿Í »õ Çà·ÄÀ» ÃÊ±âÈ­ÇÕ´Ï´Ù.
+			// ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ operator=ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½Õ´Ï´ï¿½.
+			// ï¿½ï¿½ï¿½Ï½Ã·Îºï¿½ï¿½ï¿½ ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½Ê±ï¿½È­ï¿½Õ´Ï´ï¿½.
 			for (int i = 0; i < 4; i++) this->m128[i] = _mm_setzero_ps();
 			multiply(*this, proxy.lhs(), proxy.rhs());
 		}
@@ -546,7 +546,7 @@ namespace SRMath {
 	};
 
 	template<>
-	struct Matrix<3> { // 16¹ÙÀÌÆ® Á¤·ÄÀÌ ÇÊ¼ö´Â ¾Æ´Ô
+	struct Matrix<3> { // 16ï¿½ï¿½ï¿½ï¿½Æ® ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½Ê¼ï¿½ï¿½ï¿½ ï¿½Æ´ï¿½
 
 		union {
 			Vector<3> cols[3];
@@ -588,14 +588,14 @@ namespace SRMath {
 
 	inline void multiply(mat4& result, const mat4& a, const mat4& b)
 	{
-		// AÀÇ ¿­µéÀ» ¹Ì¸® SIMD ·¹Áö½ºÅÍ¿¡ ·ÎµåÇÕ´Ï´Ù.
-		// ÀÌ·¸°Ô ÇÏ¸é ·çÇÁ¸¶´Ù ¸Þ¸ð¸®¿¡¼­ ÀÐ¾î¿À´Â °ÍÀ» ¹æÁöÇÒ ¼ö ÀÖ½À´Ï´Ù.
+		// Aï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½Ì¸ï¿½ SIMD ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Í¿ï¿½ ï¿½Îµï¿½ï¿½Õ´Ï´ï¿½.
+		// ï¿½Ì·ï¿½ï¿½ï¿½ ï¿½Ï¸ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½Þ¸ð¸®¿ï¿½ï¿½ï¿½ ï¿½Ð¾ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ ï¿½Ö½ï¿½ï¿½Ï´ï¿½.
 		__m128 a_col0 = a.m128[0];
 		__m128 a_col1 = a.m128[1];
 		__m128 a_col2 = a.m128[2];
 		__m128 a_col3 = a.m128[3];
 
-		// --- °á°ú Çà·ÄÀÇ Ã¹ ¹øÂ° ¿­ °è»ê ---
+		// --- ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ Ã¹ ï¿½ï¿½Â° ï¿½ï¿½ ï¿½ï¿½ï¿½ ---
 		__m128 b_splat = _mm_set1_ps(b.cols[0].x);
 		__m128 res = _mm_mul_ps(a_col0, b_splat);
 
@@ -609,7 +609,7 @@ namespace SRMath {
 		res = _mm_add_ps(res, _mm_mul_ps(a_col3, b_splat));
 		result.m128[0] = res;
 
-		// --- °á°ú Çà·ÄÀÇ µÎ ¹øÂ° ¿­ °è»ê ---
+		// --- ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ ï¿½ï¿½Â° ï¿½ï¿½ ï¿½ï¿½ï¿½ ---
 		b_splat = _mm_set1_ps(b.cols[1].x);
 		res = _mm_mul_ps(a_col0, b_splat);
 
@@ -623,7 +623,7 @@ namespace SRMath {
 		res = _mm_add_ps(res, _mm_mul_ps(a_col3, b_splat));
 		result.m128[1] = res;
 
-		// --- °á°ú Çà·ÄÀÇ ¼¼ ¹øÂ° ¿­ °è»ê ---
+		// --- ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ ï¿½ï¿½Â° ï¿½ï¿½ ï¿½ï¿½ï¿½ ---
 		b_splat = _mm_set1_ps(b.cols[2].x);
 		res = _mm_mul_ps(a_col0, b_splat);
 
@@ -637,7 +637,7 @@ namespace SRMath {
 		res = _mm_add_ps(res, _mm_mul_ps(a_col3, b_splat));
 		result.m128[2] = res;
 
-		// --- °á°ú Çà·ÄÀÇ ³× ¹øÂ° ¿­ °è»ê ---
+		// --- ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ ï¿½ï¿½Â° ï¿½ï¿½ ï¿½ï¿½ï¿½ ---
 		b_splat = _mm_set1_ps(b.cols[3].x);
 		res = _mm_mul_ps(a_col0, b_splat);
 
@@ -759,7 +759,7 @@ namespace SRMath {
 	static Matrix<4> translate(const Vector<3>& v)
 	{
 		Matrix<4> ret(1.0f);
-		ret[3].m128 = _mm_set_ps(1.0f, v.z, v.y, v.x); // SIMD ÃÖÀûÈ­
+		ret[3].m128 = _mm_set_ps(1.0f, v.z, v.y, v.x); // SIMD ï¿½ï¿½ï¿½ï¿½È­
 		return ret;
 	}
 
@@ -776,36 +776,36 @@ namespace SRMath {
 	// Rotate Mat4 (Right-handed Coordinate System)
 	static inline Matrix<4> rotate(const vec3& rotationVector)
 	{
-		// 1. º¤ÅÍÀÇ Å©±â(length)¸¦ È¸Àü °¢µµ(angle)·Î »ç¿ëÇÕ´Ï´Ù.
+		// 1. ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ Å©ï¿½ï¿½(length)ï¿½ï¿½ È¸ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½(angle)ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½Õ´Ï´ï¿½.
 		float angleInRadians = length(rotationVector);
 
-		// 2. ¸¸¾à È¸Àü °¢µµ°¡ °ÅÀÇ 0ÀÌ¸é, °è»ê ¾øÀÌ ´ÜÀ§ Çà·ÄÀ» ¹ÝÈ¯ÇÕ´Ï´Ù (ÃÖÀûÈ­ ¹× 0À¸·Î ³ª´©±â ¹æÁö).
+		// 2. ï¿½ï¿½ï¿½ï¿½ È¸ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ 0ï¿½Ì¸ï¿½, ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½È¯ï¿½Õ´Ï´ï¿½ (ï¿½ï¿½ï¿½ï¿½È­ ï¿½ï¿½ 0ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½).
 		if (angleInRadians < 1e-6f)
 		{
 			return Matrix<4>(1.0f);
 		}
 
-		// 3. º¤ÅÍ¸¦ Á¤±ÔÈ­ÇÏ¿© È¸Àü ÃàÀ» ±¸ÇÕ´Ï´Ù.
+		// 3. ï¿½ï¿½ï¿½Í¸ï¿½ ï¿½ï¿½ï¿½ï¿½È­ï¿½Ï¿ï¿½ È¸ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½Õ´Ï´ï¿½.
 		vec3 axis = rotationVector / angleInRadians;
 
-		// 4. ±âÁ¸ÀÇ ·Îµå¸®°Ô½º È¸Àü °ø½Ä ÄÚµå¸¦ ±×´ë·Î »ç¿ëÇÕ´Ï´Ù.
+		// 4. ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½Îµå¸®ï¿½Ô½ï¿½ È¸ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½Úµå¸¦ ï¿½×´ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½Õ´Ï´ï¿½.
 		const float c = std::cos(angleInRadians);
 		const float s = std::sin(angleInRadians);
 		const float t = 1.0f - c;
 
-		Matrix<4> result(1); // ´ÜÀ§ Çà·Ä·Î ÃÊ±âÈ­ÇÒ ÇÊ¿ä ¾øÀ½. ¸ðµç ¿ä¼Ò¸¦ Á÷Á¢ ¼³Á¤.
+		Matrix<4> result(1); // ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½Ä·ï¿½ ï¿½Ê±ï¿½È­ï¿½ï¿½ ï¿½Ê¿ï¿½ ï¿½ï¿½ï¿½ï¿½. ï¿½ï¿½ï¿½ ï¿½ï¿½Ò¸ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½.
 
-		// ¿À¸¥¼Õ ÁÂÇ¥°è ¿­ ¿ì¼± È¸Àü Çà·Ä
+		// ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½Ç¥ï¿½ï¿½ ï¿½ï¿½ ï¿½ì¼± È¸ï¿½ï¿½ ï¿½ï¿½ï¿½
 		result[0].m128 = _mm_set_ps(0.0f, axis.z * axis.x * t - axis.y * s,
-			axis.y* axis.x* t + axis.z * s, c + axis.x * axis.x * t); // SIMD ÃÖÀûÈ­
+			axis.y* axis.x* t + axis.z * s, c + axis.x * axis.x * t); // SIMD ï¿½ï¿½ï¿½ï¿½È­
 
 		result[1].m128 = _mm_set_ps(0.0f, axis.z * axis.y * t + axis.x * s,
-			c + axis.y * axis.y * t, axis.x * axis.y * t - axis.z * s); // SIMD ÃÖÀûÈ­
+			c + axis.y * axis.y * t, axis.x * axis.y * t - axis.z * s); // SIMD ï¿½ï¿½ï¿½ï¿½È­
 
 		result[2].m128 = _mm_set_ps(0.0f, c + axis.z * axis.z * t,
-			axis.y * axis.z * t - axis.x * s, axis.x * axis.z * t + axis.y * s); // SIMD ÃÖÀûÈ­
+			axis.y * axis.z * t - axis.x * s, axis.x * axis.z * t + axis.y * s); // SIMD ï¿½ï¿½ï¿½ï¿½È­
 
-		result[3].m128 = _mm_set_ps(1.0f, 0.0f, 0.0f, 0.0f); // ¸¶Áö¸· ÇàÀº ´ÜÀ§ Çà·ÄÀÇ ¸¶Áö¸· Çà
+		result[3].m128 = _mm_set_ps(1.0f, 0.0f, 0.0f, 0.0f); // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½
 
 		return result;
 	}
@@ -837,19 +837,19 @@ namespace SRMath {
 		result[0][1] = u.x;
 		result[0][2] = -f.x;*/
 
-		result[0].m128 = _mm_set_ps(0.0f, -f.x, u.x, s.x); // SIMD ÃÖÀûÈ­
+		result[0].m128 = _mm_set_ps(0.0f, -f.x, u.x, s.x); // SIMD ï¿½ï¿½ï¿½ï¿½È­
 
 		/*result[1][0] = s.y;
 		result[1][1] = u.y;
 		result[1][2] = -f.y;*/
 
-		result[1].m128 = _mm_set_ps(0.0f, -f.y, u.y, s.y); // SIMD ÃÖÀûÈ­
+		result[1].m128 = _mm_set_ps(0.0f, -f.y, u.y, s.y); // SIMD ï¿½ï¿½ï¿½ï¿½È­
 
 		/*result[2][0] = s.z;
 		result[2][1] = u.z;
 		result[2][2] = -f.z;*/
 
-		result[2].m128 = _mm_set_ps(0.0f, -f.z, u.z, s.z); // SIMD ÃÖÀûÈ­
+		result[2].m128 = _mm_set_ps(0.0f, -f.z, u.z, s.z); // SIMD ï¿½ï¿½ï¿½ï¿½È­
 
 		/*result[3][0] = -dot(s, eye);
 		result[3][1] = -dot(u, eye);
@@ -860,18 +860,18 @@ namespace SRMath {
 		return result;
 	}
 
-	// SIMD¸¦ »ç¿ëÇÑ 4x4 Çà·Ä ÀüÄ¡ ÇÔ¼ö
+	// SIMDï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ 4x4 ï¿½ï¿½ï¿½ ï¿½ï¿½Ä¡ ï¿½Ô¼ï¿½
 	inline mat4 transpose(const mat4& m) {
 		mat4 result;
 
-		// ÀÓ½Ã º¯¼ö·Î µÎ ¿­¾¿ ¹­¾î Ã³¸®
+		// ï¿½Ó½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ Ã³ï¿½ï¿½
 		__m128 tmp0 = _mm_unpacklo_ps(m.m128[0], m.m128[1]); // {x0, x1, y0, y1}
 		__m128 tmp1 = _mm_unpackhi_ps(m.m128[0], m.m128[1]); // {z0, z1, w0, w1}
 		__m128 tmp2 = _mm_unpacklo_ps(m.m128[2], m.m128[3]); // {x2, x3, y2, y3}
 		__m128 tmp3 = _mm_unpackhi_ps(m.m128[2], m.m128[3]); // {z2, z3, w2, w3}
 
-		// ÀÓ½Ã º¯¼öµéÀ» ´Ù½Ã ¼¯¾î¼­ ÃÖÁ¾ Çà(row)À» ¸¸µì´Ï´Ù.
-		// ÀÌ ÇàµéÀÌ °á°ú Çà·ÄÀÇ »õ·Î¿î ¿­(column)ÀÌ µË´Ï´Ù.
+		// ï¿½Ó½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½Ù½ï¿½ ï¿½ï¿½ï¿½î¼­ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½(row)ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½Ï´ï¿½.
+		// ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½Î¿ï¿½ ï¿½ï¿½(column)ï¿½ï¿½ ï¿½Ë´Ï´ï¿½.
 		result.m128[0] = _mm_movelh_ps(tmp0, tmp2); // {x0, x1, x2, x3}
 		result.m128[1] = _mm_movehl_ps(tmp2, tmp0); // {y0, y1, y2, y3}
 		result.m128[2] = _mm_movelh_ps(tmp1, tmp3); // {z0, z1, z2, z3}
@@ -880,8 +880,8 @@ namespace SRMath {
 		return result;
 	}
 
-	// SIMD¸¦ »ç¿ëÇÑ 4x4 Çà·Ä ¿ªÇà·Ä ÇÔ¼ö
-	// Çà·Ä½ÄÀÌ 0¿¡ °¡±î¿ì¸é ¿ªÇà·ÄÀÌ Á¸ÀçÇÏÁö ¾ÊÀ¸¹Ç·Î false¸¦ ¹ÝÈ¯ÇÕ´Ï´Ù.
+	// SIMDï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ 4x4 ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½Ô¼ï¿½
+	// ï¿½ï¿½Ä½ï¿½ï¿½ï¿½ 0ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½Ç·ï¿½ falseï¿½ï¿½ ï¿½ï¿½È¯ï¿½Õ´Ï´ï¿½.
 	inline std::optional<mat4> inverse(const mat4& m) {
 		// We'll represent augmented matrix rows as:
 	// rowL[r] = left 4 elements (original matrix row r)  -> __m128
@@ -970,7 +970,7 @@ namespace SRMath {
 		if (auto inverse_mat = inverse(m)) {
 			return transpose(*inverse_mat);
 		}
-		// ¿ªÇà·ÄÀÌ ¾ø´Â °æ¿ì, ´ÜÀ§ Çà·Ä µî ÀûÀýÇÑ °ªÀ» ¹ÝÈ¯
+		// ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½, ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½È¯
 		return std::nullopt;
 	}
 

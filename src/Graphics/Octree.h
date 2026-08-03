@@ -1,4 +1,4 @@
-#pragma once
+ï»¿#pragma once
 #include <memory>
 #include <vector>
 #include "Math/SRMath.h"
@@ -12,7 +12,7 @@ struct DebugFlags;
 class Octree
 {
 private:
-	friend class Renderer; // Renderer.h¿¡¼­ OctreeNode¸¦ »ç¿ëÇÏ±â ¶§¹®¿¡ ÇÊ¿ä
+	friend class Renderer; // Renderer.hï¿½ï¿½ï¿½ï¿½ OctreeNodeï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½Ï±ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½Ê¿ï¿½
 	class OctreeNode;
 
 	void subdivide(OctreeNode* node);
@@ -38,4 +38,3 @@ public:
 	void SubmitNodesToRenderQueue(RenderQueue& renderQueue, const Frustum& frustum, const SRMath::mat4& worldTransform,
 		std::vector<MeshRenderCommand>& threadLocalCmd, std::vector<DebugPrimitiveCommand>& localDebugCmd, const DebugFlags& debugFlags);
 };
-

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "Core/pch.h"
 
 class PerformanceAnalyzer
@@ -21,4 +21,3 @@ public:
 	int GetAvgFPSForSecond() const { return m_avgfps; }
 	float GetDeltaTime() const { return deltaTime; }
 };
-

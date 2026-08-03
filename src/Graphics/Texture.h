@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "TextureLoader.h"
 #include <memory>
 
@@ -21,4 +21,3 @@ public:
 
 	void SetPixels(StbiImagePtr pixels) { m_pPixels = std::move(pixels); }
 };
-

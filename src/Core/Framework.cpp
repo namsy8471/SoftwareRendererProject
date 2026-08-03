@@ -1,4 +1,4 @@
-#include "Framework.h"
+ï»¿#include "Framework.h"
 #include "resource.h"
 #include "Renderer/Renderer.h"
 #include "Math/Frustum.h"
@@ -9,7 +9,7 @@
 
 Framework::Framework(HINSTANCE hInstance, int nCmdShow)
 {
-    // Àü¿ª ¹®ÀÚ¿­À» ÃÊ±âÈ­ÇÕ´Ï´Ù.
+    // ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½Ú¿ï¿½ï¿½ï¿½ ï¿½Ê±ï¿½È­ï¿½Õ´Ï´ï¿½.
     LoadStringW(hInstance, IDS_APP_TITLE, m_szTitle, MAX_LOADSTRING);
     LoadStringW(hInstance, IDC_SOFTRENDERERPROJECT, m_szWindowClass, MAX_LOADSTRING);
 
@@ -94,7 +94,7 @@ void Framework::Run()
     MSG msg;
     ZeroMemory(&msg, sizeof(msg));
 
-    // ±âº» ¸Þ½ÃÁö ·çÇÁÀÔ´Ï´Ù:
+    // ï¿½âº» ï¿½Þ½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½Ô´Ï´ï¿½:
     while (msg.message != WM_QUIT)
     {
         if (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
@@ -105,17 +105,17 @@ void Framework::Run()
 
         else {
             int prevFPS = m_perfAnalyzer.GetAvgFPSForSecond();
-            // ¸Þ½ÃÁö°¡ ¾ø´Â ÀÌ ½Ã°£¿¡ ·»´õ¸µ ÄÚµå¸¦ ½ÇÇà!
+            // ï¿½Þ½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ ï¿½Ã°ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½Úµå¸¦ ï¿½ï¿½ï¿½ï¿½!
             m_perfAnalyzer.Update();
 
             if (m_perfAnalyzer.GetAvgFPSForSecond() != prevFPS) {
-                // ¹®ÀÚ¿­ ¹öÆÛ¸¦ ÁØºñÇÏ°í
+                // ï¿½ï¿½ï¿½Ú¿ï¿½ ï¿½ï¿½ï¿½Û¸ï¿½ ï¿½Øºï¿½ï¿½Ï°ï¿½
                 wchar_t buffer[100];
-                // "SoftrendererProject - FPS: 60" °°Àº Çü½ÄÀ¸·Î ¹®ÀÚ¿­À» ¸¸µì´Ï´Ù.
+                // "SoftrendererProject - FPS: 60" ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½Ú¿ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½Ï´ï¿½.
                 swprintf_s(buffer, 100, L"%s - AvgFPS: %d",
                     m_szTitle, m_perfAnalyzer.GetAvgFPSForSecond());
 
-                // Ã¢ Á¦¸ñÀ» ¼³Á¤ÇÕ´Ï´Ù.
+                // Ã¢ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½Õ´Ï´ï¿½.
                 SetWindowText(m_hWnd, buffer);
             }
 
@@ -178,7 +178,7 @@ LRESULT Framework::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
     case WM_COMMAND:
     {
         int wmId = LOWORD(wParam);
-        // ¸Þ´º ¼±ÅÃÀ» ±¸¹® ºÐ¼®ÇÕ´Ï´Ù:
+        // ï¿½Þ´ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½Ð¼ï¿½ï¿½Õ´Ï´ï¿½:
         switch (wmId)
         {
 
@@ -232,7 +232,7 @@ LRESULT Framework::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
     case WM_PAINT:
     {
         // It is not used anymore
-        // ÇÏÁö¸¸ Áö¿ì¸é À©µµ¿ì ¿¡·¯ È¤Àº ÇïÇÁ Ã¢ÀÌ ¾È ¶ß¹Ç·Î ³²±è. 
+        // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ È¤ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ Ã¢ï¿½ï¿½ ï¿½ï¿½ ï¿½ß¹Ç·ï¿½ ï¿½ï¿½ï¿½ï¿½. 
         PAINTSTRUCT ps;
         HDC hdc = BeginPaint(hWnd, &ps);
         EndPaint(hWnd, &ps);
@@ -319,21 +319,21 @@ void Framework::CheckMenuBox(bool isOn, const int& menuID)
     
     HMENU hMenu = GetMenu(m_hWnd);
 
-    // CheckMenuItem ÇÔ¼ö¸¦ È£ÃâÇÏ¿© Ã¼Å© Ç¥½Ã¸¦ ¾÷µ¥ÀÌÆ®ÇÕ´Ï´Ù.
+    // CheckMenuItem ï¿½Ô¼ï¿½ï¿½ï¿½ È£ï¿½ï¿½ï¿½Ï¿ï¿½ Ã¼Å© Ç¥ï¿½Ã¸ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Æ®ï¿½Õ´Ï´ï¿½.
     if (isOn)
     {
-        // »óÅÂ°¡ trueÀÌ¸é, MF_CHECKED ÇÃ·¡±×·Î Ã¼Å© Ç¥½Ã¸¦ Ãß°¡ÇÕ´Ï´Ù.
+        // ï¿½ï¿½ï¿½Â°ï¿½ trueï¿½Ì¸ï¿½, MF_CHECKED ï¿½Ã·ï¿½ï¿½×·ï¿½ Ã¼Å© Ç¥ï¿½Ã¸ï¿½ ï¿½ß°ï¿½ï¿½Õ´Ï´ï¿½.
         CheckMenuItem(hMenu, menuID, MF_BYCOMMAND | MF_CHECKED);
     }
     else
     {
-        // »óÅÂ°¡ falseÀÌ¸é, MF_UNCHECKED ÇÃ·¡±×·Î Ã¼Å© Ç¥½Ã¸¦ Á¦°ÅÇÕ´Ï´Ù.
+        // ï¿½ï¿½ï¿½Â°ï¿½ falseï¿½Ì¸ï¿½, MF_UNCHECKED ï¿½Ã·ï¿½ï¿½×·ï¿½ Ã¼Å© Ç¥ï¿½Ã¸ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½Õ´Ï´ï¿½.
         CheckMenuItem(hMenu, menuID, MF_BYCOMMAND | MF_UNCHECKED);
     }
 
 }
 
-// ¸Þ½ÃÁö Ã³¸®±â
+// ï¿½Þ½ï¿½ï¿½ï¿½ Ã³ï¿½ï¿½ï¿½ï¿½
 LRESULT Framework::WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
     Framework* pFramework = nullptr;
@@ -357,7 +357,7 @@ LRESULT Framework::WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam
     return DefWindowProc(hWnd, message, wParam, lParam);
 }
 
-// Á¤º¸ ´ëÈ­ »óÀÚÀÇ ¸Þ½ÃÁö Ã³¸®±âÀÔ´Ï´Ù.
+// ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½È­ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½Þ½ï¿½ï¿½ï¿½ Ã³ï¿½ï¿½ï¿½ï¿½ï¿½Ô´Ï´ï¿½.
 INT_PTR Framework::About(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
 {
     UNREFERENCED_PARAMETER(lParam);
@@ -376,4 +376,3 @@ INT_PTR Framework::About(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
     }
     return (INT_PTR)FALSE;
 }
-

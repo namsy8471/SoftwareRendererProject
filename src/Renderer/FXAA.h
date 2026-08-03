@@ -1,16 +1,16 @@
-#pragma once
+ï»¿#pragma once
 #include "Math/SRMath.h"
 #include <limits>
 #include <tbb/tbb.h>
 
-// 32ºñÆ® unsigned int(0x00BBGGRR)¸¦ Color ±¸Á¶Ã¼·Î º¯È¯
+// 32ï¿½ï¿½Æ® unsigned int(0x00BBGGRR)ï¿½ï¿½ Color ï¿½ï¿½ï¿½ï¿½Ã¼ï¿½ï¿½ ï¿½ï¿½È¯
 inline void unpackColor(unsigned int p, SRMath::Color& c) {
     c.b = static_cast<float>((p >> 16) & 0xFF) / 255.0f;
     c.g = static_cast<float>((p >> 8) & 0xFF) / 255.0f;
     c.r = static_cast<float>(p & 0xFF) / 255.0f;
 }
 
-// Color ±¸Á¶Ã¼¸¦ 32ºñÆ® unsigned int(0x00BBGGRR)·Î º¯È¯
+// Color ï¿½ï¿½ï¿½ï¿½Ã¼ï¿½ï¿½ 32ï¿½ï¿½Æ® unsigned int(0x00BBGGRR)ï¿½ï¿½ ï¿½ï¿½È¯
 inline unsigned int packColor(const SRMath::Color& c) {
     unsigned int r = static_cast<unsigned int>(std::min(c.r, 1.0f) * 255.0f);
     unsigned int g = static_cast<unsigned int>(std::min(c.g, 1.0f) * 255.0f);
@@ -18,7 +18,7 @@ inline unsigned int packColor(const SRMath::Color& c) {
     return (b << 16) | (g << 8) | r;
 }
 
-// ¼±Çü º¸°£
+// ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
 SRMath::Color LerpColor(const SRMath::Color& a, const SRMath::Color& b, float t) {
     return {
         a.r + (b.r - a.r) * t,
@@ -28,33 +28,33 @@ SRMath::Color LerpColor(const SRMath::Color& a, const SRMath::Color& b, float t)
 }
 
 float RGBToLuma(const SRMath::Color& color) {
-	// NTSC Ç¥ÁØ °¡ÁßÄ¡
+	// NTSC Ç¥ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½Ä¡
 	return color.r * 0.299f + color.g * 0.587f + color.b * 0.114f;
 }
 
 void ApplyFXAA(const unsigned int* inBuffer, unsigned int* outBuffer, int width, int height) {
-    // --- Æ©´× °¡´ÉÇÑ »ó¼öµé ---
-    const float EDGE_THRESHOLD = 0.08f;        // °æ°è¼± °¨Áö ¹Î°¨µµ (³·À»¼ö·Ï ¹Î°¨)
-    const float EDGE_THRESHOLD_MIN = 0.03125f; // ¾îµÎ¿î °÷¿¡¼­ÀÇ ÃÖ¼Ò ¹Î°¨µµ
-    const int MAX_SPAN = 16;                   // °æ°è¼± ÃÖ´ë Å½»ö °Å¸®
-    const float EPS = 1e-6f;                   // 0¿¡ °¡±î¿î °ª ºñ±³¿ë
-	const float BLEND_FACTOR = 0.2f;           // ºí·»µù °­µµ Á¶Àý (0.0 ~ 1.0)
+    // --- Æ©ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ ---
+    const float EDGE_THRESHOLD = 0.08f;        // ï¿½ï¿½è¼± ï¿½ï¿½ï¿½ï¿½ ï¿½Î°ï¿½ï¿½ï¿½ (ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½Î°ï¿½)
+    const float EDGE_THRESHOLD_MIN = 0.03125f; // ï¿½ï¿½Î¿ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½Ö¼ï¿½ ï¿½Î°ï¿½ï¿½ï¿½
+    const int MAX_SPAN = 16;                   // ï¿½ï¿½è¼± ï¿½Ö´ï¿½ Å½ï¿½ï¿½ ï¿½Å¸ï¿½
+    const float EPS = 1e-6f;                   // 0ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ ï¿½ñ±³¿ï¿½
+	const float BLEND_FACTOR = 0.2f;           // ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ (0.0 ~ 1.0)
 
-    // lumaBuffer¸¦ º´·Ä ¿µ¿ª '¹Ù±ù'¿¡¼­ ¼±¾ð (¿Ã¹Ù¸¥ ±¸Á¶)
+    // lumaBufferï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ 'ï¿½Ù±ï¿½'ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ (ï¿½Ã¹Ù¸ï¿½ ï¿½ï¿½ï¿½ï¿½)
     std::vector<float> lumaBuffer(width * height);
 
 
-    // --- ¸ðµç ÇÈ¼¿À» ¼øÈ¸ ---
+    // --- ï¿½ï¿½ï¿½ ï¿½È¼ï¿½ï¿½ï¿½ ï¿½ï¿½È¸ ---
     tbb::parallel_for(tbb::blocked_range(1, height - 1),
         [&](const tbb::blocked_range<int>& r) {
 
-            //    Luma °è»ê ¿µ¿ª ¼³Á¤: ÇöÀç ½º·¹µå°¡ ¸ÃÀº Çà(r)ÀÇ À§¾Æ·¡ 1ÇÈ¼¿¾¿À» Æ÷ÇÔ
-            //    FXAA ¿¬»ê ½Ã ÀÌ¿ô ÇÈ¼¿ÀÇ luma °ªÀÌ ÇÊ¿äÇÏ±â ¶§¹®ÀÔ´Ï´Ù.
+            //    Luma ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½: ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½å°¡ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½(r)ï¿½ï¿½ ï¿½ï¿½ï¿½Æ·ï¿½ 1ï¿½È¼ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
+            //    FXAA ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ ï¿½Ì¿ï¿½ ï¿½È¼ï¿½ï¿½ï¿½ luma ï¿½ï¿½ï¿½ï¿½ ï¿½Ê¿ï¿½ï¿½Ï±ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½Ô´Ï´ï¿½.
             const int luma_y_start = std::max(0, r.begin() - 1);
             const int luma_y_end = std::min(height, r.end() + 1);
 
-            //   'ÇÊ¿äÇÑ ¸¸Å­¸¸' Luma ¸Ê ¸¸µé±â
-            //    ÀÌ µ¥ÀÌÅÍ´Â ÇöÀç ½º·¹µåÀÇ CPU Ä³½Ã¿¡ ÀúÀåµÉ È®·üÀÌ ¸Å¿ì ³ô½À´Ï´Ù.
+            //   'ï¿½Ê¿ï¿½ï¿½ï¿½ ï¿½ï¿½Å­ï¿½ï¿½' Luma ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½
+            //    ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½Í´ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ CPU Ä³ï¿½Ã¿ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ È®ï¿½ï¿½ï¿½ï¿½ ï¿½Å¿ï¿½ ï¿½ï¿½ï¿½ï¿½Ï´ï¿½.
             for (int y = luma_y_start; y < luma_y_end; ++y) {
                 for (int x = 0; x < width; ++x) {
                     SRMath::Color tempColor;
@@ -67,7 +67,7 @@ void ApplyFXAA(const unsigned int* inBuffer, unsigned int* outBuffer, int width,
                 for (int x = 1; x < width - 1; ++x) {
                     const int idx = y * width + x;
 
-                    // 2. °æ°è¼± °¨Áö (±âÁ¸°ú µ¿ÀÏ)
+                    // 2. ï¿½ï¿½è¼± ï¿½ï¿½ï¿½ï¿½ (ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½)
                     const float lC = lumaBuffer[idx];
                     const float lN = lumaBuffer[(y - 1) * width + x];
                     const float lS = lumaBuffer[(y + 1) * width + x];
@@ -80,25 +80,25 @@ void ApplyFXAA(const unsigned int* inBuffer, unsigned int* outBuffer, int width,
                     const float thresh = std::max(EDGE_THRESHOLD_MIN, lMax * EDGE_THRESHOLD);
                     if (contrast < thresh) { outBuffer[idx] = inBuffer[idx]; continue; }
 
-                    // 3. °æ°è¼± ¹æÇâ Å½Áö (±âÁ¸°ú µ¿ÀÏ)
+                    // 3. ï¿½ï¿½è¼± ï¿½ï¿½ï¿½ï¿½ Å½ï¿½ï¿½ (ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½)
                     const float diffH = std::abs(lW - lE);
                     const float diffV = std::abs(lN - lS);
-                    const bool isVerticalEdge = (diffV >= diffH); // ÀÌ¸§ ¸íÈ®È­: isVerticalEdge
+                    const bool isVerticalEdge = (diffV >= diffH); // ï¿½Ì¸ï¿½ ï¿½ï¿½È®È­: isVerticalEdge
 
-                    // 4. °æ°è¼± ³¡Á¡ Å½»ö (±âÁ¸°ú µ¿ÀÏ)
+                    // 4. ï¿½ï¿½è¼± ï¿½ï¿½ï¿½ï¿½ Å½ï¿½ï¿½ (ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½)
                     const float gradient = isVerticalEdge ? diffV : diffH;
                     if (gradient <= EPS) { outBuffer[idx] = inBuffer[idx]; continue; }
                     float negDist = 0.0f, posDist = 0.0f;
-                    // (-) ¹æÇâ Å½»ö
+                    // (-) ï¿½ï¿½ï¿½ï¿½ Å½ï¿½ï¿½
                     for (int i = 0; i < MAX_SPAN; ++i) {
                         const int nx = isVerticalEdge ? x : x - i - 1;
                         const int ny = isVerticalEdge ? y - i - 1 : y;
                         if (nx < 0 || ny < 0) break;
                         const float dl = std::abs(lumaBuffer[ny * width + nx] - lC);
-                        if (dl / gradient >= 0.4f) break; // 0.5f º¸´Ù ¾à°£ °ü´ëÇÑ ±âÁØ
+                        if (dl / gradient >= 0.4f) break; // 0.5f ï¿½ï¿½ï¿½ï¿½ ï¿½à°£ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
                         negDist = float(i + 1);
                     }
-                    // (+) ¹æÇâ Å½»ö
+                    // (+) ï¿½ï¿½ï¿½ï¿½ Å½ï¿½ï¿½
                     for (int i = 0; i < MAX_SPAN; ++i) {
                         const int nx = isVerticalEdge ? x : x + i + 1;
                         const int ny = isVerticalEdge ? y + i + 1 : y;
@@ -109,31 +109,31 @@ void ApplyFXAA(const unsigned int* inBuffer, unsigned int* outBuffer, int width,
                     }
 
                     // =======================================================================
-                    // 5. ÃÖÁ¾ ºí·»µù (ÀÌ ºÎºÐÀÌ Ç¥ÁØ FXAA ¹æ½ÄÀ¸·Î º¯°æµÊ)
+                    // 5. ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ (ï¿½ï¿½ ï¿½Îºï¿½ï¿½ï¿½ Ç¥ï¿½ï¿½ FXAA ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½)
                     // =======================================================================
                     const float edgeLength = posDist + negDist;
-                    if (edgeLength < 1.0f) { // À¯ÀÇ¹ÌÇÑ ±æÀÌ°¡ ¾Æ´Ï¸é ¹«½Ã
+                    if (edgeLength < 1.0f) { // ï¿½ï¿½ï¿½Ç¹ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½Ì°ï¿½ ï¿½Æ´Ï¸ï¿½ ï¿½ï¿½ï¿½ï¿½
                         outBuffer[idx] = inBuffer[idx];
                         continue;
                     }
 
-                    // 5-1. °æ°è¼±ÀÇ Áß½ÉÀÌ ÇöÀç ÇÈ¼¿ Áß½É¿¡¼­ ¾ó¸¶³ª ¹þ¾î³µ´ÂÁö °è»ê
-                    const float pixelOffset = (posDist - negDist) / edgeLength; // °á°ú: [-1.0 ~ 1.0]
+                    // 5-1. ï¿½ï¿½è¼±ï¿½ï¿½ ï¿½ß½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½È¼ï¿½ ï¿½ß½É¿ï¿½ï¿½ï¿½ ï¿½ó¸¶³ï¿½ ï¿½ï¿½ï¿½î³µï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½
+                    const float pixelOffset = (posDist - negDist) / edgeLength; // ï¿½ï¿½ï¿½: [-1.0 ~ 1.0]
 
-                    // 5-2. ºí·»µù °­µµ °è»ê
-                    // pixelOffsetÀÇ BLEND_FACTOR¸¸Å­ ÀÌµ¿½ÃÅ²´Ù°í °¡Á¤
+                    // 5-2. ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½
+                    // pixelOffsetï¿½ï¿½ BLEND_FACTORï¿½ï¿½Å­ ï¿½Ìµï¿½ï¿½ï¿½Å²ï¿½Ù°ï¿½ ï¿½ï¿½ï¿½ï¿½
                     const float blendFactor = BLEND_FACTOR * std::abs(pixelOffset);
 
-                    // 5-3. ¼¯À» ÀÌ¿ô ÇÈ¼¿ ¼±ÅÃ (°æ°è¼±¿¡ '¼öÁ÷ÀÎ' ¹æÇâ)
+                    // 5-3. ï¿½ï¿½ï¿½ï¿½ ï¿½Ì¿ï¿½ ï¿½È¼ï¿½ ï¿½ï¿½ï¿½ï¿½ (ï¿½ï¿½è¼±ï¿½ï¿½ 'ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½' ï¿½ï¿½ï¿½ï¿½)
                     int neighborIdx;
-                    if (isVerticalEdge) { // ¼öÁ÷ °æ°è¼± -> À§/¾Æ·¡ ÇÈ¼¿°ú ¼¯À½
+                    if (isVerticalEdge) { // ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½è¼± -> ï¿½ï¿½/ï¿½Æ·ï¿½ ï¿½È¼ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
                         neighborIdx = pixelOffset > 0 ? (y - 1) * width + x : (y + 1) * width + x;
                     }
-                    else { // ¼öÆò °æ°è¼± -> ÁÂ/¿ì ÇÈ¼¿°ú ¼¯À½
+                    else { // ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½è¼± -> ï¿½ï¿½/ï¿½ï¿½ ï¿½È¼ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
                         neighborIdx = pixelOffset > 0 ? (y * width + x - 1) : (y * width + x + 1);
                     }
 
-                    // 5-4. ÃÖÁ¾ »ö»ó °è»ê
+                    // 5-4. ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½
                     SRMath::Color colorCenter, neighborColor;
                     unpackColor(inBuffer[idx], colorCenter);
                     unpackColor(inBuffer[neighborIdx], neighborColor);
@@ -144,7 +144,7 @@ void ApplyFXAA(const unsigned int* inBuffer, unsigned int* outBuffer, int width,
 			}});
     
 
-    // °¡ÀåÀÚ¸®´Â ¿øº» º¹»ç
+    // ï¿½ï¿½ï¿½ï¿½ï¿½Ú¸ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
     for (int y = 0; y < height; ++y) {
         outBuffer[y * width] = inBuffer[y * width];
         outBuffer[y * width + width - 1] = inBuffer[y * width + width - 1];

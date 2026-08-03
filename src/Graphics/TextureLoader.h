@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <string>
 #include <unordered_map>
 #include <memory>
@@ -19,4 +19,3 @@ public:
 	static std::shared_ptr<Texture> LoadImageFile(const std::string& filepath);
 	static std::unordered_map<std::string, Material> LoadMTLFile(const std::string& filepath);
 };
-

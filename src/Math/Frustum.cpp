@@ -1,9 +1,9 @@
-#include "Frustum.h"
+ï»¿#include "Frustum.h"
 
 void Frustum::Update(const SRMath::mat4& vpMatrix)
 {
-	// View-Projection Çà·Ä¿¡¼­ °¢ Æò¸éÀÇ ¹æÁ¤½ÄÀ» ÃßÃâÇÕ´Ï´Ù.
-	// Ax + By + Cz + D = 0 ÇüÅÂ
+	// View-Projection ï¿½ï¿½Ä¿ï¿½ï¿½ï¿½ ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½Õ´Ï´ï¿½.
+	// Ax + By + Cz + D = 0 ï¿½ï¿½ï¿½ï¿½
 
 	// Left plane
 	planes[0].normal.x = vpMatrix[0][3] + vpMatrix[0][0];
@@ -41,7 +41,7 @@ void Frustum::Update(const SRMath::mat4& vpMatrix)
 	planes[5].normal.z = vpMatrix[2][3] - vpMatrix[2][2];
 	planes[5].distance = vpMatrix[3][3] - vpMatrix[3][2];
 
-	// ¸ðµç Æò¸éÀ» Á¤±ÔÈ­ÇÕ´Ï´Ù.
+	// ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½È­ï¿½Õ´Ï´ï¿½.
 	for (int i = 0; i < 6; ++i)
 	{
 		float length = SRMath::length(planes[i].normal);
@@ -52,22 +52,22 @@ void Frustum::Update(const SRMath::mat4& vpMatrix)
 
 bool Frustum::IsAABBInFrustum(const AABB& aabb) const
 {
-	// 6°³ÀÇ ¸ðµç Æò¸é¿¡ ´ëÇØ °Ë»ç
+	// 6ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ ï¿½ï¿½é¿¡ ï¿½ï¿½ï¿½ï¿½ ï¿½Ë»ï¿½
 	for (int i = 0; i < 6; ++i)
 	{
-		// Æò¸éÀÇ ¹ý¼±°ú ¹Ý´ë ¹æÇâÀ¸·Î °¡Àå ¸Ö¸® ÀÖ´Â ²ÀÁþÁ¡(N-vertex)À» Ã£½À´Ï´Ù.
+		// ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½Ý´ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½Ö¸ï¿½ ï¿½Ö´ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½(N-vertex)ï¿½ï¿½ Ã£ï¿½ï¿½ï¿½Ï´ï¿½.
 		SRMath::vec3 p_vertex = aabb.min;
 		if (planes[i].normal.x >= 0) p_vertex.x = aabb.max.x;
 		if (planes[i].normal.y >= 0) p_vertex.y = aabb.max.y;
 		if (planes[i].normal.z >= 0) p_vertex.z = aabb.max.z;
 
-		// ÀÌ ²ÀÁþÁ¡ÀÌ Æò¸éÀÇ '¹Ù±ùÂÊ'¿¡ ÀÖ´Ù¸é, AABB ÀüÃ¼°¡ ÀýµÎÃ¼ ¹Û¿¡ ÀÖ´Â °ÍÀÔ´Ï´Ù.
+		// ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ 'ï¿½Ù±ï¿½ï¿½ï¿½'ï¿½ï¿½ ï¿½Ö´Ù¸ï¿½, AABB ï¿½ï¿½Ã¼ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½Ã¼ ï¿½Û¿ï¿½ ï¿½Ö´ï¿½ ï¿½ï¿½ï¿½Ô´Ï´ï¿½.
 		if (planes[i].GetSignedDistanceToPoint(p_vertex) < 0)
 		{
 			return false;
 		}
 	}
 
-	// ¸ðµç Æò¸é °Ë»ç¸¦ Åë°úÇß´Ù¸é, AABB´Â ÀýµÎÃ¼ ¾È¿¡ ÀÖ°Å³ª °ÉÃÄ ÀÖ½À´Ï´Ù.
+	// ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ ï¿½Ë»ç¸¦ ï¿½ï¿½ï¿½ï¿½ß´Ù¸ï¿½, AABBï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½Ã¼ ï¿½È¿ï¿½ ï¿½Ö°Å³ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½Ö½ï¿½ï¿½Ï´ï¿½.
 	return true;
 }

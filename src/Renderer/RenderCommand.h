@@ -1,32 +1,32 @@
-#pragma once
+ï»¿#pragma once
 #include "Math/SRMath.h"
 #include "Math/AABB.h"
 #include "Utils/DebugUtils.h"
 #include <vector>
 
 enum class ERasterizeMode {
-	Fill, // Ã¤¿ì±â ¸ðµå
-	Wireframe // ¿ÍÀÌ¾îÇÁ·¹ÀÓ ¸ðµå
+	Fill, // Ã¤ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½
+	Wireframe // ï¿½ï¿½ï¿½Ì¾ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½
 };
 
 struct Mesh;
 struct Material;
 
-// ¸Þ½Ã ·»´õ¸µÀ» À§ÇÑ ¿äÃ»¼­
+// ï¿½Þ½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½Ã»ï¿½ï¿½
 struct MeshRenderCommand {
-	const Mesh* sourceMesh; // ·»´õ¸µÇÒ ¸Þ½Ã
-	const std::vector<unsigned int>* indicesToDraw; // ·»´õ¸µÇÒ ÀÎµ¦½ºµé
-	SRMath::mat4 worldTransform; // ¿ùµå º¯È¯ Çà·Ä
-	const Material* material = nullptr; // ¸Þ½ÃÀÇ ÀçÁú
+	const Mesh* sourceMesh; // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½Þ½ï¿½
+	const std::vector<unsigned int>* indicesToDraw; // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½Îµï¿½ï¿½ï¿½ï¿½ï¿½
+	SRMath::mat4 worldTransform; // ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½È¯ ï¿½ï¿½ï¿½
+	const Material* material = nullptr; // ï¿½Þ½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
 
-	ERasterizeMode rasterizeMode = ERasterizeMode::Fill; // ·¡½ºÅÍÈ­ ¸ðµå
+	ERasterizeMode rasterizeMode = ERasterizeMode::Fill; // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½È­ ï¿½ï¿½ï¿½
 };
 
-// µð¹ö±×¿ë AABB ·»´õ¸µÀ» À§ÇÑ ¿äÃ»¼­
+// ï¿½ï¿½ï¿½ï¿½×¿ï¿½ AABB ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½Ã»ï¿½ï¿½
 struct DebugPrimitiveCommand {
-	std::vector<DebugVertex> vertices; // ±×¸± Á¤Á¡µé
+	std::vector<DebugVertex> vertices; // ï¿½×¸ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 	SRMath::mat4 worldTransform;
-	DebugPrimitiveType type = DebugPrimitiveType::Line; // µð¹ö±× ÇÁ¸®¹ÌÆ¼ºê Å¸ÀÔ
+	DebugPrimitiveType type = DebugPrimitiveType::Line; // ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Æ¼ï¿½ï¿½ Å¸ï¿½ï¿½
 
 	DebugPrimitiveCommand() = default;
 };

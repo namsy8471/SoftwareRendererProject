@@ -1,32 +1,32 @@
-#pragma once
+ï»¿#pragma once
 
 #include "Math/SRMath.h"
 
 // Vertex Shading
-// ¼³¸í: Á¤Á¡ ¼ÎÀÌµù °á°ú(¿ùµå/Å¬¸³ ÁÂÇ¥, ¹ý¼±, UV)¸¦ ´ã´Â ±¸Á¶Ã¼
+// ï¿½ï¿½ï¿½ï¿½: ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½Ìµï¿½ ï¿½ï¿½ï¿½(ï¿½ï¿½ï¿½ï¿½/Å¬ï¿½ï¿½ ï¿½ï¿½Ç¥, ï¿½ï¿½ï¿½ï¿½, UV)ï¿½ï¿½ ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½Ã¼
 struct ShadedVertex {
     SRMath::vec3 posWorld;
     SRMath::vec4 posClip;
     SRMath::vec3 normalWorld;
     SRMath::vec2 texcoord;
 
-    // »ý¼ºÀÚ Ãß°¡
+    // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ß°ï¿½
     ShadedVertex() = default;
     ShadedVertex(const SRMath::vec3& posWorld, const SRMath::vec4& posClip, const SRMath::vec3& normalWorld, const SRMath::vec2& tex)
         : posWorld(posWorld), posClip(posClip), normalWorld(normalWorld), texcoord(tex) {
     }
 };
 
-// --- ·¡½ºÅÍÈ­¸¦ À§ÇÑ ÃÖÁ¾ Á¤Á¡ µ¥ÀÌÅÍ ÁØºñ ---
-// ¼³¸í: ¿ø±Ù ºÐÇÒ ¹× ºäÆ÷Æ® º¯È¯ ÀÌÈÄ, ÇÈ¼¿ ¼ÎÀÌµù¿¡ ÇÊ¿äÇÑ µ¥ÀÌÅÍ
+// --- ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½È­ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½Øºï¿½ ---
+// ï¿½ï¿½ï¿½ï¿½: ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½Æ® ï¿½ï¿½È¯ ï¿½ï¿½ï¿½ï¿½, ï¿½È¼ï¿½ ï¿½ï¿½ï¿½Ìµï¿½ï¿½ï¿½ ï¿½Ê¿ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 struct RasterizerVertex {
-    SRMath::vec2 screenPos;         // ÃÖÁ¾ È­¸é ÁÂÇ¥
-    float oneOverW = 0.0f;                 // ¿ø±Ù º¸°£À» À§ÇÑ 1/w
-    SRMath::vec3 normalWorldOverW;  // ¿ø±Ù º¸Á¤µÈ ¹ý¼±
-    SRMath::vec2 texcoordOverW;     // ¿ø±Ù º¸Á¤µÈ UV
-    SRMath::vec3 worldPosOverW;     // ¿ø±Ù º¸Á¤µÈ ¿ùµå ÁÂÇ¥
+    SRMath::vec2 screenPos;         // ï¿½ï¿½ï¿½ï¿½ È­ï¿½ï¿½ ï¿½ï¿½Ç¥
+    float oneOverW = 0.0f;                 // ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ 1/w
+    SRMath::vec3 normalWorldOverW;  // ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
+    SRMath::vec2 texcoordOverW;     // ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ UV
+    SRMath::vec3 worldPosOverW;     // ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½Ç¥
 
-	// »ý¼ºÀÚ Ãß°¡
+	// ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ß°ï¿½
 	/*RasterizerVertex() = default;
     RasterizerVertex(const SRMath::vec2& screenPos, float oneOverW, const SRMath::vec3& normalWorldOverW,
         const SRMath::vec2& texcoordOverW, const SRMath::vec3& worldPosOverW)

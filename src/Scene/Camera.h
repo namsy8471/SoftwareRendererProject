@@ -1,16 +1,16 @@
-#pragma once
+ï»¿#pragma once
 #include "Math/SRMath.h"
 #include "Math/Frustum.h"
 
 class Camera
 {
 private:
-	float moveSpeed = 10.f; // Ä«¸Þ¶ó ÀÌµ¿ ¼Óµµ
+	float moveSpeed = 10.f; // Ä«ï¿½Þ¶ï¿½ ï¿½Ìµï¿½ ï¿½Óµï¿½
 
 	SRMath::vec3 m_cameraPos = { 0.f, 0.f, 5.f };
 	SRMath::vec3 m_cameraforward;
-	float m_cameraYaw = 0.f;	// ÁÂ¿ì È¸Àü (YÃà ±âÁØ)
-	float m_cameraPitch = 0.f;	// »óÇÏ È¸Àü (XÃà ±âÁØ)
+	float m_cameraYaw = 0.f;	// ï¿½Â¿ï¿½ È¸ï¿½ï¿½ (Yï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½)
+	float m_cameraPitch = 0.f;	// ï¿½ï¿½ï¿½ï¿½ È¸ï¿½ï¿½ (Xï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½)
 
 	Frustum m_frustum;
 	SRMath::mat4 m_viewMatrix;
@@ -55,4 +55,3 @@ public:
 	void SetCameraYaw(float yaw) { m_cameraYaw = yaw; }
 	void SetCameraPitch(float pitch) { m_cameraPitch = pitch; }
 };
-

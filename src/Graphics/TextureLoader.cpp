@@ -1,4 +1,4 @@
-#include "TextureLoader.h"
+ï»¿#include "TextureLoader.h"
 #include <fstream>
 #include <sstream>
 #include "Texture.h"
@@ -6,7 +6,7 @@
 
 
 #define STB_IMAGE_IMPLEMENTATION
-#include "stb_image.h"
+#include "ThirdParty/stb_image/stb_image.h"
 
 void StbiImageDeleter::operator()(unsigned char* p) const
 {
@@ -33,14 +33,14 @@ std::unordered_map<std::string, Material> TextureLoader::LoadMTLFile(const std::
 
 	if (!file.is_open()) return materials;
 
-	materials.reserve(100); // ÃÊ±â ¿ë·® ¿¹¾à (MTL ÆÄÀÏÀº º¸Åë ÀçÁúÀÌ ¸¹Áö ¾ÊÀ½)
+	materials.reserve(100); // ï¿½Ê±ï¿½ ï¿½ë·® ï¿½ï¿½ï¿½ï¿½ (MTL ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½)
 
 	std::string line;
     Material* currentMaterial = nullptr;
 
     while (std::getline(file, line))
     {
-		if (line.empty() || line[0] == '#') continue; // ºó ÁÙ ¶Ç´Â ÁÖ¼®Àº ¹«½Ã
+		if (line.empty() || line[0] == '#') continue; // ï¿½ï¿½ ï¿½ï¿½ ï¿½Ç´ï¿½ ï¿½Ö¼ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
 
 		std::stringstream ss(line);
 		std::string prefix;
@@ -76,11 +76,11 @@ std::unordered_map<std::string, Material> TextureLoader::LoadMTLFile(const std::
 	auto shrink_unordered_map = [](auto& map) {
 		std::unordered_map<std::string, Material> temp_map;
 
-		map.swap(temp_map); // ±âÁ¸ ¸ÊÀ» ºñ¿ì°í »õ·Î ÇÒ´ç
-		return temp_map; // »õ·Î ÇÒ´çµÈ ¸Ê ¹ÝÈ¯
+		map.swap(temp_map); // ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½Ò´ï¿½
+		return temp_map; // ï¿½ï¿½ï¿½ï¿½ ï¿½Ò´ï¿½ï¿½ ï¿½ï¿½ ï¿½ï¿½È¯
 		};
 
-	materials = shrink_unordered_map(materials); // ¸Þ¸ð¸® ÃÖÀûÈ­¸¦ À§ÇØ ¸ÊÀ» Ãà¼Ò
+	materials = shrink_unordered_map(materials); // ï¿½Þ¸ï¿½ ï¿½ï¿½ï¿½ï¿½È­ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½
 
 	return materials;
 }

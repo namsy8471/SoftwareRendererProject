@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "Math/SRMath.h"
 #include "Math/AABB.h"
 
@@ -24,4 +24,3 @@ public:
 	void Update(const SRMath::mat4& viewProjectionMatrix);
 	bool IsAABBInFrustum(const AABB& aabb) const;
 };
-

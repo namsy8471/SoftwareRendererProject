@@ -1,25 +1,26 @@
-#include "Graphics/ModelLoader.h"
+ï»¿#include "Graphics/ModelLoader.h"
 #include <fstream>
 #include <sstream>
 #include <map>
 #include <unordered_map>
 #include <tbb/tbb.h>
 
+#include "Core/pch.h"
 #include "Graphics/TextureLoader.h"
 #include "Graphics/Model.h"
 #include "Graphics/Octree.h"
 #include "Graphics/Material.h"
 #include "Math/AABB.h"
 
-// v/vt/vn Á¶ÇÕÀ» ÇÏ³ªÀÇ Á¤Á¡ Å°·Î »ç¿ëÇÏ±â À§ÇÑ ±¸Á¶Ã¼
+// v/vt/vn ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½Ï³ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ Å°ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½Ï±ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½Ã¼
 struct VertexKey
 {
-    int pos_idx = -1;	// v: À§Ä¡ ÀÎµ¦½º (1 ±â¹Ý ¡æ 0 ±â¹Ý º¯È¯)
-    int tex_idx = -1;	// vt: ÅØ½ºÃ³ ÁÂÇ¥ ÀÎµ¦½º
-    int nrm_idx = -1;	// vn: ¹ý¼± ÀÎµ¦½º
+    int pos_idx = -1;	// v: ï¿½ï¿½Ä¡ ï¿½Îµï¿½ï¿½ï¿½ (1 ï¿½ï¿½ï¿½ ï¿½ï¿½ 0 ï¿½ï¿½ï¿½ ï¿½ï¿½È¯)
+    int tex_idx = -1;	// vt: ï¿½Ø½ï¿½Ã³ ï¿½ï¿½Ç¥ ï¿½Îµï¿½ï¿½ï¿½
+    int nrm_idx = -1;	// vn: ï¿½ï¿½ï¿½ï¿½ ï¿½Îµï¿½ï¿½ï¿½
 
-    // mapÀÇ key·Î »ç¿ëÇÏ±â À§ÇÑ ºñ±³ ¿¬»êÀÚ
-    // Á¤·Ä ±âÁØ: pos_idx ¡æ tex_idx ¡æ nrm_idx
+    // mapï¿½ï¿½ keyï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½Ï±ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+    // ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½: pos_idx ï¿½ï¿½ tex_idx ï¿½ï¿½ nrm_idx
     bool operator<(const VertexKey& other) const
     {
         if (pos_idx < other.pos_idx) return true;
@@ -30,17 +31,17 @@ struct VertexKey
     }
 };
 
-// OBJ ·Î´õ: ÆÄÀÏ °æ·Î(È®ÀåÀÚ ¾ø´Â º£ÀÌ½º °æ·Î)¸¦ ¹Þ¾Æ Model ±¸¼º
+// OBJ ï¿½Î´ï¿½: ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½(È®ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½Ì½ï¿½ ï¿½ï¿½ï¿½)ï¿½ï¿½ ï¿½Þ¾ï¿½ Model ï¿½ï¿½ï¿½ï¿½
 std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
 {
-    std::unique_ptr<Model> outModel = std::make_unique<Model>(); // Ãâ·Â ¸ðµ¨
-	outModel->m_meshes.reserve(1000); // ÃÊ±â ¿ë·® ¿¹¾à
+    std::unique_ptr<Model> outModel = std::make_unique<Model>(); // ï¿½ï¿½ï¿½ ï¿½ï¿½
+	outModel->m_meshes.reserve(1000); // ï¿½Ê±ï¿½ ï¿½ë·® ï¿½ï¿½ï¿½ï¿½
 
-    std::ifstream file(filename + ".obj"); // .obj ÆÄÀÏ ¿­±â
-    if (!file.is_open()) return nullptr;   // ½ÇÆÐ ½Ã null ¹ÝÈ¯
+    std::ifstream file(filename + ".obj"); // .obj ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
+    if (!file.is_open()) return nullptr;   // ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ null ï¿½ï¿½È¯
 
-    // ÅØ½ºÃ³/MTL »ó´ë °æ·Î ±â¹Ý µð·ºÅÍ¸® °è»ê
-    // ¿¹: "path\to\model" ¡æ "path\to\"
+    // ï¿½Ø½ï¿½Ã³/MTL ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½Í¸ï¿½ ï¿½ï¿½ï¿½
+    // ï¿½ï¿½: "path\to\model" ï¿½ï¿½ "path\to\"
     std::string directoryPath = "";
     size_t last_slash_idx = filename.find_last_of("/\\");
     if (std::string::npos != last_slash_idx)
@@ -48,35 +49,35 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
         directoryPath = filename.substr(0, last_slash_idx + 1);
     }
 
-    // ÆÄÀÏ¿¡¼­ ¸ðµç ¼Ó¼º(v, vt, vn)À» ÀÓ½Ã ¹öÆÛ¿¡ ÀÐ¾îµéÀÔ´Ï´Ù.
+    // ï¿½ï¿½ï¿½Ï¿ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ ï¿½Ó¼ï¿½(v, vt, vn)ï¿½ï¿½ ï¿½Ó½ï¿½ ï¿½ï¿½ï¿½Û¿ï¿½ ï¿½Ð¾ï¿½ï¿½ï¿½Ô´Ï´ï¿½.
     std::vector<SRMath::vec3> temp_positions; // v
     std::vector<SRMath::vec2> temp_texcoords; // vt
     std::vector<SRMath::vec3> temp_normals;   // vn
 
-	temp_positions.reserve(65000); // ÃÊ±â ¿ë·® ¿¹¾à
-	temp_texcoords.reserve(65000); // ÃÊ±â ¿ë·® ¿¹¾à
-    temp_normals.reserve(65000);   // ÃÊ±â ¿ë·® ¿¹¾à
+	temp_positions.reserve(65000); // ï¿½Ê±ï¿½ ï¿½ë·® ï¿½ï¿½ï¿½ï¿½
+	temp_texcoords.reserve(65000); // ï¿½Ê±ï¿½ ï¿½ë·® ï¿½ï¿½ï¿½ï¿½
+    temp_normals.reserve(65000);   // ï¿½Ê±ï¿½ ï¿½ë·® ï¿½ï¿½ï¿½ï¿½
 	
-    // MTL ÆÄÀÏ¿¡¼­ ÀçÁúÀ» ÀÐ¾îµéÀÔ´Ï´Ù.
-	std::unordered_map<std::string, Material> materials;    // MTL ÆÄÀÏ¿¡¼­ ÀÐÀº ÀçÁúµé
-	std::string currentMaterialName;                        // ÇöÀç »ç¿ë ÁßÀÎ ÀçÁú ÀÌ¸§
+    // MTL ï¿½ï¿½ï¿½Ï¿ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½Ð¾ï¿½ï¿½ï¿½Ô´Ï´ï¿½.
+	std::unordered_map<std::string, Material> materials;    // MTL ï¿½ï¿½ï¿½Ï¿ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+	std::string currentMaterialName;                        // ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½Ì¸ï¿½
 
-	bool newGroupStarted = false; // »õ·Î¿î g ÅÂ±×°¡ ½ÃÀÛµÇ¾ú´ÂÁö ¿©ºÎ
+	bool newGroupStarted = false; // ï¿½ï¿½ï¿½Î¿ï¿½ g ï¿½Â±×°ï¿½ ï¿½ï¿½ï¿½ÛµÇ¾ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
     
-    // Á¤Á¡ Áßº¹ Á¦°Å¸¦ À§ÇÑ ¸Ê
-    // Key: v/vt/vn ÀÎµ¦½º Á¶ÇÕ, Value: ÃÖÁ¾ Á¤Á¡ ¹öÆÛÀÇ ÀÎµ¦½º
+    // ï¿½ï¿½ï¿½ï¿½ ï¿½ßºï¿½ ï¿½ï¿½ï¿½Å¸ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½
+    // Key: v/vt/vn ï¿½Îµï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½, Value: ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½Îµï¿½ï¿½ï¿½
     std::map<VertexKey, unsigned int> vertexCache;
 
-    std::string line; // ÇÑ ÁÙ ¹öÆÛ
+    std::string line; // ï¿½ï¿½ ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
     
-    // OBJ ÆÄÀÏÀ» ÇÑ ÁÙ¾¿ ÀÐ¾î ÆÄ½Ì
+    // OBJ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ ï¿½Ù¾ï¿½ ï¿½Ð¾ï¿½ ï¿½Ä½ï¿½
     while (std::getline(file, line))
     {
         std::stringstream ss(line);
         std::string prefix;
         ss >> prefix; // Read the Prefix(v, vt, vn, f)
 
-        // À§Ä¡ º¤ÅÍ(v)
+        // ï¿½ï¿½Ä¡ ï¿½ï¿½ï¿½ï¿½(v)
         if (prefix == "v")
         {
             SRMath::vec3 pos;
@@ -84,7 +85,7 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
             temp_positions.emplace_back(pos);
         }
 
-        // ÅØ½ºÃ³ ÁÂÇ¥(vt)
+        // ï¿½Ø½ï¿½Ã³ ï¿½ï¿½Ç¥(vt)
         else if (prefix == "vt")
         {
             SRMath::vec2 uv;
@@ -93,7 +94,7 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
 
         }
 
-        // ¹ý¼± º¤ÅÍ(vn)
+        // ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½(vn)
         else if (prefix == "vn")
         {
             SRMath::vec3 nrm;
@@ -102,42 +103,42 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
             
         }
 
-        // ¸ÓÆ¼¸®¾ó ¶óÀÌºê·¯¸® ÂüÁ¶(mtllib)
+        // ï¿½ï¿½Æ¼ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½Ìºê·¯ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½(mtllib)
         else if (prefix == "mtllib")
         {
             std::string mtlFilename;
             ss >> mtlFilename;
-            // µð·ºÅÍ¸® ±âÁØ °æ·Î¸¦ »ç¿ëÇÏ¿© MTL ÆÄ½Ì
+            // ï¿½ï¿½ï¿½Í¸ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½Î¸ï¿½ ï¿½ï¿½ï¿½ï¿½Ï¿ï¿½ MTL ï¿½Ä½ï¿½
             materials = TextureLoader::LoadMTLFile(directoryPath + mtlFilename);
         }
-        // ¸ÓÆ¼¸®¾ó ¼±ÅÃ(usemtl)
+        // ï¿½ï¿½Æ¼ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½(usemtl)
         else if (prefix == "usemtl")
         {
             ss >> currentMaterialName;
         }
-        // ±×·ì ½ÃÀÛ(g)
+        // ï¿½×·ï¿½ ï¿½ï¿½ï¿½ï¿½(g)
         else if (prefix == "g")
         {
-            // »õ·Î¿î g ÅÂ±×¸¦ ¸¸³ª¸é ÇÃ·¡±×¸¦ ¼³Á¤
+            // ï¿½ï¿½ï¿½Î¿ï¿½ g ï¿½Â±×¸ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½Ã·ï¿½ï¿½×¸ï¿½ ï¿½ï¿½ï¿½ï¿½
             newGroupStarted = true;
         }
-        // ¸é(face) Á¤ÀÇ(f)
+        // ï¿½ï¿½(face) ï¿½ï¿½ï¿½ï¿½(f)
         else if(prefix == "f")
         {
-			// »õ·Î¿î ¸Þ½Ã ±×·ìÀÌ ½ÃÀÛµÇ¾ú°Å³ª, ÇöÀç ¸Þ½Ã°¡ ¾ø°Å³ª, ¸ÓÆ¼¸®¾óÀÌ ¹Ù²ï °æ¿ì
+			// ï¿½ï¿½ï¿½Î¿ï¿½ ï¿½Þ½ï¿½ ï¿½×·ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ÛµÇ¾ï¿½ï¿½Å³ï¿½, ï¿½ï¿½ï¿½ï¿½ ï¿½Þ½Ã°ï¿½ ï¿½ï¿½ï¿½Å³ï¿½, ï¿½ï¿½Æ¼ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½Ù²ï¿½ ï¿½ï¿½ï¿½
             if (outModel->m_meshes.empty()
                 || outModel->m_meshes.back().material.name != currentMaterialName
                 || newGroupStarted)
             {
-				newGroupStarted = false; // »õ·Î¿î ±×·ì ½ÃÀÛ ÇÃ·¡±× ÃÊ±âÈ­
-                // »õ·Î¿î ¸Þ½Ã ±×·ìÀÌ ½ÃÀÛµÉ ¶§ vertexCache ÃÊ±âÈ­ ---
+				newGroupStarted = false; // ï¿½ï¿½ï¿½Î¿ï¿½ ï¿½×·ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½Ã·ï¿½ï¿½ï¿½ ï¿½Ê±ï¿½È­
+                // ï¿½ï¿½ï¿½Î¿ï¿½ ï¿½Þ½ï¿½ ï¿½×·ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½Ûµï¿½ ï¿½ï¿½ vertexCache ï¿½Ê±ï¿½È­ ---
                 vertexCache.clear();
 
-                // ¸ðµ¨¿¡ »õ·Î¿î ¸Þ½Ã Ãß°¡ ¹× currentMesh Æ÷ÀÎÅÍ °»½Å
+                // ï¿½ðµ¨¿ï¿½ ï¿½ï¿½ï¿½Î¿ï¿½ ï¿½Þ½ï¿½ ï¿½ß°ï¿½ ï¿½ï¿½ currentMesh ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
                 outModel->m_meshes.emplace_back();
                 auto& newMesh = outModel->m_meshes.back();
 
-                // ÇöÀç ¸ÓÆ¼¸®¾ó ÀÌ¸§À¸·Î ¸ÓÆ¼¸®¾ó ÇÒ´ç (¾øÀ¸¸é ±âº»°ª / ÄÝ·Ð ºÐ¸® Æú¹é)
+                // ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½Æ¼ï¿½ï¿½ï¿½ï¿½ ï¿½Ì¸ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½Æ¼ï¿½ï¿½ï¿½ï¿½ ï¿½Ò´ï¿½ (ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½âº»ï¿½ï¿½ / ï¿½Ý·ï¿½ ï¿½Ð¸ï¿½ ï¿½ï¿½ï¿½ï¿½)
                 if(materials.find(currentMaterialName) != materials.end())
                 {
                     newMesh.material = materials[currentMaterialName];
@@ -148,73 +149,73 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
 
                     if (colon_pos != std::string::npos)
                     {
-                        // ÄÝ·Ð µÚÀÇ ºÎºÐ ¹®ÀÚ¿­À» Àß¶ó³À´Ï´Ù. (¿¹: "Iron_man_leg:red" -> "red")
+                        // ï¿½Ý·ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½Îºï¿½ ï¿½ï¿½ï¿½Ú¿ï¿½ï¿½ï¿½ ï¿½ß¶ï¿½ï¿½ï¿½Ï´ï¿½. (ï¿½ï¿½: "Iron_man_leg:red" -> "red")
                         std::string baseMaterialName = currentMaterialName.substr(colon_pos + 1);
 
                         auto fallback_it = materials.find(baseMaterialName);
                         if (fallback_it != materials.end())
                         {
-                            // 2Â÷ ½Ãµµ ¼º°ø: Àß¶ó³½ ÀÌ¸§À¸·Î Ã£Àº ÀçÁúÀ» ÇÒ´çÇÕ´Ï´Ù.
+                            // 2ï¿½ï¿½ ï¿½Ãµï¿½ ï¿½ï¿½ï¿½ï¿½: ï¿½ß¶ï¿½ ï¿½Ì¸ï¿½ï¿½ï¿½ï¿½ï¿½ Ã£ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½Ò´ï¿½ï¿½Õ´Ï´ï¿½.
                             newMesh.material = fallback_it->second;
                         }
                         else
                         {
-                            // ÃÖÁ¾ ½ÇÆÐ: ±âº» ÀçÁúÀ» ÇÒ´çÇÕ´Ï´Ù.
+                            // ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½: ï¿½âº» ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½Ò´ï¿½ï¿½Õ´Ï´ï¿½.
                             newMesh.material = Material{};
                         }
                     }
                     else
                     {
-                        // ÀçÁúÀÌ Á¤ÀÇµÇÁö ¾ÊÀº °æ¿ì ±âº» ÀçÁúÀ» »ç¿ë
+                        // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½Çµï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ ï¿½âº» ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½
                         newMesh.material = Material();
                     }
                 }
 
-                // ÃÖ±Ù ¸ÓÅ×¸®¾ó ÀÌ¸§À» ÇöÀç ¸Å½ÃÀÇ ¸ÓÅ×¸®¾ó ÀÌ¸§À¸·Î º¯°æ
+                // ï¿½Ö±ï¿½ ï¿½ï¿½ï¿½×¸ï¿½ï¿½ï¿½ ï¿½Ì¸ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½Å½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½×¸ï¿½ï¿½ï¿½ ï¿½Ì¸ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
                 newMesh.material.name = currentMaterialName;
             }
 
-			auto& meshToAddTo = outModel->m_meshes.back(); // ÇöÀç ¸éÀÌ Ãß°¡µÉ Å¸°Ù ¸Þ½Ã
-            // ¿©±â¼­ºÎÅÍ ÆÄ½ÌµÇ´Â ¸é(face)µéÀº ÀÌ ¸Þ½Ã ±×·ì¿¡ ¼ÓÇÏ°Ô µÊ
+			auto& meshToAddTo = outModel->m_meshes.back(); // ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ß°ï¿½ï¿½ï¿½ Å¸ï¿½ï¿½ ï¿½Þ½ï¿½
+            // ï¿½ï¿½ï¿½â¼­ï¿½ï¿½ï¿½ï¿½ ï¿½Ä½ÌµÇ´ï¿½ ï¿½ï¿½(face)ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ ï¿½Þ½ï¿½ ï¿½×·ì¿¡ ï¿½ï¿½ï¿½Ï°ï¿½ ï¿½ï¿½
             std::string face_data;
-            int vertex_count_in_face = 0;     // ÇÏ³ªÀÇ f ¶óÀÎ¿¡ Æ÷ÇÔµÈ Á¤Á¡ ¼ö (3~4)
-            unsigned int face_indices[4];     // Äõµå±îÁö Áö¿øÇÑ´Ù°í °¡Á¤
+            int vertex_count_in_face = 0;     // ï¿½Ï³ï¿½ï¿½ï¿½ f ï¿½ï¿½ï¿½Î¿ï¿½ ï¿½ï¿½ï¿½Ôµï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ (3~4)
+            unsigned int face_indices[4];     // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½Ñ´Ù°ï¿½ ï¿½ï¿½ï¿½ï¿½
 
-            // f ¶óÀÎÀÇ °¢ ÅäÅ«(¿¹: "v", "v/vt", "v//vn", "v/vt/vn") ÆÄ½Ì
+            // f ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ ï¿½ï¿½Å«(ï¿½ï¿½: "v", "v/vt", "v//vn", "v/vt/vn") ï¿½Ä½ï¿½
             while (ss >> face_data && vertex_count_in_face < 4)
             {
                 VertexKey key;
                 try {
-                    // ½½·¡½Ã('/')ÀÇ À§Ä¡¸¦ Ã£¾Æ¼­ Çü½ÄÀ» ÆÇº°ÇÕ´Ï´Ù.
+                    // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½('/')ï¿½ï¿½ ï¿½ï¿½Ä¡ï¿½ï¿½ Ã£ï¿½Æ¼ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½Çºï¿½ï¿½Õ´Ï´ï¿½.
                     size_t first_slash = face_data.find('/');
                     size_t second_slash = face_data.find('/', first_slash + 1);
 
                     if (first_slash == std::string::npos)
                     {
-                        // Çü½Ä: "v" (¿¹: "123")
+                        // ï¿½ï¿½ï¿½ï¿½: "v" (ï¿½ï¿½: "123")
                         key.pos_idx = std::stoi(face_data) - 1;
                     }
                     else
                     {
-                        // v ÀÎµ¦½º´Â Ç×»ó Ã¹ ½½·¡½Ã ¾Õ¿¡ ÀÖ½À´Ï´Ù.
+                        // v ï¿½Îµï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½×»ï¿½ Ã¹ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½Õ¿ï¿½ ï¿½Ö½ï¿½ï¿½Ï´ï¿½.
                         key.pos_idx = std::stoi(face_data.substr(0, first_slash)) - 1;
 
                         if (second_slash == std::string::npos)
                         {
-                            // Çü½Ä: "v/vt" (¿¹: "123/456")
+                            // ï¿½ï¿½ï¿½ï¿½: "v/vt" (ï¿½ï¿½: "123/456")
                             key.tex_idx = std::stoi(face_data.substr(first_slash + 1)) - 1;
                         }
                         else
                         {
-                            // µÎ ¹øÂ° ½½·¡½Ã°¡ Ã¹ ½½·¡½Ã ¹Ù·Î µÚ¿¡ ÀÖ´Ù¸é "v//vn" Çü½ÄÀÔ´Ï´Ù.
+                            // ï¿½ï¿½ ï¿½ï¿½Â° ï¿½ï¿½ï¿½ï¿½ï¿½Ã°ï¿½ Ã¹ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½Ù·ï¿½ ï¿½Ú¿ï¿½ ï¿½Ö´Ù¸ï¿½ "v//vn" ï¿½ï¿½ï¿½ï¿½ï¿½Ô´Ï´ï¿½.
                             if (second_slash == first_slash + 1)
                             {
-                                // Çü½Ä: "v//vn" (¿¹: "123//789")
+                                // ï¿½ï¿½ï¿½ï¿½: "v//vn" (ï¿½ï¿½: "123//789")
                                 key.nrm_idx = std::stoi(face_data.substr(second_slash + 1)) - 1;
                             }
                             else
                             {
-                                // Çü½Ä: "v/vt/vn" (¿¹: "123/456/789")
+                                // ï¿½ï¿½ï¿½ï¿½: "v/vt/vn" (ï¿½ï¿½: "123/456/789")
                                 key.tex_idx = std::stoi(face_data.substr(first_slash + 1, second_slash - first_slash - 1)) - 1;
                                 key.nrm_idx = std::stoi(face_data.substr(second_slash + 1)) - 1;
                             }
@@ -222,23 +223,23 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
                     }
                 }
                 catch (const std::exception& e) {
-                    // stoi º¯È¯ Áß ¿À·ù°¡ ¹ß»ýÇÏ¸é (¿¹: ÆÄÀÏ ¼Õ»ó), ÇØ´ç ¸éÀº °Ç³Ê¶Ý´Ï´Ù.
+                    // stoi ï¿½ï¿½È¯ ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ß»ï¿½ï¿½Ï¸ï¿½ (ï¿½ï¿½: ï¿½ï¿½ï¿½ï¿½ ï¿½Õ»ï¿½), ï¿½Ø´ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½Ç³Ê¶Ý´Ï´ï¿½.
                     std::wstringstream wss;
-                    wss << L"¸é(Face) µ¥ÀÌÅÍ¸¦ Ã³¸®ÇÏ´Â Áß ¿À·ù°¡ ¹ß»ýÇß½À´Ï´Ù.\n\n"
-                        << L"¿À·ù ³»¿ë: " << e.what() << L"\n"
-                        << L"¿øº» µ¥ÀÌÅÍ: " << face_data.c_str(); // std::stringÀ» const char*·Î º¯È¯
+                    wss << L"ï¿½ï¿½(Face) ï¿½ï¿½ï¿½ï¿½ï¿½Í¸ï¿½ Ã³ï¿½ï¿½ï¿½Ï´ï¿½ ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ß»ï¿½ï¿½ß½ï¿½ï¿½Ï´ï¿½.\n\n"
+                        << L"ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½: " << e.what() << L"\n"
+                        << L"ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½: " << face_data.c_str(); // std::stringï¿½ï¿½ const char*ï¿½ï¿½ ï¿½ï¿½È¯
 
-                    // ¸Þ½ÃÁö ¹Ú½º¸¦ È­¸é¿¡ Ç¥½ÃÇÕ´Ï´Ù.
+                    // ï¿½Þ½ï¿½ï¿½ï¿½ ï¿½Ú½ï¿½ï¿½ï¿½ È­ï¿½é¿¡ Ç¥ï¿½ï¿½ï¿½Õ´Ï´ï¿½.
                     MessageBoxW(
-                        nullptr,             // ºÎ¸ð À©µµ¿ì ÇÚµé (¾øÀ¸¸é nullptr)
-                        wss.str().c_str(),   // Ç¥½ÃÇÒ ¸Þ½ÃÁö
-                        L"µ¥ÀÌÅÍ Ã³¸® ¿À·ù", // ¸Þ½ÃÁö ¹Ú½º Á¦¸ñ
-                        MB_OK | MB_ICONERROR // È®ÀÎ ¹öÆ°°ú ¿À·ù ¾ÆÀÌÄÜ Ç¥½Ã
+                        nullptr,             // ï¿½Î¸ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½Úµï¿½ (ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ nullptr)
+                        wss.str().c_str(),   // Ç¥ï¿½ï¿½ï¿½ï¿½ ï¿½Þ½ï¿½ï¿½ï¿½
+                        L"ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ Ã³ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½", // ï¿½Þ½ï¿½ï¿½ï¿½ ï¿½Ú½ï¿½ ï¿½ï¿½ï¿½ï¿½
+                        MB_OK | MB_ICONERROR // È®ï¿½ï¿½ ï¿½ï¿½Æ°ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ Ç¥ï¿½ï¿½
                     );
                     continue;
                 }
 
-                // µ¿ÀÏ v/vt/vn Á¶ÇÕÀÌ ÀÌ¹Ì »ý¼ºµÈ ÀûÀÌ ÀÖÀ¸¸é Ä³½Ã Àç»ç¿ë
+                // ï¿½ï¿½ï¿½ï¿½ v/vt/vn ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½Ì¹ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ Ä³ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
                 auto it = vertexCache.find(key);
                 if (it != vertexCache.end())
                 {
@@ -246,7 +247,7 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
                 }
                 else
                 {
-                    // »õ·Î¿î Á¤Á¡ Á¶ÇÕ: ÃÖÁ¾ Á¤Á¡ ¹öÆÛ¿¡ »õ·Î Ãß°¡
+                    // ï¿½ï¿½ï¿½Î¿ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½: ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½Û¿ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ß°ï¿½
                     Vertex new_vertex;
                     if(key.pos_idx >= 0 && key.pos_idx < temp_positions.size()) {
                         new_vertex.position = temp_positions[key.pos_idx];
@@ -266,8 +267,8 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
                 vertex_count_in_face++;
             }
 
-            // 4. »ï°¢ ºÐÇÒ(Triangulation)ÇÏ¿© ÃÖÁ¾ ÀÎµ¦½º ¹öÆÛ¿¡ Ãß°¡
-            // CCW ¹æÇâ
+            // 4. ï¿½ï°¢ ï¿½ï¿½ï¿½ï¿½(Triangulation)ï¿½Ï¿ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½Îµï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½Û¿ï¿½ ï¿½ß°ï¿½
+            // CCW ï¿½ï¿½ï¿½ï¿½
             for (int i = 0; i < vertex_count_in_face - 2; ++i)
             {
                 meshToAddTo.indices.emplace_back(face_indices[0]);
@@ -277,12 +278,12 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
         }
     }
     
-	outModel->m_meshes.shrink_to_fit(); // ºÒÇÊ¿äÇÑ ¿ë·® Á¦°Å
+	outModel->m_meshes.shrink_to_fit(); // ï¿½ï¿½ï¿½Ê¿ï¿½ï¿½ï¿½ ï¿½ë·® ï¿½ï¿½ï¿½ï¿½
 
-    AABB modelAABB; // ¸ðµ¨ ÀüÃ¼ AABB (¸ðµç ¸Þ½Ã ÅëÇÕ¿ë)
+    AABB modelAABB; // ï¿½ï¿½ ï¿½ï¿½Ã¼ AABB (ï¿½ï¿½ï¿½ ï¿½Þ½ï¿½ ï¿½ï¿½ï¿½Õ¿ï¿½)
 
-    // ¸Þ½Ãº° ÈÄÃ³¸®(¹ý¼± »ý¼º, AABB °è»ê, ¿ÁÆ®¸® ºôµå)¸¦ º´·Ä Ã³¸®
-    tbb::combinable<AABB> localAABB([] { return AABB(); }); // ½º·¹µå ·ÎÄÃ AABB
+    // ï¿½Þ½Ãºï¿½ ï¿½ï¿½Ã³ï¿½ï¿½(ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½, AABB ï¿½ï¿½ï¿½, ï¿½ï¿½Æ®ï¿½ï¿½ ï¿½ï¿½ï¿½)ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ Ã³ï¿½ï¿½
+    tbb::combinable<AABB> localAABB([] { return AABB(); }); // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ AABB
 
     tbb::parallel_for(tbb::blocked_range<int>(0, static_cast<int>(outModel->m_meshes.size())),
         [&](const tbb::blocked_range<int>& r) {
@@ -290,7 +291,7 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
         {
             auto& mesh = outModel->m_meshes[i];
 
-            // OBJ¿¡ vnÀÌ ½ÇÁ¦·Î Á¸ÀçÇÏ´ÂÁö ¿©ºÎ Ã¼Å©
+            // OBJï¿½ï¿½ vnï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½Ï´ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ Ã¼Å©
             bool hasNormals = true;
             for (const auto& vertex : mesh.vertices)
             {
@@ -304,13 +305,13 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
             // If there is no Normal vector in OBJ File
             if (!hasNormals)
             {
-                // °¢ Á¤Á¡ÀÇ ¹ý¼±À» 0À¸·Î ÃÊ±âÈ­
+                // ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ 0ï¿½ï¿½ï¿½ï¿½ ï¿½Ê±ï¿½È­
                 for (auto& vertex : mesh.vertices)
                 {
                     vertex.normal = SRMath::vec3(0.0f, 0.0f, 0.0f);
                 }
 
-                // ¸ðµç ¸éÀ» ¼øÈ¸ÇÏ¸ç ¸éÀÇ ¹ý¼±À» °è»êÇÏ°í, ¸éÀ» ±¸¼ºÇÏ´Â Á¤Á¡µé¿¡ ´õÇØÁÜ
+                // ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½È¸ï¿½Ï¸ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½Ï°ï¿½, ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½Ï´ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½é¿¡ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
                 for (size_t idx = 0; idx < mesh.indices.size(); idx += 3)
                 {
                     unsigned int i0 = mesh.indices[idx];
@@ -321,12 +322,12 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
                     const SRMath::vec3& v1 = mesh.vertices[i1].position;
                     const SRMath::vec3& v2 = mesh.vertices[i2].position;
 
-                    // »ï°¢Çü ¸é ¹ý¼± (v0->v1) ¡¿ (v0->v2)
+                    // ï¿½ï°¢ï¿½ï¿½ ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ (v0->v1) ï¿½ï¿½ (v0->v2)
                     SRMath::vec3 face_normal = SRMath::cross(v1 - v0, v2 - v0);
 
-                    // 0º¤ÅÍ ¹æÁö ÈÄ Á¤±ÔÈ­
+                    // 0ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½È­
                     float length = SRMath::length(face_normal);
-                    if (length > 1e-6f) // 0º¤ÅÍ ¹æÁö
+                    if (length > 1e-6f) // 0ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
                     {
                         face_normal = SRMath::normalize(face_normal);
                     }
@@ -335,43 +336,42 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
                         face_normal = SRMath::vec3(0.0f, 0.0f, 0.0f);
                     }
 
-                    // Á¤Á¡ ¹ý¼±¿¡ ¸é ¹ý¼± ´©Àû (½º¹«µù)
+                    // ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ (ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½)
                     mesh.vertices[i0].normal = mesh.vertices[i0].normal + face_normal;
                     mesh.vertices[i1].normal = mesh.vertices[i1].normal + face_normal;
                     mesh.vertices[i2].normal = mesh.vertices[i2].normal + face_normal;
                 }
 
-                // °¢ Á¤Á¡ÀÇ ¹ý¼±À» Á¤±ÔÈ­ÇÏ¿© ºÎµå·¯¿î ¹ý¼±(Smooth Normal) »ý¼º
+                // ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½È­ï¿½Ï¿ï¿½ ï¿½Îµå·¯ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½(Smooth Normal) ï¿½ï¿½ï¿½ï¿½
                 for (auto& vertex : mesh.vertices)
                 {
                     float length = SRMath::length(vertex.normal);
                     if (length > 1e-6f)
                         vertex.normal = SRMath::normalize(vertex.normal);
                     else
-                        vertex.normal = SRMath::vec3(0.0f, 1.0f, 0.0f); // ±âº» À§ÂÊ ¹æÇâ
+                        vertex.normal = SRMath::vec3(0.0f, 1.0f, 0.0f); // ï¿½âº» ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
                 }
             }
 
-            // ¸Þ½Ã AABB °è»ê ¹× ¸ðµ¨ ÀüÃ¼ ÅëÇÕ
+            // ï¿½Þ½ï¿½ AABB ï¿½ï¿½ï¿½ ï¿½ï¿½ ï¿½ï¿½ ï¿½ï¿½Ã¼ ï¿½ï¿½ï¿½ï¿½
             AABB meshAABB = AABB::CreateFromMesh(mesh);
             mesh.localAABB = meshAABB;
 
-			localAABB.local().Encapsulate(meshAABB); // ½º·¹µå ·ÎÄÃ AABB¿¡ ÅëÇÕ
+			localAABB.local().Encapsulate(meshAABB); // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ AABBï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
 
-            // Octree »ý¼º ¹× ºôµå (°¡½ÃÈ­/ÇÁ·¯½ºÅÒ ÄÃ¸µ ÃÖÀûÈ­)
+            // Octree ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ ï¿½ï¿½ï¿½ (ï¿½ï¿½ï¿½ï¿½È­/ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½Ã¸ï¿½ ï¿½ï¿½ï¿½ï¿½È­)
             mesh.octree = std::make_unique<Octree>();
             mesh.octree->Build(mesh);
 		}});
 
-    // ÃÖÁ¾ÀûÀ¸·Î thread-local AABBµéÀ» º´ÇÕ
+    // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ thread-local AABBï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
     localAABB.combine_each([&](const AABB& aabb) {
         modelAABB.Encapsulate(aabb);
         });
-    // ÃÖÁ¾ °è»êµÈ AABB ¸ðµ¨¿¡ ÀúÀå
+    // ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ AABB ï¿½ðµ¨¿ï¿½ ï¿½ï¿½ï¿½ï¿½
     
     outModel->m_localAABB = modelAABB;
 
-    file.close(); // ÆÄÀÏ ´Ý±â
-    return outModel; // ¿Ï¼ºµÈ ¸ðµ¨ ¹ÝÈ¯
+    file.close(); // ï¿½ï¿½ï¿½ï¿½ ï¿½Ý±ï¿½
+    return outModel; // ï¿½Ï¼ï¿½ï¿½ï¿½ ï¿½ï¿½ ï¿½ï¿½È¯
 }
-

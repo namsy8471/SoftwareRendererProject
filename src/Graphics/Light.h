@@ -1,7 +1,7 @@
-#pragma once
+ï»¿#pragma once
 #include "Math/SRMath.h"
 
 struct DirectionalLight {
-	SRMath::vec3 direction = {0.f, -1.f, 0.0f}; // ºûÀÇ ¹æÇâ
-	SRMath::vec3 color = { 1.0f, 1.0f, 1.0f};    // ºûÀÇ »ö»ó
+	SRMath::vec3 direction = {0.f, -1.f, 0.0f}; // ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
+	SRMath::vec3 color = { 1.0f, 1.0f, 1.0f};    // ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
 };

@@ -1,4 +1,4 @@
-#include "Camera.h"
+ï»¿#include "Camera.h"
 
 Camera::Camera() : m_cameraPos({0.0f, 0.0f, 0.0f})
 {
@@ -29,14 +29,14 @@ void Camera::Update(const float deltaTime, const bool* keyInput, const float asp
 
 void Camera::Move(const float deltaTime, const bool* keyInput)
 {
-    // --- Ä«¸Þ¶óÀÇ ½ÇÁ¦ ¹æÇâ º¤ÅÍ °è»ê ---
-    // Yaw¿Í Pitch¸¦ ¸ðµÎ »ç¿ëÇÏ¿© 3D ¹æÇâ º¤ÅÍ¸¦ °è»êÇÕ´Ï´Ù.
+    // --- Ä«ï¿½Þ¶ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ ---
+    // Yawï¿½ï¿½ Pitchï¿½ï¿½ ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½Ï¿ï¿½ 3D ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½Í¸ï¿½ ï¿½ï¿½ï¿½ï¿½Õ´Ï´ï¿½.
     m_cameraforward = {
         cos(m_cameraPitch) * sin(m_cameraYaw),
         sin(m_cameraPitch),
         cos(m_cameraPitch) * cos(m_cameraYaw)
     };
-    m_cameraforward = SRMath::normalize(m_cameraforward); // Á¤±ÔÈ­ÇÏ¿© ±æÀÌ¸¦ 1·Î ¸¸µê
+    m_cameraforward = SRMath::normalize(m_cameraforward); // ï¿½ï¿½ï¿½ï¿½È­ï¿½Ï¿ï¿½ ï¿½ï¿½ï¿½Ì¸ï¿½ 1ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
 
     if(keyInput['W']) MoveForward(deltaTime);
     if (keyInput['S']) MoveBackward(deltaTime);

@@ -1,4 +1,4 @@
-#include "Mesh.h"
+﻿#include "Mesh.h"
 #include "Octree.h"
 
 Mesh::Mesh() = default;

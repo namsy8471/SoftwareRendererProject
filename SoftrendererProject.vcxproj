@@ -145,11 +145,10 @@
       <ConformanceMode>true</ConformanceMode>
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
-      <LanguageStandard>stdcpp17</LanguageStandard>
-      <AdditionalIncludeDirectories>$(SolutionDir)src;$(SolutionDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <AdditionalIncludeDirectories>$(SolutionDir)src;$(SolutionDir);$(SolutionDir)src\ThirdParty;$(SolutionDir)src\ThirdParty\OneTBB_2023.1.0\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <EnableModules>false</EnableModules>
-      <AdditionalOptions>
-      </AdditionalOptions>
+      <AdditionalOptions>/uft-8</AdditionalOptions>
       <OpenMPSupport>false</OpenMPSupport>
       <ExternalWarningLevel>Level1</ExternalWarningLevel>
       <DisableAnalyzeExternal>true</DisableAnalyzeExternal>
@@ -157,12 +156,15 @@
     <Link>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalLibraryDirectories>$(SolutionDir)\src\ThirdParty\OneTBB_2023.1.0\lib\intel64\vc14;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>$(SolutionDir)\src\ThirdParty\OneTBB_2023.1.0\lib\intel64\vc14\tbb12.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <ResourceCompile>
       <AdditionalIncludeDirectories>$(SolutionDir)src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ResourceCompile>
     <PostBuildEvent>
-      <Command>xcopy /E /I /Y "$(ProjectDir)assets" "$(OutDir)assets\"</Command>
+      <Command>xcopy /E /I /Y "$(ProjectDir)assets" "$(OutDir)assets"
+copy /Y "$(ProjectDir)src\ThirdParty\OneTBB_2023.1.0\redist\intel64\vc14\tbb12.dll" "$(OutDir)."</Command>
     </PostBuildEvent>
     <PostBuildEvent>
       <Message>Get assets in build folder</Message>

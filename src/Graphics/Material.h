@@ -1,4 +1,4 @@
-#pragma once
+ï»¿#pragma once
 #include <memory>
 #include "Math/SRMath.h"
 
@@ -6,15 +6,14 @@ class Texture;
 
 struct Material
 {
-	std::string name;						// ¸ÓÆ¼¸®¾ó ÀÌ¸§
-	SRMath::vec3 ka = { 0.5f, 0.5f, 0.5f};	// ±âº» È®»ê »ö»ó
-	SRMath::vec3 kd = { 0.5f, 0.5f, 0.5f};	// ±âº» ³­¹Ý»ç »ö»ó
-	SRMath::vec3 ks = { 0.5f, 0.5f, 0.5f};	// ±âº» Á¤¹Ý»ç »ö»ó
-	float Ns = 32.0f;						// ±âº» ¹Ý»çÀ²
-	float d = 1.0f;							// Åõ¸íµµ (±âº»°ª: 1.0, ¿ÏÀü ºÒÅõ¸í)
+	std::string name;						// ï¿½ï¿½Æ¼ï¿½ï¿½ï¿½ï¿½ ï¿½Ì¸ï¿½
+	SRMath::vec3 ka = { 0.5f, 0.5f, 0.5f};	// ï¿½âº» È®ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
+	SRMath::vec3 kd = { 0.5f, 0.5f, 0.5f};	// ï¿½âº» ï¿½ï¿½ï¿½Ý»ï¿½ ï¿½ï¿½ï¿½ï¿½
+	SRMath::vec3 ks = { 0.5f, 0.5f, 0.5f};	// ï¿½âº» ï¿½ï¿½ï¿½Ý»ï¿½ ï¿½ï¿½ï¿½ï¿½
+	float Ns = 32.0f;						// ï¿½âº» ï¿½Ý»ï¿½ï¿½ï¿½
+	float d = 1.0f;							// ï¿½ï¿½ï¿½ï¿½ï¿½ (ï¿½âº»ï¿½ï¿½: 1.0, ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½)
 
 	std::shared_ptr<Texture> 
-		diffuseTexture = nullptr;			// ÅØ½ºÃÄ
-	int illum = 2;							// Á¶¸í ¸ðµ¨ (±âº»°ª: 2, Phong Á¶¸í ¸ðµ¨)
+		diffuseTexture = nullptr;			// ï¿½Ø½ï¿½ï¿½ï¿½
+	int illum = 2;							// ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ (ï¿½âº»ï¿½ï¿½: 2, Phong ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½)
 };
-

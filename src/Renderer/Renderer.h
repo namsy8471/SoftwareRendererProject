@@ -1,4 +1,4 @@
-#pragma once
+ï»¿#pragma once
 #include <vector>
 #include <unordered_map>
 #include <memory>
@@ -38,10 +38,10 @@ struct alignas(64) AlignedAtomicInt {
 class Renderer
 {
 private:
-	// ¹é¹öÆÛ¸µ¿¡ ÇÊ¿äÇÑ GDI °´Ã¼ ÇÚµé
-	HDC     m_hMemDC;       // ¹é¹öÆÛÀÇ Device Context
-	HBITMAP m_hBitmap;      // ¹é¹öÆÛ¿ë ºñÆ®¸Ê
-	HBITMAP m_hOldBitmap;   // m_hMemDC¿¡ ¿ø·¡ ¼±ÅÃµÇ¾î ÀÖ´ø ºñÆ®¸Ê
+	// ï¿½ï¿½ï¿½ï¿½Û¸ï¿½ï¿½ï¿½ ï¿½Ê¿ï¿½ï¿½ï¿½ GDI ï¿½ï¿½Ã¼ ï¿½Úµï¿½
+	HDC     m_hMemDC;       // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ Device Context
+	HBITMAP m_hBitmap;      // ï¿½ï¿½ï¿½ï¿½Û¿ï¿½ ï¿½ï¿½Æ®ï¿½ï¿½
+	HBITMAP m_hOldBitmap;   // m_hMemDCï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ÃµÇ¾ï¿½ ï¿½Ö´ï¿½ ï¿½ï¿½Æ®ï¿½ï¿½
 
 	int m_width;
 	int m_height;
@@ -50,31 +50,31 @@ private:
 	std::vector<float> m_depthBuffer;
 
 	ELineAlgorithm m_currentLineAlgorithm = 
-		ELineAlgorithm::Bresenham;	// ¼± ±×¸®±â ¾Ë°í¸®Áò
+		ELineAlgorithm::Bresenham;	// ï¿½ï¿½ ï¿½×¸ï¿½ï¿½ï¿½ ï¿½Ë°ï¿½ï¿½ï¿½ï¿½
 
 	EAAAlgorithm m_currentAAAlgorithm = 
-		EAAAlgorithm::None;	// ¾ØÆ¼¾Ù¸®¾î½Ì ¾Ë°í¸®Áò
+		EAAAlgorithm::None;	// ï¿½ï¿½Æ¼ï¿½Ù¸ï¿½ï¿½ï¿½ï¿½ ï¿½Ë°ï¿½ï¿½ï¿½ï¿½
 
 	// Renderer Optimization		
 	std::vector<tbb::concurrent_vector<TriangleRef*>> m_finalTriangleBins;
-	tbb::enumerable_thread_specific<tbb::concurrent_vector<TriangleRef>> m_threadTrianglePools; // ½ÇÁ¦ TriangleRef °´Ã¼µéÀÌ ÀúÀåµÉ ½º·¹µåº° ¸Þ¸ð¸® Ç®
+	tbb::enumerable_thread_specific<tbb::concurrent_vector<TriangleRef>> m_threadTrianglePools; // ï¿½ï¿½ï¿½ï¿½ TriangleRef ï¿½ï¿½Ã¼ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½åº° ï¿½Þ¸ï¿½ Ç®
 	tbb::enumerable_thread_specific<std::vector<ShadedVertex>> m_threadClipBuffer1, m_threadClipBuffer2, m_threadClippedVertices;
 	tbb::enumerable_thread_specific<std::unordered_map<const MeshRenderCommand*, SRMath::mat4>>m_threadNormalMatrixCache;
 
-	tbb::enumerable_thread_specific<std::vector<ShadedVertex>> m_threadShadedVertexBuffers; // Å¬¸³ °ø°£ ÁÂÇ¥¸¦ ÀúÀåÇÒ ¹öÆÛ
-	tbb::enumerable_thread_specific<std::vector<uint64_t>> m_threadStamps;         // Á¤Á¡º° ½ºÅÆÇÁ (º¯È¯ Ä³½Ì ¿ëµµ)
-	// ÇÁ·¹ÀÓ Ä«¿îÅÍ Ãß°¡ (½º·¹µå ¼ÎÀÌ´õ¹öÆÛ¿Í ½ºÅÆÇÁ µ¥ÀÌÅÍ ¿À¿° ¹æÁö)
+	tbb::enumerable_thread_specific<std::vector<ShadedVertex>> m_threadShadedVertexBuffers; // Å¬ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½Ç¥ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
+	tbb::enumerable_thread_specific<std::vector<uint64_t>> m_threadStamps;         // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ (ï¿½ï¿½È¯ Ä³ï¿½ï¿½ ï¿½ëµµ)
+	// ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ Ä«ï¿½ï¿½ï¿½ï¿½ ï¿½ß°ï¿½ (ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½Ì´ï¿½ï¿½ï¿½ï¿½Û¿ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½)
 	uint64_t m_frameCounter = 0;
 
-	// Resize¿ë ÀçÃÊ±âÈ­ ÇÔ¼ö
+	// Resizeï¿½ï¿½ ï¿½ï¿½ï¿½Ê±ï¿½È­ ï¿½Ô¼ï¿½
 	bool reInit(HWND hWnd);
 	void shutdownForResize() const;
 
-	// ¼± ±×¸®±â ¾Ë°í¸®Áò ¼¿·ºÅÍ
+	// ï¿½ï¿½ ï¿½×¸ï¿½ï¿½ï¿½ ï¿½Ë°ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 	void drawLineByBresenham(int x0, int y0, int x1, int y1, unsigned int color);
 	void drawLineByDDA(int x0, int y0, int x1, int y1, unsigned int color);
 
-	// ±×¸®±â ÇÔ¼ö
+	// ï¿½×¸ï¿½ï¿½ï¿½ ï¿½Ô¼ï¿½
 	void drawPixel(int x, int y, unsigned int color);
 	void drawLine(int x0, int y0, int x1, int y1, unsigned int color);
 	void drawTriangle(int x0, int y0, int x1, int y1, int x2, int y2, unsigned int color);
@@ -111,4 +111,3 @@ public:
 	const int GetWidth() const { return m_width; }
 	const int GetHeight() const { return m_height; }
 };
-
