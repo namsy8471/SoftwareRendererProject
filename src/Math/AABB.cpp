@@ -4,12 +4,12 @@
 
 void AABB::Encapsulate(const AABB& other)
 {
-    // ���� min�� �ٸ� AABB�� min �� �� ���� ���� ���ο� min���� ����
+    // 현재 min과 다른 AABB의 min 중 더 작은 값을 새로운 min으로 설정
     min.x = std::min(min.x, other.min.x);
     min.y = std::min(min.y, other.min.y);
     min.z = std::min(min.z, other.min.z);
 
-    // ���� max�� �ٸ� AABB�� max �� �� ū ���� ���ο� max�� ����
+    // 현재 max와 다른 AABB의 max 중 더 큰 값을 새로운 max로 설정
     max.x = std::max(max.x, other.max.x);
     max.y = std::max(max.y, other.max.y);
     max.z = std::max(max.z, other.max.z);
@@ -17,22 +17,22 @@ void AABB::Encapsulate(const AABB& other)
 
 void AABB::Encapsulate(const SRMath::vec3& point)
 {
-    // ���� min�� ���� ��ġ �� �� ���� ���� ���ο� min���� ����
+    // 현재 min과 점의 위치 중 더 작은 값을 새로운 min으로 설정
     min.x = std::min(min.x, point.x);
     min.y = std::min(min.y, point.y);
     min.z = std::min(min.z, point.z);
 
-    // ���� max�� ���� ��ġ �� �� ū ���� ���ο� max�� ����
+    // 현재 max와 점의 위치 중 더 큰 값을 새로운 max로 설정
     max.x = std::max(max.x, point.x);
     max.y = std::max(max.y, point.y);
     max.z = std::max(max.z, point.z);
 }
 
-// �� AABB�� ��ġ����(�����ϴ���) Ȯ���ϴ� �Լ�
+// 두 AABB가 겹치는지(교차하는지) 확인하는 함수
 const bool AABB::AABBIntersects(const AABB& other) const
 {
-    // X, Y, Z ��� �࿡�� ��ġ�� �κ��� �ִ��� Ȯ���մϴ�.
-    // ��� �� ���̶� ������ �и��Ǿ� �ִٸ� �� ���ڴ� ��ġ�� �ʽ��ϴ�.
+    // X, Y, Z 모든 축에서 겹치는 부분이 있는지 확인합니다.
+    // 어느 한 축이라도 완전히 분리되어 있다면 두 상자는 겹치지 않습니다.
     return (min.x <= other.max.x && max.x >= other.min.x) &&
         (min.y <= other.max.y && max.y >= other.min.y) &&
         (min.z <= other.max.z && max.z >= other.min.z);
@@ -40,7 +40,7 @@ const bool AABB::AABBIntersects(const AABB& other) const
 
 const bool AABB::AABBContains(const AABB& other) const
 {
-    // �ٸ� AABB�� ���� AABB�� ������ ���ԵǴ��� Ȯ���մϴ�.
+    // 다른 AABB가 현재 AABB에 완전히 포함되는지 확인합니다.
     return (min.x <= other.min.x && max.x >= other.max.x) &&
            (min.y <= other.min.y && max.y >= other.max.y) &&
            (min.z <= other.min.z && max.z >= other.max.z);
@@ -76,7 +76,7 @@ const SRMath::vec3 AABB::GetCenter() const
 
 const std::array<SRMath::vec3, 8> AABB::GetVertice() const
 {
-    std::array<SRMath::vec3, 8> array; // 8���� ������
+    std::array<SRMath::vec3, 8> array; // 8개의 꼭짓점
     array[0] = { min.x, min.y, min.z };
     array[1] = { max.x, min.y, min.z };
     array[2] = { min.x, max.y, min.z };
@@ -103,7 +103,7 @@ AABB AABB::CreateFromMesh(const Mesh& mesh)
 {
     if(mesh.vertices.empty())
     {
-        return AABB{ {0, 0, 0}, {0, 0, 0} }; // �� �޽��� ���, AABB�� (0,0,0)���� ����
+        return AABB{ {0, 0, 0}, {0, 0, 0} }; // 빈 메시의 경우, AABB는 (0,0,0)으로 설정
 	}
 
     AABB bounds;

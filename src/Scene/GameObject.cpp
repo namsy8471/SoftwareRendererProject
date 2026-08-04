@@ -59,7 +59,7 @@ void GameObject::UpdateTransform(float deltaTime, bool isRotate)
 	SRMath::mat4 rotationMatrix = SRMath::rotate(m_rotation);
 	SRMath::mat4 translationMatrix = SRMath::translate(m_position);
 	m_worldMatrix = translationMatrix * rotationMatrix * scaleMatrix;
-	m_normalMatrix = SRMath::inverse_transpose(m_worldMatrix).value_or(SRMath::mat4(1.f)); // ���� ��� ���
+	m_normalMatrix = SRMath::inverse_transpose(m_worldMatrix).value_or(SRMath::mat4(1.f)); // 법선 행렬 계산
 
 	const AABB& localAABB = m_model->GetLocalAABB();
 	m_worldAABB = localAABB.Transform(m_worldMatrix);
@@ -155,7 +155,7 @@ void GameObject::SubmitToRenderQueue(RenderQueue& renderQueue, const Frustum& fr
 				if (debugFlags.bShowNormal)
 				{
 					std::vector<DebugVertex> normalLines;
-					normalLines.reserve(mesh.vertices.size() * 2); // �� �������� �������� ������ �����Ƿ� 2�� ũ��
+					normalLines.reserve(mesh.vertices.size() * 2); // 각 정점마다 시작점과 끝점이 있으므로 2배 크기
 
 					const float normalLength = 0.1f; // Normal vector length for visualization
 
@@ -163,8 +163,8 @@ void GameObject::SubmitToRenderQueue(RenderQueue& renderQueue, const Frustum& fr
 					{
 						SRMath::vec3 startPoint_local = m_worldMatrix * vertex.position;
 
-						// 3. ����(normal)�� ����ġ ��ķ� ��ȯ�Ͽ� ���� ������ ���� ������ ����մϴ�.
-						// (w=0���� �����Ͽ� ���� �������� ���)
+						// 3. 방향(normal)은 역전치 행렬로 변환하여 월드 공간의 법선 방향을 계산합니다.
+						// (w=0으로 설정하여 방향 벡터임을 명시)
 						SRMath::vec3 normalDir_world = m_normalMatrix * SRMath::vec4(vertex.normal, 0.f);
 						SRMath::vec3 endPoint_local = startPoint_local + SRMath::normalize(normalDir_world) * normalLength;
 

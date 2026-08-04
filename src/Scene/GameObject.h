@@ -20,12 +20,12 @@ private:
 	SRMath::vec3 m_rotation;
 	SRMath::vec3 m_scale;
 
-	SRMath::mat4 m_worldMatrix; // ���� ��ȯ ���
-	SRMath::mat4 m_normalMatrix; // ���� ��� (����ġ ���)
+	SRMath::mat4 m_worldMatrix; // 월드 변환 행렬
+	SRMath::mat4 m_normalMatrix; // 법선 행렬 (역전치 행렬)
 
 	// Model
 	std::unique_ptr<Model> m_model;
-	AABB m_worldAABB; // ���� ���������� AABB
+	AABB m_worldAABB; // 월드 공간에서의 AABB
 
 	// Hierarchy
 	std::weak_ptr<GameObject> m_parent;
@@ -47,7 +47,7 @@ public:
 
 	bool Initialize(const SRMath::vec3& position, const SRMath::vec3& rotation, const SRMath::vec3& scale, std::unique_ptr<Model> model);
 	void Update(float deltaTime, bool isRotate);
-	void UpdateTransform(float deltaTime, bool isRotate); // Transform ������Ʈ �� ȣ��� �Լ�
+	void UpdateTransform(float deltaTime, bool isRotate); // Transform 업데이트 시 호출될 함수
 
 	const SRMath::vec3 GetPosition() const;
 	const SRMath::vec3 GetRotation() const;

@@ -9,7 +9,7 @@
 
 Framework::Framework(HINSTANCE hInstance, int nCmdShow)
 {
-    // ���� ���ڿ��� �ʱ�ȭ�մϴ�.
+    // 전역 문자열을 초기화합니다.
     LoadStringW(hInstance, IDS_APP_TITLE, m_szTitle, MAX_LOADSTRING);
     LoadStringW(hInstance, IDC_SOFTRENDERERPROJECT, m_szWindowClass, MAX_LOADSTRING);
 
@@ -94,7 +94,7 @@ void Framework::Run()
     MSG msg;
     ZeroMemory(&msg, sizeof(msg));
 
-    // �⺻ �޽��� �����Դϴ�:
+    // 기본 메시지 루프입니다:
     while (msg.message != WM_QUIT)
     {
         if (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
@@ -105,17 +105,17 @@ void Framework::Run()
 
         else {
             int prevFPS = m_perfAnalyzer.GetAvgFPSForSecond();
-            // �޽����� ���� �� �ð��� ������ �ڵ带 ����!
+            // 메시지가 없는 이 시간에 렌더링 코드를 실행!
             m_perfAnalyzer.Update();
 
             if (m_perfAnalyzer.GetAvgFPSForSecond() != prevFPS) {
-                // ���ڿ� ���۸� �غ��ϰ�
+                // 문자열 버퍼를 준비하고
                 wchar_t buffer[100];
-                // "SoftrendererProject - FPS: 60" ���� �������� ���ڿ��� ����ϴ�.
+                // "SoftrendererProject - FPS: 60" 같은 형식으로 문자열을 만듭니다.
                 swprintf_s(buffer, 100, L"%s - AvgFPS: %d",
                     m_szTitle, m_perfAnalyzer.GetAvgFPSForSecond());
 
-                // â ������ �����մϴ�.
+                // 창 제목을 설정합니다.
                 SetWindowText(m_hWnd, buffer);
             }
 
@@ -178,7 +178,7 @@ LRESULT Framework::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
     case WM_COMMAND:
     {
         int wmId = LOWORD(wParam);
-        // �޴� ������ ���� �м��մϴ�:
+        // 메뉴 선택을 구문 분석합니다:
         switch (wmId)
         {
 
@@ -232,7 +232,7 @@ LRESULT Framework::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
     case WM_PAINT:
     {
         // It is not used anymore
-        // ������ ����� ������ ���� Ȥ�� ���� â�� �� �߹Ƿ� ����. 
+        // 하지만 지우면 윈도우 에러 혹은 헬프 창이 안 뜨므로 남김. 
         PAINTSTRUCT ps;
         HDC hdc = BeginPaint(hWnd, &ps);
         EndPaint(hWnd, &ps);
@@ -319,21 +319,21 @@ void Framework::CheckMenuBox(bool isOn, const int& menuID)
     
     HMENU hMenu = GetMenu(m_hWnd);
 
-    // CheckMenuItem �Լ��� ȣ���Ͽ� üũ ǥ�ø� ������Ʈ�մϴ�.
+    // CheckMenuItem 함수를 호출하여 체크 표시를 업데이트합니다.
     if (isOn)
     {
-        // ���°� true�̸�, MF_CHECKED �÷��׷� üũ ǥ�ø� �߰��մϴ�.
+        // 상태가 true이면, MF_CHECKED 플래그로 체크 표시를 추가합니다.
         CheckMenuItem(hMenu, menuID, MF_BYCOMMAND | MF_CHECKED);
     }
     else
     {
-        // ���°� false�̸�, MF_UNCHECKED �÷��׷� üũ ǥ�ø� �����մϴ�.
+        // 상태가 false이면, MF_UNCHECKED 플래그로 체크 표시를 제거합니다.
         CheckMenuItem(hMenu, menuID, MF_BYCOMMAND | MF_UNCHECKED);
     }
 
 }
 
-// �޽��� ó����
+// 메시지 처리기
 LRESULT Framework::WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
     Framework* pFramework = nullptr;
@@ -357,7 +357,7 @@ LRESULT Framework::WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam
     return DefWindowProc(hWnd, message, wParam, lParam);
 }
 
-// ���� ��ȭ ������ �޽��� ó�����Դϴ�.
+// 정보 대화 상자의 메시지 처리기입니다.
 INT_PTR Framework::About(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
 {
     UNREFERENCED_PARAMETER(lParam);

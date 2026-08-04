@@ -348,7 +348,7 @@ namespace SRMath {
 	};
 
 	inline Vector<3>::Vector(const Vector<4>& v)
-		: m128(_mm_set_ps(0.0f, v.z, v.y, v.x)) // w�� 0���� ����
+		: m128(_mm_set_ps(0.0f, v.z, v.y, v.x)) // w는 0으로 설정
 	{ }
 	// inline operator overloading function
 	template<size_t N>
@@ -419,7 +419,7 @@ namespace SRMath {
 		return ret != b;
 	}
 
-	// -- Matrix ���� �� ����
+	// -- Matrix 선언 및 정의
 	template <size_t N> struct alignas(16) Matrix;
 	using mat3 = Matrix<3>;
 	using mat4 = Matrix<4>;
@@ -469,7 +469,7 @@ namespace SRMath {
 				"Second template argument must be mat4 or Matrix<4>");
 		}
 
-		// ��� ���� ������ �����ε�
+		// 행렬 곱셈 연산자 오버로딩
 		vec4 operator[](size_t col_idx) const
 		{
 			// m_lhs * v
@@ -494,15 +494,15 @@ namespace SRMath {
 			float data[4 * 4];
 		};
 
-		// �⺻ �����ڸ� ��������� ����
+		// 기본 생성자를 명시적으로 정의
 		Matrix() : Matrix(1.f) {}
 
-		// �밢�� ���� �޴� �����ڵ� Ȱ��ȭ
+		// 대각선 값을 받는 생성자도 활성화
 		Matrix(float diagonal)
 		{
-			// union�� �� ����� �����Ͽ� �ʱ�ȭ
-			// ���� ��� ���� ��ķ� �ʱ�ȭ
-			// �������� �־�� ��
+			// union의 한 멤버를 선택하여 초기화
+			// 예를 들어 단위 행렬로 초기화
+			// 역순으로 넣어야 함
 			m128[0] = _mm_set_ps(0.0f, 0.0f, 0.0f, diagonal); // col 0
 			m128[1] = _mm_set_ps(0.0f, 0.0f, diagonal, 0.0f); // col 1
 			m128[2] = _mm_set_ps(0.0f, diagonal, 0.0f, 0.0f); // col 2
@@ -511,8 +511,8 @@ namespace SRMath {
 
 		static Matrix<4> identity()
 		{
-			// ���� �⺻ �����ڸ� ȣ���� �� �����Ƿ�,
-			// �Ʒ��� ���� ��������� �����ڸ� ȣ���ؾ� ��
+			// 이제 기본 생성자를 호출할 수 없으므로,
+			// 아래와 같이 명시적으로 생성자를 호출해야 함
 			return Matrix<4>(1.f);
 		}
 
@@ -522,8 +522,8 @@ namespace SRMath {
 		template<typename T1, typename T2>
 		Matrix(const Matrix4x4Proxy<T1, T2>& proxy)
 		{
-			// ���� ������ operator=�� ������ �����մϴ�.
-			// ���Ͻ÷κ��� �� ���� ��� ����� ������ �� ����� �ʱ�ȭ�մϴ�.
+			// 내부 로직은 operator=와 완전히 동일합니다.
+			// 프록시로부터 각 열의 계산 결과를 가져와 새 행렬을 초기화합니다.
 			for (int i = 0; i < 4; i++) this->m128[i] = _mm_setzero_ps();
 			multiply(*this, proxy.lhs(), proxy.rhs());
 		}
@@ -546,7 +546,7 @@ namespace SRMath {
 	};
 
 	template<>
-	struct Matrix<3> { // 16����Ʈ ������ �ʼ��� �ƴ�
+	struct Matrix<3> { // 16바이트 정렬이 필수는 아님
 
 		union {
 			Vector<3> cols[3];
@@ -588,14 +588,14 @@ namespace SRMath {
 
 	inline void multiply(mat4& result, const mat4& a, const mat4& b)
 	{
-		// A�� ������ �̸� SIMD �������Ϳ� �ε��մϴ�.
-		// �̷��� �ϸ� �������� �޸𸮿��� �о���� ���� ������ �� �ֽ��ϴ�.
+		// A의 열들을 미리 SIMD 레지스터에 로드합니다.
+		// 이렇게 하면 루프마다 메모리에서 읽어오는 것을 방지할 수 있습니다.
 		__m128 a_col0 = a.m128[0];
 		__m128 a_col1 = a.m128[1];
 		__m128 a_col2 = a.m128[2];
 		__m128 a_col3 = a.m128[3];
 
-		// --- ��� ����� ù ��° �� ��� ---
+		// --- 결과 행렬의 첫 번째 열 계산 ---
 		__m128 b_splat = _mm_set1_ps(b.cols[0].x);
 		__m128 res = _mm_mul_ps(a_col0, b_splat);
 
@@ -609,7 +609,7 @@ namespace SRMath {
 		res = _mm_add_ps(res, _mm_mul_ps(a_col3, b_splat));
 		result.m128[0] = res;
 
-		// --- ��� ����� �� ��° �� ��� ---
+		// --- 결과 행렬의 두 번째 열 계산 ---
 		b_splat = _mm_set1_ps(b.cols[1].x);
 		res = _mm_mul_ps(a_col0, b_splat);
 
@@ -623,7 +623,7 @@ namespace SRMath {
 		res = _mm_add_ps(res, _mm_mul_ps(a_col3, b_splat));
 		result.m128[1] = res;
 
-		// --- ��� ����� �� ��° �� ��� ---
+		// --- 결과 행렬의 세 번째 열 계산 ---
 		b_splat = _mm_set1_ps(b.cols[2].x);
 		res = _mm_mul_ps(a_col0, b_splat);
 
@@ -637,7 +637,7 @@ namespace SRMath {
 		res = _mm_add_ps(res, _mm_mul_ps(a_col3, b_splat));
 		result.m128[2] = res;
 
-		// --- ��� ����� �� ��° �� ��� ---
+		// --- 결과 행렬의 네 번째 열 계산 ---
 		b_splat = _mm_set1_ps(b.cols[3].x);
 		res = _mm_mul_ps(a_col0, b_splat);
 
@@ -759,7 +759,7 @@ namespace SRMath {
 	static Matrix<4> translate(const Vector<3>& v)
 	{
 		Matrix<4> ret(1.0f);
-		ret[3].m128 = _mm_set_ps(1.0f, v.z, v.y, v.x); // SIMD ����ȭ
+		ret[3].m128 = _mm_set_ps(1.0f, v.z, v.y, v.x); // SIMD 최적화
 		return ret;
 	}
 
@@ -776,36 +776,36 @@ namespace SRMath {
 	// Rotate Mat4 (Right-handed Coordinate System)
 	static inline Matrix<4> rotate(const vec3& rotationVector)
 	{
-		// 1. ������ ũ��(length)�� ȸ�� ����(angle)�� ����մϴ�.
+		// 1. 벡터의 크기(length)를 회전 각도(angle)로 사용합니다.
 		float angleInRadians = length(rotationVector);
 
-		// 2. ���� ȸ�� ������ ���� 0�̸�, ��� ���� ���� ����� ��ȯ�մϴ� (����ȭ �� 0���� ������ ����).
+		// 2. 만약 회전 각도가 거의 0이면, 계산 없이 단위 행렬을 반환합니다 (최적화 및 0으로 나누기 방지).
 		if (angleInRadians < 1e-6f)
 		{
 			return Matrix<4>(1.0f);
 		}
 
-		// 3. ���͸� ����ȭ�Ͽ� ȸ�� ���� ���մϴ�.
+		// 3. 벡터를 정규화하여 회전 축을 구합니다.
 		vec3 axis = rotationVector / angleInRadians;
 
-		// 4. ������ �ε帮�Խ� ȸ�� ���� �ڵ带 �״�� ����մϴ�.
+		// 4. 기존의 로드리게스 회전 공식 코드를 그대로 사용합니다.
 		const float c = std::cos(angleInRadians);
 		const float s = std::sin(angleInRadians);
 		const float t = 1.0f - c;
 
-		Matrix<4> result(1); // ���� ��ķ� �ʱ�ȭ�� �ʿ� ����. ��� ��Ҹ� ���� ����.
+		Matrix<4> result(1); // 단위 행렬로 초기화할 필요 없음. 모든 요소를 직접 설정.
 
-		// ������ ��ǥ�� �� �켱 ȸ�� ���
+		// 오른손 좌표계 열 우선 회전 행렬
 		result[0].m128 = _mm_set_ps(0.0f, axis.z * axis.x * t - axis.y * s,
-			axis.y* axis.x* t + axis.z * s, c + axis.x * axis.x * t); // SIMD ����ȭ
+			axis.y* axis.x* t + axis.z * s, c + axis.x * axis.x * t); // SIMD 최적화
 
 		result[1].m128 = _mm_set_ps(0.0f, axis.z * axis.y * t + axis.x * s,
-			c + axis.y * axis.y * t, axis.x * axis.y * t - axis.z * s); // SIMD ����ȭ
+			c + axis.y * axis.y * t, axis.x * axis.y * t - axis.z * s); // SIMD 최적화
 
 		result[2].m128 = _mm_set_ps(0.0f, c + axis.z * axis.z * t,
-			axis.y * axis.z * t - axis.x * s, axis.x * axis.z * t + axis.y * s); // SIMD ����ȭ
+			axis.y * axis.z * t - axis.x * s, axis.x * axis.z * t + axis.y * s); // SIMD 최적화
 
-		result[3].m128 = _mm_set_ps(1.0f, 0.0f, 0.0f, 0.0f); // ������ ���� ���� ����� ������ ��
+		result[3].m128 = _mm_set_ps(1.0f, 0.0f, 0.0f, 0.0f); // 마지막 행은 단위 행렬의 마지막 행
 
 		return result;
 	}
@@ -837,19 +837,19 @@ namespace SRMath {
 		result[0][1] = u.x;
 		result[0][2] = -f.x;*/
 
-		result[0].m128 = _mm_set_ps(0.0f, -f.x, u.x, s.x); // SIMD ����ȭ
+		result[0].m128 = _mm_set_ps(0.0f, -f.x, u.x, s.x); // SIMD 최적화
 
 		/*result[1][0] = s.y;
 		result[1][1] = u.y;
 		result[1][2] = -f.y;*/
 
-		result[1].m128 = _mm_set_ps(0.0f, -f.y, u.y, s.y); // SIMD ����ȭ
+		result[1].m128 = _mm_set_ps(0.0f, -f.y, u.y, s.y); // SIMD 최적화
 
 		/*result[2][0] = s.z;
 		result[2][1] = u.z;
 		result[2][2] = -f.z;*/
 
-		result[2].m128 = _mm_set_ps(0.0f, -f.z, u.z, s.z); // SIMD ����ȭ
+		result[2].m128 = _mm_set_ps(0.0f, -f.z, u.z, s.z); // SIMD 최적화
 
 		/*result[3][0] = -dot(s, eye);
 		result[3][1] = -dot(u, eye);
@@ -860,18 +860,18 @@ namespace SRMath {
 		return result;
 	}
 
-	// SIMD�� ����� 4x4 ��� ��ġ �Լ�
+	// SIMD를 사용한 4x4 행렬 전치 함수
 	inline mat4 transpose(const mat4& m) {
 		mat4 result;
 
-		// �ӽ� ������ �� ���� ���� ó��
+		// 임시 변수로 두 열씩 묶어 처리
 		__m128 tmp0 = _mm_unpacklo_ps(m.m128[0], m.m128[1]); // {x0, x1, y0, y1}
 		__m128 tmp1 = _mm_unpackhi_ps(m.m128[0], m.m128[1]); // {z0, z1, w0, w1}
 		__m128 tmp2 = _mm_unpacklo_ps(m.m128[2], m.m128[3]); // {x2, x3, y2, y3}
 		__m128 tmp3 = _mm_unpackhi_ps(m.m128[2], m.m128[3]); // {z2, z3, w2, w3}
 
-		// �ӽ� �������� �ٽ� ��� ���� ��(row)�� ����ϴ�.
-		// �� ����� ��� ����� ���ο� ��(column)�� �˴ϴ�.
+		// 임시 변수들을 다시 섞어서 최종 행(row)을 만듭니다.
+		// 이 행들이 결과 행렬의 새로운 열(column)이 됩니다.
 		result.m128[0] = _mm_movelh_ps(tmp0, tmp2); // {x0, x1, x2, x3}
 		result.m128[1] = _mm_movehl_ps(tmp2, tmp0); // {y0, y1, y2, y3}
 		result.m128[2] = _mm_movelh_ps(tmp1, tmp3); // {z0, z1, z2, z3}
@@ -880,8 +880,8 @@ namespace SRMath {
 		return result;
 	}
 
-	// SIMD�� ����� 4x4 ��� ����� �Լ�
-	// ��Ľ��� 0�� ������ ������� �������� �����Ƿ� false�� ��ȯ�մϴ�.
+	// SIMD를 사용한 4x4 행렬 역행렬 함수
+	// 행렬식이 0에 가까우면 역행렬이 존재하지 않으므로 false를 반환합니다.
 	inline std::optional<mat4> inverse(const mat4& m) {
 		// We'll represent augmented matrix rows as:
 	// rowL[r] = left 4 elements (original matrix row r)  -> __m128
@@ -970,7 +970,7 @@ namespace SRMath {
 		if (auto inverse_mat = inverse(m)) {
 			return transpose(*inverse_mat);
 		}
-		// ������� ���� ���, ���� ��� �� ������ ���� ��ȯ
+		// 역행렬이 없는 경우, 단위 행렬 등 적절한 값을 반환
 		return std::nullopt;
 	}
 

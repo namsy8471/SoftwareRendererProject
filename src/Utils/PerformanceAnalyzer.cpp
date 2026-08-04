@@ -4,9 +4,9 @@
 
 PerformanceAnalyzer::PerformanceAnalyzer() : m_frequency(), m_prevTime()
 {
-    // ���ػ� Ÿ�̸��� ���ļ��� ���ɴϴ�.
+    // 고해상도 타이머의 주파수를 얻어옵니다.
     QueryPerformanceFrequency(&m_frequency);
-    // ���� �ð��� ����մϴ�.
+    // 현재 시간을 기록합니다.
     QueryPerformanceCounter(&m_prevTime);
 }
 
@@ -16,11 +16,11 @@ PerformanceAnalyzer::~PerformanceAnalyzer()
 
 void PerformanceAnalyzer::Update()
 {
-    // --- FPS ��� ���� ---
+    // --- FPS 계산 로직 ---
     LARGE_INTEGER currentTime;
     QueryPerformanceCounter(&currentTime);
 
-    // ���� �����Ӱ��� �ð���(delta time)�� ����մϴ�.
+    // 이전 프레임과의 시간차(delta time)를 계산합니다.
     deltaTime = static_cast<float>(currentTime.QuadPart - m_prevTime.QuadPart) / m_frequency.QuadPart;
     m_prevTime = currentTime;
 
@@ -28,7 +28,7 @@ void PerformanceAnalyzer::Update()
     m_elapsedTime += deltaTime;
 
     float interval = INTERVAL;
-    // 1�ʰ� �������� FPS�� ����ϰ� �ʱ�ȭ�մϴ�.
+    // 1초가 지났으면 FPS를 계산하고 초기화합니다.
     if (m_elapsedTime > interval)
     {
         m_avgfps = m_frameCount;

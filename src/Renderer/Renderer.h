@@ -38,10 +38,10 @@ struct alignas(64) AlignedAtomicInt {
 class Renderer
 {
 private:
-	// ����۸��� �ʿ��� GDI ��ü �ڵ�
-	HDC     m_hMemDC;       // ������� Device Context
-	HBITMAP m_hBitmap;      // ����ۿ� ��Ʈ��
-	HBITMAP m_hOldBitmap;   // m_hMemDC�� ���� ���õǾ� �ִ� ��Ʈ��
+	// 백버퍼링에 필요한 GDI 객체 핸들
+	HDC     m_hMemDC;       // 백버퍼의 Device Context
+	HBITMAP m_hBitmap;      // 백버퍼용 비트맵
+	HBITMAP m_hOldBitmap;   // m_hMemDC에 원래 선택되어 있던 비트맵
 
 	int m_width;
 	int m_height;
@@ -50,31 +50,31 @@ private:
 	std::vector<float> m_depthBuffer;
 
 	ELineAlgorithm m_currentLineAlgorithm = 
-		ELineAlgorithm::Bresenham;	// �� �׸��� �˰����
+		ELineAlgorithm::Bresenham;	// 선 그리기 알고리즘
 
 	EAAAlgorithm m_currentAAAlgorithm = 
-		EAAAlgorithm::None;	// ��Ƽ�ٸ���� �˰����
+		EAAAlgorithm::None;	// 앤티앨리어싱 알고리즘
 
 	// Renderer Optimization		
 	std::vector<tbb::concurrent_vector<TriangleRef*>> m_finalTriangleBins;
-	tbb::enumerable_thread_specific<tbb::concurrent_vector<TriangleRef>> m_threadTrianglePools; // ���� TriangleRef ��ü���� ����� �����庰 �޸� Ǯ
+	tbb::enumerable_thread_specific<tbb::concurrent_vector<TriangleRef>> m_threadTrianglePools; // 실제 TriangleRef 객체들이 저장될 스레드별 메모리 풀
 	tbb::enumerable_thread_specific<std::vector<ShadedVertex>> m_threadClipBuffer1, m_threadClipBuffer2, m_threadClippedVertices;
 	tbb::enumerable_thread_specific<std::unordered_map<const MeshRenderCommand*, SRMath::mat4>>m_threadNormalMatrixCache;
 
-	tbb::enumerable_thread_specific<std::vector<ShadedVertex>> m_threadShadedVertexBuffers; // Ŭ�� ���� ��ǥ�� ������ ����
-	tbb::enumerable_thread_specific<std::vector<uint64_t>> m_threadStamps;         // ������ ������ (��ȯ ĳ�� �뵵)
-	// ������ ī���� �߰� (������ ���̴����ۿ� ������ ������ ���� ����)
+	tbb::enumerable_thread_specific<std::vector<ShadedVertex>> m_threadShadedVertexBuffers; // 클립 공간 좌표를 저장할 버퍼
+	tbb::enumerable_thread_specific<std::vector<uint64_t>> m_threadStamps;         // 정점별 스탬프 (변환 캐싱 용도)
+	// 프레임 카운터 추가 (스레드 셰이더버퍼와 스탬프 데이터 오염 방지)
 	uint64_t m_frameCounter = 0;
 
-	// Resize�� ���ʱ�ȭ �Լ�
+	// Resize용 재초기화 함수
 	bool reInit(HWND hWnd);
 	void shutdownForResize() const;
 
-	// �� �׸��� �˰���� ������
+	// 선 그리기 알고리즘 셀렉터
 	void drawLineByBresenham(int x0, int y0, int x1, int y1, unsigned int color);
 	void drawLineByDDA(int x0, int y0, int x1, int y1, unsigned int color);
 
-	// �׸��� �Լ�
+	// 그리기 함수
 	void drawPixel(int x, int y, unsigned int color);
 	void drawLine(int x0, int y0, int x1, int y1, unsigned int color);
 	void drawTriangle(int x0, int y0, int x1, int y1, int x2, int y2, unsigned int color);

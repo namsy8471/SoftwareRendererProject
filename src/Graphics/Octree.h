@@ -12,7 +12,7 @@ struct DebugFlags;
 class Octree
 {
 private:
-	friend class Renderer; // Renderer.h���� OctreeNode�� ����ϱ� ������ �ʿ�
+	friend class Renderer; // Renderer.h에서 OctreeNode를 사용하기 때문에 필요
 	class OctreeNode;
 
 	void subdivide(OctreeNode* node);

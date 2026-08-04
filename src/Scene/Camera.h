@@ -1,16 +1,17 @@
 ﻿#pragma once
+
 #include "Math/SRMath.h"
 #include "Math/Frustum.h"
 
 class Camera
 {
 private:
-	float moveSpeed = 10.f; // ī�޶� �̵� �ӵ�
+	float moveSpeed = 10.f; // 카메라 이동 속도
 
 	SRMath::vec3 m_cameraPos = { 0.f, 0.f, 5.f };
 	SRMath::vec3 m_cameraforward;
-	float m_cameraYaw = 0.f;	// �¿� ȸ�� (Y�� ����)
-	float m_cameraPitch = 0.f;	// ���� ȸ�� (X�� ����)
+	float m_cameraYaw = 0.f;	// 좌우 회전 (Y축 기준)
+	float m_cameraPitch = 0.f;	// 상하 회전 (X축 기준)
 
 	Frustum m_frustum;
 	SRMath::mat4 m_viewMatrix;

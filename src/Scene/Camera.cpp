@@ -29,14 +29,14 @@ void Camera::Update(const float deltaTime, const bool* keyInput, const float asp
 
 void Camera::Move(const float deltaTime, const bool* keyInput)
 {
-    // --- ī�޶��� ���� ���� ���� ��� ---
-    // Yaw�� Pitch�� ��� ����Ͽ� 3D ���� ���͸� ����մϴ�.
+    // --- 카메라의 실제 방향 벡터 계산 ---
+    // Yaw와 Pitch를 모두 사용하여 3D 방향 벡터를 계산합니다.
     m_cameraforward = {
         cos(m_cameraPitch) * sin(m_cameraYaw),
         sin(m_cameraPitch),
         cos(m_cameraPitch) * cos(m_cameraYaw)
     };
-    m_cameraforward = SRMath::normalize(m_cameraforward); // ����ȭ�Ͽ� ���̸� 1�� ����
+    m_cameraforward = SRMath::normalize(m_cameraforward); // 정규화하여 길이를 1로 만듦
 
     if(keyInput['W']) MoveForward(deltaTime);
     if (keyInput['S']) MoveBackward(deltaTime);

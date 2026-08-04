@@ -9,18 +9,18 @@ enum class DebugPrimitiveType
 	Circle,
 	Triangle,
 	Quad,
-	Count // ����� ������Ƽ���� ������ ��Ÿ���� �뵵�� ���
+	Count // 디버그 프리미티브의 개수를 나타내는 용도로 사용
 };
 
 struct DebugVertex
 {
-	SRMath::vec3 position; // ��ġ
-	SRMath::vec4 color;    // ����
+	SRMath::vec3 position; // 위치
+	SRMath::vec4 color;    // 색상
 };
 
 struct DebugFlags
 {
-	bool bShowNormal = false; // ���� ���� ǥ�� ����
-	bool bShowAABB = false;   // AABB ǥ�� ����
-	bool bShowWireframe = false; // ���̾������� ǥ�� ����
+	bool bShowNormal = false; // 법선 벡터 표시 여부
+	bool bShowAABB = false;   // AABB 표시 여부
+	bool bShowWireframe = false; // 와이어프레임 표시 여부
 };

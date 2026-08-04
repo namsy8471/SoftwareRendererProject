@@ -5,7 +5,7 @@
 #include "Graphics/Mesh.h"
 #include "Math/AABB.h"
 
-class RenderQueue; // ���� ����
+class RenderQueue; // 전방 선언
 
 class Model
 {
@@ -14,7 +14,7 @@ class Model
 
 private:
 	std::vector<Mesh> m_meshes;
-	AABB m_localAABB; // <-- �� ��ü�� ���� AABB ��� �߰�
+	AABB m_localAABB; // <-- 모델 전체의 로컬 AABB 멤버 추가
 
 public:
 	const std::vector<Mesh>& GetMeshes() const { return m_meshes; }

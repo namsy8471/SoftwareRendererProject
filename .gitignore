@@ -58,3 +58,6 @@
 *.exp
 *.docx
 /ClassDiagram.cd
+
+# Assets 폴더는 Git에 포함시키기 위해 제외하지 않음
+!assets/

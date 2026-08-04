@@ -3,14 +3,14 @@
 #include <limits>
 #include <tbb/tbb.h>
 
-// 32��Ʈ unsigned int(0x00BBGGRR)�� Color ����ü�� ��ȯ
+// 32비트 unsigned int(0x00BBGGRR)를 Color 구조체로 변환
 inline void unpackColor(unsigned int p, SRMath::Color& c) {
     c.b = static_cast<float>((p >> 16) & 0xFF) / 255.0f;
     c.g = static_cast<float>((p >> 8) & 0xFF) / 255.0f;
     c.r = static_cast<float>(p & 0xFF) / 255.0f;
 }
 
-// Color ����ü�� 32��Ʈ unsigned int(0x00BBGGRR)�� ��ȯ
+// Color 구조체를 32비트 unsigned int(0x00BBGGRR)로 변환
 inline unsigned int packColor(const SRMath::Color& c) {
     unsigned int r = static_cast<unsigned int>(std::min(c.r, 1.0f) * 255.0f);
     unsigned int g = static_cast<unsigned int>(std::min(c.g, 1.0f) * 255.0f);
@@ -18,7 +18,7 @@ inline unsigned int packColor(const SRMath::Color& c) {
     return (b << 16) | (g << 8) | r;
 }
 
-// ���� ����
+// 선형 보간
 SRMath::Color LerpColor(const SRMath::Color& a, const SRMath::Color& b, float t) {
     return {
         a.r + (b.r - a.r) * t,
@@ -28,33 +28,33 @@ SRMath::Color LerpColor(const SRMath::Color& a, const SRMath::Color& b, float t)
 }
 
 float RGBToLuma(const SRMath::Color& color) {
-	// NTSC ǥ�� ����ġ
+	// NTSC 표준 가중치
 	return color.r * 0.299f + color.g * 0.587f + color.b * 0.114f;
 }
 
 void ApplyFXAA(const unsigned int* inBuffer, unsigned int* outBuffer, int width, int height) {
-    // --- Ʃ�� ������ ����� ---
-    const float EDGE_THRESHOLD = 0.08f;        // ��輱 ���� �ΰ��� (�������� �ΰ�)
-    const float EDGE_THRESHOLD_MIN = 0.03125f; // ��ο� �������� �ּ� �ΰ���
-    const int MAX_SPAN = 16;                   // ��輱 �ִ� Ž�� �Ÿ�
-    const float EPS = 1e-6f;                   // 0�� ����� �� �񱳿�
-	const float BLEND_FACTOR = 0.2f;           // ����� ���� ���� (0.0 ~ 1.0)
+    // --- 튜닝 가능한 상수들 ---
+    const float EDGE_THRESHOLD = 0.08f;        // 경계선 감지 민감도 (낮을수록 민감)
+    const float EDGE_THRESHOLD_MIN = 0.03125f; // 어두운 곳에서의 최소 민감도
+    const int MAX_SPAN = 16;                   // 경계선 최대 탐색 거리
+    const float EPS = 1e-6f;                   // 0에 가까운 값 비교용
+	const float BLEND_FACTOR = 0.2f;           // 블렌딩 강도 조절 (0.0 ~ 1.0)
 
-    // lumaBuffer�� ���� ���� '�ٱ�'���� ���� (�ùٸ� ����)
+    // lumaBuffer를 병렬 영역 '바깥'에서 선언 (올바른 구조)
     std::vector<float> lumaBuffer(width * height);
 
 
-    // --- ��� �ȼ��� ��ȸ ---
+    // --- 모든 픽셀을 순회 ---
     tbb::parallel_for(tbb::blocked_range(1, height - 1),
         [&](const tbb::blocked_range<int>& r) {
 
-            //    Luma ��� ���� ����: ���� �����尡 ���� ��(r)�� ���Ʒ� 1�ȼ����� ����
-            //    FXAA ���� �� �̿� �ȼ��� luma ���� �ʿ��ϱ� �����Դϴ�.
+            //    Luma 계산 영역 설정: 현재 스레드가 맡은 행(r)의 위아래 1픽셀씩을 포함
+            //    FXAA 연산 시 이웃 픽셀의 luma 값이 필요하기 때문입니다.
             const int luma_y_start = std::max(0, r.begin() - 1);
             const int luma_y_end = std::min(height, r.end() + 1);
 
-            //   '�ʿ��� ��ŭ��' Luma �� �����
-            //    �� �����ʹ� ���� �������� CPU ĳ�ÿ� ����� Ȯ���� �ſ� ����ϴ�.
+            //   '필요한 만큼만' Luma 맵 만들기
+            //    이 데이터는 현재 스레드의 CPU 캐시에 저장될 확률이 매우 높습니다.
             for (int y = luma_y_start; y < luma_y_end; ++y) {
                 for (int x = 0; x < width; ++x) {
                     SRMath::Color tempColor;
@@ -67,7 +67,7 @@ void ApplyFXAA(const unsigned int* inBuffer, unsigned int* outBuffer, int width,
                 for (int x = 1; x < width - 1; ++x) {
                     const int idx = y * width + x;
 
-                    // 2. ��輱 ���� (������ ����)
+                    // 2. 경계선 감지 (기존과 동일)
                     const float lC = lumaBuffer[idx];
                     const float lN = lumaBuffer[(y - 1) * width + x];
                     const float lS = lumaBuffer[(y + 1) * width + x];
@@ -80,25 +80,25 @@ void ApplyFXAA(const unsigned int* inBuffer, unsigned int* outBuffer, int width,
                     const float thresh = std::max(EDGE_THRESHOLD_MIN, lMax * EDGE_THRESHOLD);
                     if (contrast < thresh) { outBuffer[idx] = inBuffer[idx]; continue; }
 
-                    // 3. ��輱 ���� Ž�� (������ ����)
+                    // 3. 경계선 방향 탐지 (기존과 동일)
                     const float diffH = std::abs(lW - lE);
                     const float diffV = std::abs(lN - lS);
-                    const bool isVerticalEdge = (diffV >= diffH); // �̸� ��Ȯȭ: isVerticalEdge
+                    const bool isVerticalEdge = (diffV >= diffH); // 이름 명확화: isVerticalEdge
 
-                    // 4. ��輱 ���� Ž�� (������ ����)
+                    // 4. 경계선 끝점 탐색 (기존과 동일)
                     const float gradient = isVerticalEdge ? diffV : diffH;
                     if (gradient <= EPS) { outBuffer[idx] = inBuffer[idx]; continue; }
                     float negDist = 0.0f, posDist = 0.0f;
-                    // (-) ���� Ž��
+                    // (-) 방향 탐색
                     for (int i = 0; i < MAX_SPAN; ++i) {
                         const int nx = isVerticalEdge ? x : x - i - 1;
                         const int ny = isVerticalEdge ? y - i - 1 : y;
                         if (nx < 0 || ny < 0) break;
                         const float dl = std::abs(lumaBuffer[ny * width + nx] - lC);
-                        if (dl / gradient >= 0.4f) break; // 0.5f ���� �ణ ������ ����
+                        if (dl / gradient >= 0.4f) break; // 0.5f 보다 약간 관대한 기준
                         negDist = float(i + 1);
                     }
-                    // (+) ���� Ž��
+                    // (+) 방향 탐색
                     for (int i = 0; i < MAX_SPAN; ++i) {
                         const int nx = isVerticalEdge ? x : x + i + 1;
                         const int ny = isVerticalEdge ? y + i + 1 : y;
@@ -109,31 +109,31 @@ void ApplyFXAA(const unsigned int* inBuffer, unsigned int* outBuffer, int width,
                     }
 
                     // =======================================================================
-                    // 5. ���� ����� (�� �κ��� ǥ�� FXAA ������� �����)
+                    // 5. 최종 블렌딩 (이 부분이 표준 FXAA 방식으로 변경됨)
                     // =======================================================================
                     const float edgeLength = posDist + negDist;
-                    if (edgeLength < 1.0f) { // ���ǹ��� ���̰� �ƴϸ� ����
+                    if (edgeLength < 1.0f) { // 유의미한 길이가 아니면 무시
                         outBuffer[idx] = inBuffer[idx];
                         continue;
                     }
 
-                    // 5-1. ��輱�� �߽��� ���� �ȼ� �߽ɿ��� �󸶳� ������� ���
-                    const float pixelOffset = (posDist - negDist) / edgeLength; // ���: [-1.0 ~ 1.0]
+                    // 5-1. 경계선의 중심이 현재 픽셀 중심에서 얼마나 벗어났는지 계산
+                    const float pixelOffset = (posDist - negDist) / edgeLength; // 결과: [-1.0 ~ 1.0]
 
-                    // 5-2. ����� ���� ���
-                    // pixelOffset�� BLEND_FACTOR��ŭ �̵���Ų�ٰ� ����
+                    // 5-2. 블렌딩 강도 계산
+                    // pixelOffset의 BLEND_FACTOR만큼 이동시킨다고 가정
                     const float blendFactor = BLEND_FACTOR * std::abs(pixelOffset);
 
-                    // 5-3. ���� �̿� �ȼ� ���� (��輱�� '������' ����)
+                    // 5-3. 섞을 이웃 픽셀 선택 (경계선에 '수직인' 방향)
                     int neighborIdx;
-                    if (isVerticalEdge) { // ���� ��輱 -> ��/�Ʒ� �ȼ��� ����
+                    if (isVerticalEdge) { // 수직 경계선 -> 위/아래 픽셀과 섞음
                         neighborIdx = pixelOffset > 0 ? (y - 1) * width + x : (y + 1) * width + x;
                     }
-                    else { // ���� ��輱 -> ��/�� �ȼ��� ����
+                    else { // 수평 경계선 -> 좌/우 픽셀과 섞음
                         neighborIdx = pixelOffset > 0 ? (y * width + x - 1) : (y * width + x + 1);
                     }
 
-                    // 5-4. ���� ���� ���
+                    // 5-4. 최종 색상 계산
                     SRMath::Color colorCenter, neighborColor;
                     unpackColor(inBuffer[idx], colorCenter);
                     unpackColor(inBuffer[neighborIdx], neighborColor);
@@ -144,7 +144,7 @@ void ApplyFXAA(const unsigned int* inBuffer, unsigned int* outBuffer, int width,
 			}});
     
 
-    // �����ڸ��� ���� ����
+    // 가장자리는 원본 복사
     for (int y = 0; y < height; ++y) {
         outBuffer[y * width] = inBuffer[y * width];
         outBuffer[y * width + width - 1] = inBuffer[y * width + width - 1];
