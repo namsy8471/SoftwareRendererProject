@@ -1,11 +1,13 @@
 ﻿#pragma once
-#include <string>
+#include <expected>
+#include <filesystem>
 #include <memory>
+#include "Utils/AssetLoadError.h"
 
 class Model;
 
 class ModelLoader
 {
 public:
-	static std::unique_ptr<Model> LoadOBJ(const std::string& filepath);
+	[[nodiscard]] static std::expected<std::unique_ptr<Model>, AssetLoadError> LoadOBJ(const std::filesystem::path& filepath);
 };

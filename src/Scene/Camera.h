@@ -1,11 +1,13 @@
 ﻿#pragma once
 
+#include <span>
 #include "Math/SRMath.h"
 #include "Math/Frustum.h"
 
 class Camera
 {
 private:
+	static constexpr std::size_t key_count = 256;
 	float moveSpeed = 10.f; // 카메라 이동 속도
 
 	SRMath::vec3 m_cameraPos = { 0.f, 0.f, 5.f };
@@ -17,20 +19,20 @@ private:
 	SRMath::mat4 m_viewMatrix;
 	SRMath::mat4 m_projectionMatrix;
 
-	inline void MoveForward(float deltaTime)
+	void MoveForward(float deltaTime) noexcept
 	{
 		m_cameraPos += m_cameraforward * moveSpeed * deltaTime;
 	}
-	inline void MoveBackward(float deltaTime)
+	void MoveBackward(float deltaTime) noexcept
 	{
 		m_cameraPos -= m_cameraforward * moveSpeed * deltaTime;
 	}
-	inline void MoveRight(float deltaTime)
+	void MoveRight(float deltaTime) noexcept
 	{
 		SRMath::vec3 right = SRMath::normalize(SRMath::cross(m_cameraforward, SRMath::vec3(0.f, 1.f, 0.f)));
 		m_cameraPos += right * moveSpeed * deltaTime;
 	}
-	inline void MoveLeft(float deltaTime)
+	void MoveLeft(float deltaTime) noexcept
 	{
 		SRMath::vec3 right = SRMath::normalize(SRMath::cross(m_cameraforward, SRMath::vec3(0.f, 1.f, 0.f)));
 		m_cameraPos -= right * moveSpeed * deltaTime;
@@ -38,21 +40,23 @@ private:
 
 public:
 	Camera();
-	Camera(SRMath::vec3 pos);
-	~Camera();
+	explicit Camera(SRMath::vec3 pos) noexcept;
+	~Camera() = default;
 
-	void Update(const float deltaTime, const bool* keyInput, const float aspectRatio);
-	void Move(const float deltaTime, const bool* keyInput);
+	// C++20 span은 C++11식 raw bool*의 길이 정보를 타입에 포함한다. 256개가
+	// 아닌 입력은 호출 자체가 성립하지 않아 키 배열 범위 오류를 막는다.
+	void Update(float deltaTime, std::span<const bool, key_count> keyInput, float aspectRatio) noexcept;
+	void Move(float deltaTime, std::span<const bool, key_count> keyInput) noexcept;
 
-	const SRMath::vec3 GetCameraPos() const { return m_cameraPos; }
-	const SRMath::vec3 GetCameraForward() const { return m_cameraforward; }
-	const float GetCameraYaw() const { return m_cameraYaw; }
-	const float GetCameraPitch() const { return m_cameraPitch; }
-	const Frustum& GetFrustum() const { return m_frustum; }
-	const SRMath::mat4& GetViewMatrix() const { return m_viewMatrix; }
-	const SRMath::mat4& GetProjectionMatrix() const { return m_projectionMatrix; }
+	[[nodiscard]] SRMath::vec3 GetCameraPos() const noexcept { return m_cameraPos; }
+	[[nodiscard]] SRMath::vec3 GetCameraForward() const noexcept { return m_cameraforward; }
+	[[nodiscard]] float GetCameraYaw() const noexcept { return m_cameraYaw; }
+	[[nodiscard]] float GetCameraPitch() const noexcept { return m_cameraPitch; }
+	[[nodiscard]] const Frustum& GetFrustum() const noexcept { return m_frustum; }
+	[[nodiscard]] const SRMath::mat4& GetViewMatrix() const noexcept { return m_viewMatrix; }
+	[[nodiscard]] const SRMath::mat4& GetProjectionMatrix() const noexcept { return m_projectionMatrix; }
 
-	void SetCameraPos(const SRMath::vec3& pos) { m_cameraPos = pos; }
-	void SetCameraYaw(float yaw) { m_cameraYaw = yaw; }
-	void SetCameraPitch(float pitch) { m_cameraPitch = pitch; }
+	void SetCameraPos(const SRMath::vec3& pos) noexcept { m_cameraPos = pos; }
+	void SetCameraYaw(float yaw) noexcept { m_cameraYaw = yaw; }
+	void SetCameraPitch(float pitch) noexcept { m_cameraPitch = pitch; }
 };

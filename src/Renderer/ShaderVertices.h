@@ -10,11 +10,8 @@ struct ShadedVertex {
     SRMath::vec3 normalWorld;
     SRMath::vec2 texcoord;
 
-    // 생성자 추가
-    ShadedVertex() = default;
-    ShadedVertex(const SRMath::vec3& posWorld, const SRMath::vec4& posClip, const SRMath::vec3& normalWorld, const SRMath::vec2& tex)
-        : posWorld(posWorld), posClip(posClip), normalWorld(normalWorld), texcoord(tex) {
-    }
+    // 사용자 정의 생성자가 필요 없는 값 타입이다. aggregate로 두면 C++20
+    // designated initializer와 구조적 초기화를 사용할 수 있다.
 };
 
 // --- 래스터화를 위한 최종 정점 데이터 준비 ---
@@ -26,11 +23,4 @@ struct RasterizerVertex {
     SRMath::vec2 texcoordOverW;     // 원근 보정된 UV
     SRMath::vec3 worldPosOverW;     // 원근 보정된 월드 좌표
 
-	// 생성자 추가
-	/*RasterizerVertex() = default;
-    RasterizerVertex(const SRMath::vec2& screenPos, float oneOverW, const SRMath::vec3& normalWorldOverW,
-        const SRMath::vec2& texcoordOverW, const SRMath::vec3& worldPosOverW)
-        : screenPos(screenPos), oneOverW(oneOverW), normalWorldOverW(normalWorldOverW),
-        texcoordOverW(texcoordOverW), worldPosOverW(worldPosOverW) {
-	}*/
 };

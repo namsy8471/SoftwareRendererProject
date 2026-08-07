@@ -1,4 +1,6 @@
 ﻿#pragma once
+#include <expected>
+#include <span>
 #include <vector>
 #include "Graphics/ModelLoader.h"
 #include "Math/SRMath.h"
@@ -9,14 +11,15 @@ class RenderQueue; // 전방 선언
 
 class Model
 {
-	// To Optimize to use private variable in LoadOBJ
-	friend std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filepath);
+	// Loader만 완성된 메시 묶음과 그에 대응하는 모델 AABB를 한 번에 채운다.
+	// 공개 쓰기 API를 만들지 않아 로드 이후 Model의 불변식을 보존한다.
+	friend std::expected<std::unique_ptr<Model>, AssetLoadError> ModelLoader::LoadOBJ(const std::filesystem::path& filepath);
 
 private:
 	std::vector<Mesh> m_meshes;
-	AABB m_localAABB; // <-- 모델 전체의 로컬 AABB 멤버 추가
+	AABB m_localAABB;
 
 public:
-	const std::vector<Mesh>& GetMeshes() const { return m_meshes; }
-	const AABB& GetLocalAABB() const { return m_localAABB; }
+	[[nodiscard]] std::span<const Mesh> GetMeshes() const noexcept { return std::span<const Mesh>{ m_meshes }; }
+	[[nodiscard]] const AABB& GetLocalAABB() const noexcept { return m_localAABB; }
 };

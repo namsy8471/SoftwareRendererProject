@@ -1,11 +1,11 @@
 ﻿#include "Renderer.h"
+#include <array>
 #include <vector>
 #include <algorithm>
 #include <limits>
 #include <cmath>
-#include <omp.h>
-#include <optional>
 #include <unordered_map>
+#include <utility>
 #include <tbb/tbb.h>
 
 #include "Graphics/Mesh.h"
@@ -21,14 +21,90 @@
 #include "Renderer/FXAA.h"
 #include "Renderer/ShaderVertices.h"
 
-// 부동소수 무한대 상수 (가독성용)
-constexpr float FLOATINF = std::numeric_limits<float>::infinity();
-constexpr int MAX_TRIANGLES_PER_THREAD_POOL = 10000; // 각 스레드별 최대 삼각형 수
+constexpr std::size_t max_triangles_per_thread_pool = 10'000;
+
+Renderer::GdiBackBuffer::GdiBackBuffer(GdiBackBuffer&& other) noexcept
+    : m_memoryDc(std::exchange(other.m_memoryDc, nullptr)),
+      m_bitmap(std::exchange(other.m_bitmap, nullptr)),
+      m_previousBitmap(std::exchange(other.m_previousBitmap, nullptr))
+{
+}
+
+Renderer::GdiBackBuffer& Renderer::GdiBackBuffer::operator=(GdiBackBuffer&& other) noexcept
+{
+    if (this == &other) return *this;
+    reset();
+    m_memoryDc = std::exchange(other.m_memoryDc, nullptr);
+    m_bitmap = std::exchange(other.m_bitmap, nullptr);
+    m_previousBitmap = std::exchange(other.m_previousBitmap, nullptr);
+    return *this;
+}
+
+bool Renderer::GdiBackBuffer::create(HWND window, int width, int height, unsigned int*& pixels) noexcept
+{
+    reset();
+    pixels = nullptr;
+
+    HDC screenDc = GetDC(window);
+    if (!screenDc) return false;
+
+    // MSVC v145가 아직 C++23 <scope>를 제공하지 않아 동일 계약의 작은
+    // 프로젝트 RAII guard를 사용한다. 모든 조기 반환에서 화면 DC가 해제된다.
+    struct ScreenDcGuard
+    {
+        HWND window;
+        HDC dc;
+        ~ScreenDcGuard() { ReleaseDC(window, dc); }
+    };
+    const ScreenDcGuard releaseScreenDc{ window, screenDc };
+
+    m_memoryDc = CreateCompatibleDC(screenDc);
+    if (!m_memoryDc) return false;
+
+    BITMAPINFO bitmapInfo{};
+    bitmapInfo.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bitmapInfo.bmiHeader.biWidth = width;
+    bitmapInfo.bmiHeader.biHeight = -height;
+    bitmapInfo.bmiHeader.biPlanes = 1;
+    bitmapInfo.bmiHeader.biBitCount = 32;
+    bitmapInfo.bmiHeader.biCompression = BI_RGB;
+
+    void* rawPixels = nullptr;
+    m_bitmap = CreateDIBSection(m_memoryDc, &bitmapInfo, DIB_RGB_COLORS, &rawPixels, nullptr, 0);
+    if (!m_bitmap)
+    {
+        reset();
+        return false;
+    }
+
+    m_previousBitmap = SelectObject(m_memoryDc, m_bitmap);
+    if (!m_previousBitmap || m_previousBitmap == HGDI_ERROR)
+    {
+        reset();
+        return false;
+    }
+
+    pixels = static_cast<unsigned int*>(rawPixels);
+    return true;
+}
+
+void Renderer::GdiBackBuffer::reset() noexcept
+{
+    if (m_memoryDc && m_previousBitmap && m_previousBitmap != HGDI_ERROR)
+        SelectObject(m_memoryDc, m_previousBitmap);
+    if (m_bitmap)
+        DeleteObject(m_bitmap);
+    if (m_memoryDc)
+        DeleteDC(m_memoryDc);
+
+    m_previousBitmap = nullptr;
+    m_bitmap = nullptr;
+    m_memoryDc = nullptr;
+}
 
 
 // 설명: GDI 백버퍼/DC 초기 상태 설정
-Renderer::Renderer(HWND hWnd) : m_hBitmap(nullptr), m_hMemDC(nullptr),
-m_hOldBitmap(nullptr), m_height(), m_width(), m_pPixelData(nullptr)
+Renderer::Renderer(HWND hWnd)
 {
 	if(!reInit(hWnd)) throw std::runtime_error("Failed to initialize Renderer");
 }
@@ -36,18 +112,7 @@ m_hOldBitmap(nullptr), m_height(), m_width(), m_pPixelData(nullptr)
 // 설명: 리소스 해제는 Shutdown()에서 수행
 Renderer::~Renderer()
 {
-    // 생성의 역순으로 GDI 객체들을 해제합니다.
-    if (m_hMemDC)
-    {
-        // 1. 보관해둔 원래 비트맵으로 되돌립니다.
-        SelectObject(m_hMemDC, m_hOldBitmap);
-
-        // 2. 우리가 만든 비트맵을 삭제합니다.
-        DeleteObject(m_hBitmap);
-
-        // 3. 우리가 만든 메모리 DC를 삭제합니다.
-        DeleteDC(m_hMemDC);
-    }
+    shutdownForResize();
 }
 
 // 화면 경계 검사 후 지정 좌표에 픽셀 기록
@@ -87,7 +152,7 @@ void Renderer::drawLineByBresenham(int x0, int y0, int x1, int y1, unsigned int 
     {
         // 안전 인덱스 검사 후 픽셀 쓰기
         int idx = y0 * m_width + x0;
-        if (idx >= 0 && idx < m_depthBuffer.size())
+        if (idx >= 0 && static_cast<std::size_t>(idx) < m_depthBuffer.size())
         {
             drawPixel(x0, y0, color);
         }
@@ -166,7 +231,7 @@ void Renderer::drawTriangle(int x0, int y0, int x1, int y1, int x2, int y2, unsi
 }
 
 // 3개의 점으로 삼각형 외곽선 렌더링 (vec2 좌표)
-void Renderer::drawTriangle(const SRMath::vec2 v0, const SRMath::vec2 v1, const SRMath::vec2 v2, unsigned int color)
+void Renderer::drawTriangle(const SRMath::vec2& v0, const SRMath::vec2& v1, const SRMath::vec2& v2, unsigned int color)
 {
     drawTriangle(static_cast<int> (v0.x), static_cast<int>(v0.y), static_cast<int>(v1.x), static_cast<int>(v1.y),
         static_cast<int>(v2.x), static_cast<int>(v2.y), color);
@@ -176,7 +241,8 @@ void Renderer::drawTriangle(const SRMath::vec2 v0, const SRMath::vec2 v1, const 
 void Renderer::Clear()
 {
 	// 화면을 검정(0)으로 초기화
-	memset(m_pPixelData, 0, m_width * m_height * sizeof(unsigned int));
+    // memset의 byte 단위 계약 대신 요소 타입을 아는 범위 알고리즘을 사용한다.
+    std::ranges::fill_n(m_pPixelData, m_depthBuffer.size(), 0u);
 
     // 깊이 버퍼는 가장 낮은 값으로 초기화 (더 큰 z^-1만 패스)
 	std::fill(m_depthBuffer.begin(), m_depthBuffer.end(), std::numeric_limits<float>::lowest());
@@ -193,14 +259,16 @@ void Renderer::Present(HDC hScreenDC) const
         0, 0,           // 대상의 시작 좌표 (x, y)
         m_width,        // 복사할 너비
         m_height,       // 복사할 높이
-        m_hMemDC,       // 복사 원본 DC (백버퍼)
+        m_backBuffer.get(), // 복사 원본 DC (백버퍼)
         0, 0,           // 원본의 시작 좌표 (x, y)
         SRCCOPY);       // 복사 방식 (그대로 복사)
 }
 
 
-void Renderer::drawDebugPrimitive(const DebugPrimitiveCommand& cmd, const SRMath::mat4& vp, const Camera& camera)
+void Renderer::drawDebugPrimitive(const DebugPrimitiveCommand& cmd, const SRMath::mat4& vp)
 {
+    if (cmd.vertices.empty()) return;
+
     const SRMath::mat4 modelMatrix = cmd.worldTransform;
     SRMath::mat4 mvp = vp * modelMatrix;
 
@@ -209,12 +277,12 @@ void Renderer::drawDebugPrimitive(const DebugPrimitiveCommand& cmd, const SRMath
         // 선분 그리기
     case DebugPrimitiveType::Line:
     {
-        SRMath::vec3 color = cmd.vertices[0].color;
+        // DebugVertex는 alpha를 포함하지만 GDI 선은 RGB만 사용한다. vec4 ->
+        // vec3 축소를 명시해 w를 의도적으로 버리는 지점을 드러낸다.
+        const SRMath::vec3 color{ cmd.vertices[0].color };
 
-        for (int i = 0; i < cmd.vertices.size() - 1; i += 2)
+        for (std::size_t i = 0; i + 1 < cmd.vertices.size(); i += 2)
         {
-            if (i + 1 >= cmd.vertices.size()) break;
-
             const DebugVertex& start_pos_world = cmd.vertices[i];
             const DebugVertex& end_pos_world = cmd.vertices[i + 1];
 
@@ -278,8 +346,8 @@ ShadedVertex Renderer::interpolate(const ShadedVertex& v0, const ShadedVertex& v
 }
 
 // 하나의 평면으로 폴리곤을 클리핑하는 함수
-void Renderer::clipPolygonAgainstPlane(std::vector<ShadedVertex>& outVertices, 
-    const std::vector<ShadedVertex>& inVertices, const __m128& plane)
+void Renderer::clipPolygonAgainstPlane(ClipBuffer& outVertices,
+    const ClipBuffer& inVertices, const __m128& plane)
 {
 	outVertices.clear();
     if(inVertices.empty()) return;
@@ -331,35 +399,41 @@ void Renderer::clipPolygonAgainstPlane(std::vector<ShadedVertex>& outVertices,
     }
 }
 
-// 각 비트는 특정 평면의 '바깥쪽'임을 의미합니다.
-constexpr int INSIDEPLANE = 0;      // 000000
-constexpr int LEFTPLANE = 1;      // 000001 (x < -w)
-constexpr int RIGHTPLANE = 2;      // 000010 (x > w)
-constexpr int BOTTOMPLANE = 4;      // 000100 (y < -w)
-constexpr int TOPPLANE = 8;      // 001000 (y > w)
-constexpr int NEARPLANE = 16;     // 010000 (z < -w)
-constexpr int FARPLANE = 32;     // 100000 (z > w)
+// C++11 scoped enum은 평면 비트를 전역 정수 이름으로 흘리지 않는다. C++23
+// to_underlying로 비트 마스크가 필요한 지점에서만 명시적으로 정수화한다.
+enum class ClipPlane : std::uint8_t
+{
+    left = 1u << 0,
+    right = 1u << 1,
+    bottom = 1u << 2,
+    top = 1u << 3,
+    near_plane = 1u << 4,
+    far_plane = 1u << 5
+};
 
 // 절두체 평면에 대한 아웃코드 계산 함수
-int ComputeOutcode(const SRMath::vec4& posClip)
+[[nodiscard]] std::uint8_t ComputeOutcode(const SRMath::vec4& posClip) noexcept
 {
-    int outcode = INSIDEPLANE; // 일단 안쪽이라고 가정
+    std::uint8_t outcode = 0;
 
-    if (posClip.x < -posClip.w) outcode |= LEFTPLANE;
-    if (posClip.x > posClip.w) outcode |= RIGHTPLANE;
-    if (posClip.y < -posClip.w) outcode |= BOTTOMPLANE;
-    if (posClip.y > posClip.w) outcode |= TOPPLANE;
-    if (posClip.z < -posClip.w) outcode |= NEARPLANE;   // OpenGL: -w, DirectX: 0
-    if (posClip.z > posClip.w) outcode |= FARPLANE;
+    if (posClip.x < -posClip.w) outcode |= std::to_underlying(ClipPlane::left);
+    if (posClip.x > posClip.w) outcode |= std::to_underlying(ClipPlane::right);
+    if (posClip.y < -posClip.w) outcode |= std::to_underlying(ClipPlane::bottom);
+    if (posClip.y > posClip.w) outcode |= std::to_underlying(ClipPlane::top);
+    if (posClip.z < -posClip.w) outcode |= std::to_underlying(ClipPlane::near_plane);
+    if (posClip.z > posClip.w) outcode |= std::to_underlying(ClipPlane::far_plane);
 
     return outcode;
 }
 
 // 삼각형을 6개의 절두체 평면으로 클리핑하는 메인 함수
-void Renderer::clipTriangle(std::vector<ShadedVertex>& outVertices, const ShadedVertex& v0, const ShadedVertex& v1, const ShadedVertex& v2,
-    std::vector<ShadedVertex>& buffer1, std::vector<ShadedVertex>& buffer2)
+void Renderer::clipTriangle(ClipBuffer& outVertices, const ShadedVertex& v0, const ShadedVertex& v1, const ShadedVertex& v2,
+    ClipBuffer& buffer1, ClipBuffer& buffer2)
 {
-    buffer1 = { v0, v1, v2 };
+    buffer1.clear();
+    buffer1.emplace_back(v0);
+    buffer1.emplace_back(v1);
+    buffer1.emplace_back(v2);
 
 	auto* in_v = &buffer1;
 	auto* out_v = &buffer2;
@@ -407,15 +481,15 @@ void Renderer::clipTriangle(std::vector<ShadedVertex>& outVertices, const Shaded
 }
 
 
-void Renderer::RenderScene(const RenderQueue& queue, const Camera& camera, const std::vector<DirectionalLight>& lights)
+void Renderer::RenderScene(const RenderQueue& queue, const Camera& camera, std::span<const DirectionalLight> lights)
 {
     const SRMath::mat4& viewMatrix = camera.GetViewMatrix();
     const SRMath::mat4& projectionMatrix = camera.GetProjectionMatrix();
 	const SRMath::mat4& vp = projectionMatrix * viewMatrix;
 
     // 타일 데이터 버퍼 초기화
-    int numTilesX = (m_width + TILE_SIZE - 1) / TILE_SIZE;
-    int numTilesY = (m_height + TILE_SIZE - 1) / TILE_SIZE;
+    int numTilesX = (m_width + tile_size - 1) / tile_size;
+    int numTilesY = (m_height + tile_size - 1) / tile_size;
 	int totalTiles = numTilesX * numTilesY;
 
     m_frameCounter++;
@@ -428,12 +502,13 @@ void Renderer::RenderScene(const RenderQueue& queue, const Camera& camera, const
 			auto& myPool = m_threadTrianglePools.local(); // 각 스레드의 삼각형 풀
             auto& myThreadShadedVertex = m_threadShadedVertexBuffers.local();     // 각 스레드마다 타일에 클리프 공간 좌표를 저장
             auto& myThreadStamp = m_threadStamps.local();                         // 각 스레드마다 타일에 스탬프를 저장
-            auto& myThreadClipBuffer1 = m_threadClipBuffer1.local();              // 클리핑 스왑 버퍼 1
-            auto& myThreadClipBuffer2 = m_threadClipBuffer2.local();              // 클리핑 스왑 버퍼 2
-            auto& myThreadClippedVertices = m_threadClippedVertices.local();      // 클리핑된 정점 저장
+            auto& myThreadClipBuffer1 = m_threadClipBuffer1.local();
+            auto& myThreadClipBuffer2 = m_threadClipBuffer2.local();
+            auto& myThreadClippedVertices = m_threadClippedVertices.local();
             auto& myThreadNormalMatrixCache = m_threadNormalMatrixCache.local();  // 역행렬 캐시
 
-			thread_local uint64_t lastCleaned_frame = -1;
+			thread_local std::uint64_t lastCleaned_frame =
+				std::numeric_limits<std::uint64_t>::max();
 
             if (lastCleaned_frame != m_frameCounter) {
 
@@ -459,15 +534,17 @@ void Renderer::RenderScene(const RenderQueue& queue, const Camera& camera, const
                 const SRMath::mat4 inverseTransposeWorld = myThreadNormalMatrixCache.at(&cmd);
 
                 const auto& vertices = mesh->vertices;
-                const auto& indices = *cmd.indicesToDraw; // 실제 그릴 인덱스 목록
+                const auto indices = cmd.indicesToDraw; // 실제 그릴 인덱스 목록
 
-                const uint64_t myStamp = (m_frameCounter << 32) | cmd_idx;
+                const std::uint64_t myStamp =
+					(m_frameCounter << 32) | static_cast<std::uint64_t>(cmd_idx);
 
                 // --- High-Watermark 로직으로 캐시 크기 관리 ---
                 if (myThreadShadedVertex.size() < vertices.size())
                 {
                     myThreadShadedVertex.resize(vertices.size());
-                    myThreadStamp.resize(vertices.size(), -1);
+                    myThreadStamp.resize(vertices.size(),
+						std::numeric_limits<std::uint64_t>::max());
                 }
 
                 // 메쉬의 모든 '삼각형'을 순회합니다.
@@ -549,9 +626,9 @@ void Renderer::RenderScene(const RenderQueue& queue, const Camera& camera, const
                     }
 
                     // 세 정점의 아웃코드를 각각 계산합니다.
-                    int outcode0 = ComputeOutcode(v0Clip);
-                    int outcode1 = ComputeOutcode(v1Clip);
-                    int outcode2 = ComputeOutcode(v2Clip);
+                    const auto outcode0 = ComputeOutcode(v0Clip);
+                    const auto outcode1 = ComputeOutcode(v1Clip);
+                    const auto outcode2 = ComputeOutcode(v2Clip);
 
                     // Trival Rejection Test(순회 기각 테스트) (Outcode가 모두 INSIDEPLANE이면 클리핑 필요 없음)
                     if ((outcode0 & outcode1 & outcode2) != 0)
@@ -652,7 +729,7 @@ void Renderer::RenderScene(const RenderQueue& queue, const Camera& camera, const
                 int ty = tileIdx / numTilesX;
 				const auto& triangleBin = m_finalTriangleBins[tileIdx];
 
-                renderTile(tx, ty, numTilesX, triangleBin, camera.GetCameraPos(), lights);
+                renderTile(tx, ty, triangleBin, camera.GetCameraPos(), lights);
             }
         }, tbb::auto_partitioner()
     );
@@ -663,7 +740,7 @@ void Renderer::RenderScene(const RenderQueue& queue, const Camera& camera, const
             for (int i = r.begin(); i != r.end(); ++i)
             {
                 const auto& cmd = queue.GetDebugCommands()[i];
-                drawDebugPrimitive(cmd, vp, camera);
+                drawDebugPrimitive(cmd, vp);
             }
         }, tbb::auto_partitioner()
 	);
@@ -674,10 +751,14 @@ void Renderer::RenderScene(const RenderQueue& queue, const Camera& camera, const
         break;
     case EAAAlgorithm::FXAA:
         {
-		    // FXAA를 적용합니다.
-            std::vector<unsigned int> copyPixelData(m_width * m_height);
-            std::copy(m_pPixelData, m_pPixelData + m_width * m_height, copyPixelData.data());        
-		    ApplyFXAA(copyPixelData.data(), m_pPixelData, m_width, m_height);
+		    // 필터의 입력 스냅샷과 출력 DIB를 span으로 묶어 크기 계약까지
+		    // 전달한다. FXAA 내부는 입력을 읽기 전용으로 유지한다.
+			const std::size_t pixelCount =
+				static_cast<std::size_t>(m_width) * static_cast<std::size_t>(m_height);
+			const std::span<const unsigned int> currentFrame{ m_pPixelData, pixelCount };
+            const std::vector<unsigned int> copyPixelData{ currentFrame.begin(), currentFrame.end() };
+		    sr::fxaa::Apply(copyPixelData,
+				std::span<unsigned int>{ m_pPixelData, pixelCount }, m_width, m_height);
             break;
         }
     default:
@@ -685,14 +766,14 @@ void Renderer::RenderScene(const RenderQueue& queue, const Camera& camera, const
     }
 }
 
-void Renderer::renderTile(int tx, int ty, int numTilesX, const tbb::concurrent_vector<TriangleRef*>& triangleBin,
-    const SRMath::vec3& camPos, const std::vector<DirectionalLight>& lights)
+void Renderer::renderTile(int tx, int ty, const tbb::concurrent_vector<TriangleRef*>& triangleBin,
+    const SRMath::vec3& camPos, std::span<const DirectionalLight> lights)
 {
     // 타일의 화면 경계 계산
-    int tileMinX = tx * TILE_SIZE;
-    int tileMinY = ty * TILE_SIZE;
-    int tileMaxX = std::min(tileMinX + TILE_SIZE, m_width);
-    int tileMaxY = std::min(tileMinY + TILE_SIZE, m_height);
+    int tileMinX = tx * tile_size;
+    int tileMinY = ty * tile_size;
+    int tileMaxX = std::min(tileMinX + tile_size, m_width);
+    int tileMaxY = std::min(tileMinY + tile_size, m_height);
     
     for (const auto& triRef : triangleBin)
     {
@@ -705,7 +786,7 @@ void Renderer::renderTile(int tx, int ty, int numTilesX, const tbb::concurrent_v
 }
 
 void Renderer::resterizationForTile(const ShadedVertex& sv0, const ShadedVertex& sv1, const ShadedVertex& sv2, const Material* material,
-    const std::vector<DirectionalLight>& lights, const SRMath::vec3& camPos, const MeshRenderCommand& cmd, int tileMinX, int tileMinY, int tileMaxX, int tileMaxY)
+    std::span<const DirectionalLight> lights, const SRMath::vec3& camPos, const MeshRenderCommand& cmd, int tileMinX, int tileMinY, int tileMaxX, int tileMaxY)
 {
     // 모든 클리핑된 정점에 대해 원근 분할 및 뷰포트 변환을 먼저 수행합니다.
     RasterizerVertex rv0, rv1, rv2;
@@ -749,8 +830,8 @@ void Renderer::resterizationForTile(const ShadedVertex& sv0, const ShadedVertex&
 }
 
 // drawFilledTriangle 함수 수정
-void Renderer::drawFilledTriangleForTile(const RasterizerVertex& v0, const RasterizerVertex& v1, const RasterizerVertex& v2, 
-    const Material* material, const std::vector<DirectionalLight>& lights, const SRMath::vec3& camPos, 
+void Renderer::drawFilledTriangleForTile(const RasterizerVertex& v0, const RasterizerVertex& v1, const RasterizerVertex& v2,
+    const Material* material, std::span<const DirectionalLight> lights, const SRMath::vec3& camPos,
     int tileMinX, int tileMinY, int tileMaxX, int tileMaxY)
 {
     // 정점 좌표를 정수로 변환 (화면 픽셀 기준)
@@ -765,25 +846,25 @@ void Renderer::drawFilledTriangleForTile(const RasterizerVertex& v0, const Raste
 	const __m128i min_xy_i = _mm_cvttps_epi32(min_xy);
 	const __m128i max_xy_i = _mm_cvttps_epi32(max_xy);
 
-	alignas(16) int min_xy_arr[4];
-	alignas(16) int max_xy_arr[4];
+	// std::array keeps the fixed extent in the type while alignas satisfies the
+	// aligned SSE store contract. The old C arrays carried no size information.
+	alignas(16) std::array<int, 4> min_xy_values{};
+	alignas(16) std::array<int, 4> max_xy_values{};
 
-	_mm_store_si128(reinterpret_cast<__m128i*>(min_xy_arr), min_xy_i);
-	_mm_store_si128(reinterpret_cast<__m128i*>(max_xy_arr), max_xy_i);
+	_mm_store_si128(reinterpret_cast<__m128i*>(min_xy_values.data()), min_xy_i);
+	_mm_store_si128(reinterpret_cast<__m128i*>(max_xy_values.data()), max_xy_i);
 
-    int triMinX = min_xy_arr[0];
-    int triMinY = min_xy_arr[1];
-	int triMaxX = max_xy_arr[0];
-    int triMaxY = max_xy_arr[1];
+    const int triMinX = min_xy_values[0];
+    const int triMinY = min_xy_values[1];
+	const int triMaxX = max_xy_values[0];
+    const int triMaxY = max_xy_values[1];
 
-    // 최종 루프 범위 계산 (교집합) - 이 부분이 올바른지 집중적으로 확인하세요!
-    // 삼각형의 Y 시작점과 타일의 Y 시작점 중 '더 큰' 값에서 시작하고,
-    // 삼각형의 Y 끝점과 타일의 Y 끝점 중 '더 작은' 값에서 끝나야 합니다.
-    // 최종 루프 범위 (교집합)
-    int finalMinX = std::max(triMinX, tileMinX);
-    int finalMaxX = std::min(triMaxX, tileMaxX - 1);
-    int finalMinY = std::max(triMinY, tileMinY);
-    int finalMaxY = std::min(triMaxY, tileMaxY - 1);
+    // 삼각형 AABB와 [tileMin, tileMax) 타일의 교집합만 순회한다.
+    // tileMax는 exclusive이므로 픽셀 좌표에서는 1을 뺀다.
+    const int finalMinX = std::max(triMinX, tileMinX);
+    const int finalMaxX = std::min(triMaxX, tileMaxX - 1);
+    const int finalMinY = std::max(triMinY, tileMinY);
+    const int finalMaxY = std::min(triMaxY, tileMaxY - 1);
 
     // 교차 영역이 없으면 바로 종료
     if (finalMinX > finalMaxX || finalMinY > finalMaxY) return;
@@ -853,6 +934,7 @@ void Renderer::drawFilledTriangleForTile(const RasterizerVertex& v0, const Raste
                                  normalInterpolated += v1.normalWorldOverW * uBary;
                                  normalInterpolated += v2.normalWorldOverW * vBary;
                                  normalInterpolated *= oneOverInterpolatedOneOverW;
+                    normalInterpolated = SRMath::normalize(normalInterpolated);
 
                     SRMath::vec2 uvOverWInterpolated = v0.texcoordOverW * wBary;
                                  uvOverWInterpolated += v1.texcoordOverW * uBary;
@@ -864,14 +946,15 @@ void Renderer::drawFilledTriangleForTile(const RasterizerVertex& v0, const Raste
 
                     if (material->diffuseTexture)
                     {
-                        base_color = static_cast<float>(material->diffuseTexture->GetPixels(uv_interpolated.x, uv_interpolated.y));
+                        base_color = material->diffuseTexture->Sample(uv_interpolated.x, uv_interpolated.y);
+                        base_color *= material->diffuse;
                     }
                     else {
-                        base_color = material->kd; // 재질의 기본 난반사 색상
+                        base_color = material->diffuse;
                     }
 
                     // 주변광 조명 계산
-                    SRMath::vec3 ambient_color = material->ka; // 재질의 기본 주변광 색상
+                    SRMath::vec3 ambient_color = material->ambient;
 
                     // 여러 빛의 난반사/정반사 효과를 누적할 변수를 0으로 초기화합니다.
                     SRMath::vec3 totalDiffuseColor = { 0.0f, 0.0f, 0.0f };
@@ -886,10 +969,12 @@ void Renderer::drawFilledTriangleForTile(const RasterizerVertex& v0, const Raste
 
                     for (const auto& light : lights)
                     {
-                        SRMath::vec3 lightDir = SRMath::normalize(light.direction);
+                        // DirectionalLight::rayDirection은 광선이 진행하는 방향이다.
+                        // Phong 식에는 표면에서 광원으로 향하는 벡터가 필요하다.
+                        const SRMath::vec3 lightDir = SRMath::normalize(-1.0f * light.rayDirection);
 
                         // 난반사 조명 계산
-                        float diffuse_intensity = std::max(0.0f, dot(normalInterpolated, lightDir));
+                        const float diffuse_intensity = std::max(0.0f, dot(normalInterpolated, lightDir));
                         SRMath::vec3 diffuseTerm = base_color;
                         diffuseTerm *= diffuse_intensity;
 						diffuseTerm *= light.color;
@@ -897,13 +982,16 @@ void Renderer::drawFilledTriangleForTile(const RasterizerVertex& v0, const Raste
                         totalDiffuseColor += diffuseTerm;
 
                         // 정반사 조명 계산
-                        SRMath::vec3 reflect_dir = SRMath::reflect(-1 * lightDir, normalInterpolated);
-                        float spec_dot = SRMath::dot(viewDir, reflect_dir);
-                        float spec_factor = std::max(0.0f, spec_dot);
-                        for (int i = 2; i < material->Ns; i *= 2)
-                        	spec_factor *= spec_factor;
+                        const SRMath::vec3 reflect_dir = SRMath::reflect(-1.0f * lightDir, normalInterpolated);
+						// 이전 반복 제곱은 지수가 32여도 실제로는 16승이었고 임의의
+						// MTL Ns 값을 표현하지 못했다. std::pow가 Phong 계약을 그대로
+						// 나타내며, 뒷면에서 정반사가 새지 않도록 N·L로 함께 제한한다.
+						const float spec_factor = diffuse_intensity > 0.0f
+							? std::pow(std::max(0.0f, SRMath::dot(viewDir, reflect_dir)),
+								std::max(1.0f, material->shininess))
+							: 0.0f;
                         
-						SRMath::vec3 specularTerm = material->ks;
+						SRMath::vec3 specularTerm = material->specular;
 						specularTerm *= spec_factor;
 						specularTerm *= light.color;
 
@@ -947,66 +1035,24 @@ void Renderer::drawFilledTriangleForTile(const RasterizerVertex& v0, const Raste
 bool Renderer::reInit(HWND hWnd)
 {
     // 윈도우의 클라이언트 영역 크기를 얻어옵니다.
-    RECT clientRect;
+    RECT clientRect{};
     GetClientRect(hWnd, &clientRect);
     m_width = clientRect.right - clientRect.left;
     m_height = clientRect.bottom - clientRect.top;
 
-    // 윈도우의 DC(Screen DC)를 얻어옵니다.
-    HDC hScreenDC = GetDC(hWnd);
-
-    // 백버퍼 역할을 할 메모리 DC와 비트맵을 생성합니다.
-    // Screen DC와 호환되는 메모리 DC를 만듭니다.
-    m_hMemDC = CreateCompatibleDC(hScreenDC);
-    if (!m_hMemDC)
-    {
-        // 실패 시 Screen DC를 해제하고 종료
-        ReleaseDC(hWnd, hScreenDC);
+    // 화면 DC, 메모리 DC, DIB, 선택 객체 복원을 RAII 객체가 한 번에 처리한다.
+    if (!m_backBuffer.create(hWnd, m_width, m_height, m_pPixelData))
         return false;
-    }
-
-    // DIB 정보를 담을 BITMAPINFO 구조체를 설정합니다.
-    BITMAPINFO bmi;
-    ZeroMemory(&bmi, sizeof(BITMAPINFO));
-    bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    bmi.bmiHeader.biWidth = m_width;
-    bmi.bmiHeader.biHeight = -m_height; //  중요: 높이를 음수로 설정! [y * width + x]
-    bmi.bmiHeader.biPlanes = 1;
-    bmi.bmiHeader.biBitCount = 32;      // 32비트 컬러
-    bmi.bmiHeader.biCompression = BI_RGB; // 압축 안 함
-
-    // 메모리 DC에 그려질 비트맵(백버퍼)을 생성합니다.
-    m_hBitmap = CreateCompatibleBitmap(hScreenDC, m_width, m_height);
-
-    // DIB 섹션 생성: CPU에서 직접 픽셀 접근 가능
-    m_hBitmap = CreateDIBSection(m_hMemDC, &bmi, DIB_RGB_COLORS,
-        (void**)&m_pPixelData, NULL, 0);
-
-    if (!m_hBitmap)
-    {
-        // 실패 시 메모리 DC와 Screen DC를 해제하고 종료
-        DeleteDC(m_hMemDC);
-        ReleaseDC(hWnd, hScreenDC);
-        return false;
-    }
 
     // 깊이 버퍼 크기 재할당 (width * height)
     m_depthBuffer.resize(m_height * m_width);
 
-    // 생성한 비트맵을 메모리 DC에 선택시킵니다.
-    // 이 시점부터 m_hMemDC에 그리는 모든 것은 m_hBitmap에 그려집니다.
-    // 원래 있던 기본 비트맵 핸들은 나중에 복구시키기 위해 보관합니다.
-    m_hOldBitmap = (HBITMAP)SelectObject(m_hMemDC, m_hBitmap);
-
-    // 이제 Screen DC는 필요 없으므로 바로 해제합니다.
-    ReleaseDC(hWnd, hScreenDC);
-
     // 이 예제에서는 백버퍼를 흰색으로 초기화합니다.
-    PatBlt(m_hMemDC, 0, 0, m_width, m_height, WHITENESS);
+    PatBlt(m_backBuffer.get(), 0, 0, m_width, m_height, WHITENESS);
 
     // 타일 데이터 버퍼 초기화
-    const int numTilesX = (m_width + TILE_SIZE - 1) / TILE_SIZE;
-    const int numTilesY = (m_height + TILE_SIZE - 1) / TILE_SIZE;
+    const int numTilesX = (m_width + tile_size - 1) / tile_size;
+    const int numTilesY = (m_height + tile_size - 1) / tile_size;
     const int totalTiles = numTilesX * numTilesY;
 
     m_finalTriangleBins.resize(totalTiles);
@@ -1023,18 +1069,13 @@ bool Renderer::reInit(HWND hWnd)
             auto& myPool = m_threadTrianglePools.local(); // 각 스레드의 삼각형 풀
             auto& myThreadShadedVertex = m_threadShadedVertexBuffers.local();     // 각 스레드마다 타일에 클리프 공간 좌표를 저장
             auto& myThreadStamp = m_threadStamps.local();                         // 각 스레드마다 타일에 스탬프를 저장
-            auto& myThreadClipBuffer1 = m_threadClipBuffer1.local();              // 클리핑 스왑 버퍼 1
-            auto& myThreadClipBuffer2 = m_threadClipBuffer2.local();              // 클리핑 스왑 버퍼 2
-            auto& myThreadClippedVertices = m_threadClippedVertices.local();      // 클리핑된 정점 저장
             auto& myThreadNormalMatrixCache = m_threadNormalMatrixCache.local();  // 역행렬 캐시
 
-            myPool.reserve(MAX_TRIANGLES_PER_THREAD_POOL);
+            myPool.reserve(max_triangles_per_thread_pool);
             myThreadShadedVertex.resize(65535); // 충분히 큰 초기 크기 (튜닝 필요)
-            myThreadStamp.resize(65535, -1); // 초기 스탬프 값은 -1로 설정
+            myThreadStamp.resize(65'535, std::numeric_limits<std::uint64_t>::max());
 
-            myThreadClipBuffer1.reserve(6); // 6개의 평면 클리핑을 위한 충분한 공간
-            myThreadClipBuffer2.reserve(6); // 6개의 평면 클리핑을 위한 충분한 공간
-            myThreadClippedVertices.reserve(6); // 6개의 평면 클리핑을 위한 충분한 공간
+            // ClipBuffer는 고정 용량이라 TLS 사전 생성이나 reserve가 필요 없다.
             myThreadNormalMatrixCache.rehash(2000); // 충분히 큰 초기 크기 (튜닝 필요)
             });
         });
@@ -1043,20 +1084,10 @@ bool Renderer::reInit(HWND hWnd)
 }
 
 // 생성의 역순으로 GDI 리소스 해제
-void Renderer::shutdownForResize() const
+void Renderer::shutdownForResize() noexcept
 {
-    // 생성의 역순으로 GDI 객체들을 해제합니다.
-    if (m_hMemDC)
-    {
-        // 1. 보관해둔 원래 비트맵으로 되돌립니다.
-        SelectObject(m_hMemDC, m_hOldBitmap);
-
-        // 2. 우리가 만든 비트맵을 삭제합니다.
-        DeleteObject(m_hBitmap);
-
-        // 3. 우리가 만든 메모리 DC를 삭제합니다.
-        DeleteDC(m_hMemDC);
-    }
+    m_backBuffer.reset();
+    m_pPixelData = nullptr;
 }
 
 // 윈도우 리사이즈 대응 (리소스 재할당)

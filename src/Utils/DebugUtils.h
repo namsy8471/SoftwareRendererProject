@@ -23,4 +23,5 @@ struct DebugFlags
 	bool bShowNormal = false; // 법선 벡터 표시 여부
 	bool bShowAABB = false;   // AABB 표시 여부
 	bool bShowWireframe = false; // 와이어프레임 표시 여부
+	bool bShowLightDirection = false; // 방향광 진행/셰이딩 방향 표시 여부
 };

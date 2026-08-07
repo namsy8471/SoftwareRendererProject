@@ -1,23 +1,25 @@
 ﻿#pragma once
-#include "Core/pch.h"
+#include <chrono>
 
 class PerformanceAnalyzer
 {
 private:
-	LARGE_INTEGER m_frequency;
-	LARGE_INTEGER m_prevTime;
-	float	      m_elapsedTime = 0.0f;
+	using Clock = std::chrono::steady_clock;
+	Clock::time_point m_prevTime;
+	Clock::duration m_elapsedTime{};
 	int			  m_frameCount = 0;
 	int			  m_avgfps = 0;
 
-	float deltaTime = 0; // deltaTime for game logic
+	Clock::duration m_deltaTime{};
 
-	// TODO: Create CPU, GPU varibles
 public:
 	PerformanceAnalyzer();
-	~PerformanceAnalyzer();
+	~PerformanceAnalyzer() = default;
 
 	void Update();
-	int GetAvgFPSForSecond() const { return m_avgfps; }
-	float GetDeltaTime() const { return deltaTime; }
+	[[nodiscard]] int GetAvgFPSForSecond() const noexcept { return m_avgfps; }
+	[[nodiscard]] float GetDeltaTime() const noexcept
+	{
+		return std::chrono::duration<float>(m_deltaTime).count();
+	}
 };

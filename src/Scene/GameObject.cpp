@@ -5,31 +5,20 @@
 #include "Utils/DebugUtils.h"
 
 #include <stdexcept>
-#include <tbb/tbb.h>
+#include <utility>
+#include <tbb/blocked_range.h>
+#include <tbb/parallel_for.h>
 
 GameObject::GameObject(const SRMath::vec3& position, const SRMath::vec3& rotation, const SRMath::vec3& scale, std::unique_ptr<Model> model)
+	: m_position(position),
+	  m_rotation(rotation),
+	  m_scale(scale),
+	  m_model(std::move(model))
 {
-	m_position = position;
-	m_rotation = rotation;
-	m_scale = scale;
-	m_model = std::move(model);
 	if (!m_model)
 	{
-		// Handle error: model is null
-		throw std::runtime_error("Model cannot be null");
+		throw std::invalid_argument("GameObject requires a model");
 	}
-
-	int maxThreads = tbb::this_task_arena::max_concurrency();
-	tbb::task_arena arena(maxThreads);
-	arena.execute([&] {
-		tbb::parallel_for(0, maxThreads, [&](int) {
-			std::vector<MeshRenderCommand> localCmd = m_threadLocalCmd.local();
-			std::vector<DebugPrimitiveCommand> localDebugCmd = m_threadLocalDebugCmd.local();
-
-			localCmd.reserve(200);
-			localDebugCmd.reserve(200);
-			});
-		});
 }
 
 GameObject::~GameObject() = default;
@@ -55,52 +44,22 @@ void GameObject::UpdateTransform(float deltaTime, bool isRotate)
 	// World Transform
 	if(isRotate) m_rotation += SRMath::vec3(0.0f, 0.4f * deltaTime, 0.0f); // Example rotation update, can be customized
 
-	SRMath::mat4 scaleMatrix = SRMath::scale(m_scale);
-	SRMath::mat4 rotationMatrix = SRMath::rotate(m_rotation);
-	SRMath::mat4 translationMatrix = SRMath::translate(m_position);
+	const SRMath::mat4 scaleMatrix = SRMath::scale(m_scale);
+	const SRMath::mat4 rotationMatrix = SRMath::rotate(m_rotation);
+	const SRMath::mat4 translationMatrix = SRMath::translate(m_position);
 	m_worldMatrix = translationMatrix * rotationMatrix * scaleMatrix;
-	m_normalMatrix = SRMath::inverse_transpose(m_worldMatrix).value_or(SRMath::mat4(1.f)); // 법선 행렬 계산
+
+	// scale에 0이 있으면 역행렬이 존재하지 않는다. expected를 확인해 실패
+	// 경로를 눈에 보이게 하고, 렌더링을 계속할 때만 단위 행렬을 사용한다.
+	if (const auto normalMatrix = SRMath::inverse_transpose(m_worldMatrix))
+		m_normalMatrix = *normalMatrix;
+	else
+		m_normalMatrix = SRMath::mat4::identity();
 
 	const AABB& localAABB = m_model->GetLocalAABB();
 	m_worldAABB = localAABB.Transform(m_worldMatrix);
 
 }
-
-const SRMath::vec3 GameObject::GetPosition() const
-{
-	return m_position;
-}
-
-const SRMath::vec3 GameObject::GetRotation() const
-{
-	return m_rotation;
-}
-
-const SRMath::vec3 GameObject::GetScale() const
-{
-	return m_scale;
-}
-
-const std::unique_ptr<Model>& GameObject::GetModel() const
-{
-	return m_model;
-}
-
-const AABB& GameObject::GetWorldAABB() const
-{
-	return m_worldAABB;
-}
-
-const std::weak_ptr<GameObject>& GameObject::GetParent() const
-{
-	return m_parent;
-}
-
-const std::vector<std::shared_ptr<GameObject>>& GameObject::GetSons() const
-{
-	return m_sons;
-}
-
 
 void GameObject::SetSon(std::shared_ptr<GameObject> son)
 {
@@ -113,20 +72,24 @@ void GameObject::SubmitToRenderQueue(RenderQueue& renderQueue, const Frustum& fr
 	if (!frustum.IsAABBInFrustum(m_worldAABB)) return;
 	if (!m_model) return;
 
-	size_t modelSize = m_model->GetMeshes().size();
+	const std::span<const Mesh> meshes = m_model->GetMeshes();
 
 	m_threadLocalCmd.clear();
 	m_threadLocalDebugCmd.clear();
 
-	tbb::parallel_for(tbb::blocked_range<int>(0, static_cast<int>(modelSize)),
-		[&](const tbb::blocked_range<int>& r) {
+	tbb::parallel_for(tbb::blocked_range<std::size_t>{ 0, meshes.size() },
+		[&](const tbb::blocked_range<std::size_t>& range) {
 
 			std::vector<MeshRenderCommand>& localCmd = m_threadLocalCmd.local();
 			std::vector<DebugPrimitiveCommand>& localDebugCmd = m_threadLocalDebugCmd.local();
+			// 이전 생성자 코드는 이 벡터들을 복사한 뒤 복사본만 reserve했다.
+			// 실제 TLS 인스턴스의 capacity를 최초 사용 시 확보한다.
+			if (localCmd.capacity() == 0) localCmd.reserve(200);
+			if (localDebugCmd.capacity() == 0) localDebugCmd.reserve(200);
 
-			for (int i = r.begin(); i != r.end(); i++)
+			for (std::size_t i = range.begin(); i != range.end(); ++i)
 			{
-				const auto& mesh = m_model->GetMeshes()[i];
+				const Mesh& mesh = meshes[i];
 				if (mesh.octree)
 				{
 					mesh.octree->SubmitNodesToRenderQueue(renderQueue, frustum, m_worldMatrix,
@@ -134,22 +97,14 @@ void GameObject::SubmitToRenderQueue(RenderQueue& renderQueue, const Frustum& fr
 				}
 				else
 				{
-					MeshRenderCommand cmd;
-					cmd.sourceMesh = &mesh;
-					cmd.indicesToDraw = &mesh.indices;
-					cmd.worldTransform = m_worldMatrix;
-					cmd.material = &mesh.material;
-
-					if (debugFlags.bShowWireframe)
-					{
-						cmd.rasterizeMode = ERasterizeMode::Wireframe;
-					}
-					else
-					{
-						cmd.rasterizeMode = ERasterizeMode::Fill;
-					}
-
-					localCmd.push_back(cmd);
+					localCmd.push_back(MeshRenderCommand{
+						.sourceMesh = &mesh,
+						.indicesToDraw = mesh.indices,
+						.worldTransform = m_worldMatrix,
+						.material = &mesh.material,
+						.rasterizeMode = debugFlags.bShowWireframe
+							? ERasterizeMode::Wireframe : ERasterizeMode::Fill
+					});
 				}
 
 				if (debugFlags.bShowNormal)
@@ -157,16 +112,17 @@ void GameObject::SubmitToRenderQueue(RenderQueue& renderQueue, const Frustum& fr
 					std::vector<DebugVertex> normalLines;
 					normalLines.reserve(mesh.vertices.size() * 2); // 각 정점마다 시작점과 끝점이 있으므로 2배 크기
 
-					const float normalLength = 0.1f; // Normal vector length for visualization
+					constexpr float normalLength = 0.1f;
 
 					for (const auto& vertex : mesh.vertices)
 					{
-						SRMath::vec3 startPoint_local = m_worldMatrix * vertex.position;
+						const SRMath::vec3 startPoint_local{ m_worldMatrix * vertex.position };
 
 						// 3. 방향(normal)은 역전치 행렬로 변환하여 월드 공간의 법선 방향을 계산합니다.
 						// (w=0으로 설정하여 방향 벡터임을 명시)
-						SRMath::vec3 normalDir_world = m_normalMatrix * SRMath::vec4(vertex.normal, 0.f);
-						SRMath::vec3 endPoint_local = startPoint_local + SRMath::normalize(normalDir_world) * normalLength;
+						const SRMath::vec3 normalDir_world{
+							m_normalMatrix * SRMath::vec4(vertex.normal, 0.f) };
+						const SRMath::vec3 endPoint_local = startPoint_local + SRMath::normalize(normalDir_world) * normalLength;
 
 						normalLines.push_back({ startPoint_local, SRMath::vec4(1.0f, 1.0f, 0.0f, 1.0f) });
 						normalLines.push_back({ endPoint_local, SRMath::vec4(1.0f, 1.0f, 0.0f, 1.0f) });
@@ -174,11 +130,11 @@ void GameObject::SubmitToRenderQueue(RenderQueue& renderQueue, const Frustum& fr
 
 					if (!normalLines.empty()) {
 
-						DebugPrimitiveCommand cmd;
-						cmd.vertices = std::move(normalLines);
-						cmd.worldTransform = SRMath::mat4(1.f);
-						cmd.type = DebugPrimitiveType::Line;
-						localDebugCmd.push_back(cmd);
+						localDebugCmd.push_back(DebugPrimitiveCommand{
+							.vertices = std::move(normalLines),
+							.worldTransform = SRMath::mat4::identity(),
+							.type = DebugPrimitiveType::Line
+						});
 					}
 				}
 			}
@@ -192,11 +148,11 @@ void GameObject::SubmitToRenderQueue(RenderQueue& renderQueue, const Frustum& fr
 		}
 	}
 
-	for (const auto& localDebugCmd : m_threadLocalDebugCmd)
+	for (auto& localDebugCmd : m_threadLocalDebugCmd)
 	{
-		for (const auto& cmd : localDebugCmd)
+		for (auto& cmd : localDebugCmd)
 		{
-			renderQueue.Submit(cmd);
+			renderQueue.Submit(std::move(cmd));
 		}
 	}
 
@@ -208,4 +164,3 @@ void GameObject::SubmitToRenderQueue(RenderQueue& renderQueue, const Frustum& fr
 		}
 	}
 }
-

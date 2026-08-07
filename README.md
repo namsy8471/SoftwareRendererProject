@@ -75,9 +75,9 @@ This project is a CPU-based software renderer developed to understand and implem
   **MVP変換**：3D空間のオブジェクトを2D画面に投影するための行列変換を実装。  
   **MVP transformation**: Implemented matrix transformation to project 3D objects onto a 2D screen.
   
-* **OBJ, MTL 파서 (OBJ, MTL Parser)**: std::fstream을 활용하여 .obj 파일 포맷을 읽고, **std::stringstream**을 이용해 각 줄의 데이터를 효율적으로 파싱하여 3D 모델 및 머테리얼 데이터를 로드하는 기능 구현.  
-  **OBJ・MTLパーサ**：`std::fstream`を用いて.objファイルを読み込み、`std::stringstream`を利用して効率的に解析し、3Dモデルおよびマテリアルデータをロード。  
-  **OBJ/MTL Parser**: Implemented efficient 3D model and material loader using `std::fstream` and `std::stringstream`.
+* **OBJ, MTL 파서 (OBJ, MTL Parser)**: `std::filesystem::path`로 경로를 받고, `std::string_view`와 `std::from_chars`로 복사·예외 없는 파싱을 수행하며, 실패는 `std::expected`로 반환합니다.
+  **OBJ・MTLパーサ**：`std::filesystem::path`、`std::string_view`、`std::from_chars`を利用し、失敗は`std::expected`で返します。
+  **OBJ/MTL Parser**: Uses `std::filesystem::path`, zero-copy `std::string_view`, `std::from_chars`, and structured `std::expected` errors.
   
 * **래스터화 (Rasterization)**: 삼각형, 선 등 기본적인 기하 도형을 픽셀로 변환하는 핵심 과정 구현.  
   **ラスタライズ**：三角形や線などの基本図形をピクセルへ変換する中核処理を実装。  
@@ -135,10 +135,70 @@ This project is a CPU-based software renderer developed to understand and implem
 ---
 
 ## **기술 스택 (Technologies Used / 使用技術)**
-* **언어 / 言語 / Language**: `C++17`  
-* **개발 환경 / 開発環境 / Development**: `Visual Studio 2022`  
-* **OS 인터페이스 / OSインターフェース / OS Interface**: `WinAPI`  
-* **라이브러리 / ライブラリ / Libraries**: `stb_image.h`, `TBB`
+* **언어 / 言語 / Language**: `C++26 preview` (`/std:c++latest`)
+* **개발 환경 / 開発環境 / Development**: `Visual Studio 2026` / MSVC v145
+* **OS 인터페이스 / OSインターフェース / OS Interface**: `WinAPI`
+* **라이브러리 / ライブラリ / Libraries**: `stb_image.h`, `oneTBB 2023.1.0`
+
+## Build
+
+Visual Studio 2026에서 솔루션을 열고 `Debug|x64`, `Release|x64`, `Debug|x86`, 또는 `Release|x86` 구성을 빌드합니다. 모든 구성은 `/std:c++latest`와 포함된 oneTBB 바이너리를 사용하며, 빌드 후 해당 아키텍처의 `tbb12.dll`을 출력 폴더로 복사합니다.
+
+## C++26 현대화 설계
+
+이 프로젝트에서 “C++26”은 단순히 `/std:c++latest`를 켠다는 뜻이 아닙니다. MSVC v145가 현재 구현한 최신 표준 기능을 실제 API 계약에 사용하고, 아직 구현되지 않은 C++26 기능은 feature-test macro로 감지한 뒤 동일 계약의 프로젝트 fallback을 사용합니다. 따라서 사용 중인 컴파일러가 기능을 추가하면 호출부를 바꾸지 않고 표준 구현으로 전환됩니다.
+
+| 이전 방식 | 현재 방식 | 변경 이유 |
+| --- | --- | --- |
+| C++11 raw pointer + 별도 길이 | `std::span` 및 고정 extent span | 버퍼 길이를 타입에 포함해 범위 오류와 소유권 혼동 방지 |
+| 일반 C 배열과 `#define` 상수 | `std::array`, `inline constexpr`, scoped enum | 크기와 타입을 보존하고 매크로 이름 오염 제거; `__m128` ABI overlay만 주석과 함께 예외 유지 |
+| `stringstream`, `stoi` 예외 파싱 | `std::string_view`, `std::from_chars` | 임시 문자열·locale·예외 비용 없이 입력 오류 위치 반환 |
+| 로더 내부 `MessageBox`/예외 | `std::expected<T, AssetLoadError>` | 파일 파싱과 WinAPI UI를 분리해 테스트 가능한 로더 구성 |
+| 수동 템플릿 `static_assert` | named module의 C++20 `concept` | 잘못된 타입을 템플릿 본문이 아닌 호출 지점에서 진단 |
+| 헤더 반복 전처리 | `sr.math.ixx`와 `import std;` | 안정된 수학 계약을 모듈 인터페이스로 시험 적용하고 매크로 누출 감소 |
+| 고정 크기 클리핑용 `std::vector` | C++26 `std::inplace_vector` 호환 `FixedCapacityVector` | 작은 핫 패스에서 TLS 힙 할당 제거; MSVC 지원 시 표준 타입 자동 사용 |
+| `memset`, `ZeroMemory` | 값 초기화와 ranges 알고리즘 | byte 단위 조작을 요소 타입을 이해하는 연산으로 교체 |
+| float로 누적한 프레임 시간 | `std::chrono::steady_clock::duration` | 시계 단위를 타입으로 유지해 정밀도와 단위 안전성 확보 |
+| raw GDI 핸들 3개 수동 정리 | 이동 전용 `Renderer::GdiBackBuffer` | 선택 객체 복원 → bitmap 삭제 → DC 삭제 순서를 RAII로 보장 |
+| 하나의 SSE 경로 | CPUID/XCR0 런타임 디스패치 + SSE/AVX 별도 번역 단위 | 구형 CPU 호환성을 유지하며 두 `vec4` 배치만 256-bit AVX 사용 |
+| packed texture 정수를 `float`로 변환 | `Texture::Sample`이 `SRMath::Color` 반환 | 픽셀 포맷·엔디언 오해로 텍스처가 흰색이 되던 오류 제거 |
+| header-only FXAA와 겹치는 TBB 쓰기 | `span` API + 분리된 luminance/filter pass | 같은 값을 써도 data race인 동시 기록 제거, vendor 헤더를 `.cpp`로 격리 |
+| 효과 없는 TLS 복사본 `reserve` | 실제 TBB thread-local 참조를 최초 사용 시 reserve | 의도만 있고 효력이 없던 사전 할당 수정 |
+| 광범위한 `pch.h` 전이 include | 최소 `Platform/Win32Headers.h` + 직접 include | 자체 코드 의존성을 명시하고 WinAPI 매크로 노출 범위 축소 |
+
+### 주요 현대화 함수
+
+- `ModelLoader::LoadOBJ`: OBJ 경로를 받아 모델 또는 행 번호가 포함된 `AssetLoadError`를 반환합니다. `from_chars` 기반 face 파서는 `v`, `v/vt`, `v//vn`, `v/vt/vn`을 예외 없이 해석합니다.
+- `TextureLoader::LoadMTLFile`: MTL 명령과 인수를 `string_view`로 나누고 숫자 변환 실패를 `expected`로 전달합니다.
+- `AABB::Transform`: 여덟 코너를 두 개씩 묶어 `SIMD::transform_pair`에 전달합니다.
+- `SIMD::avx_available`: CPUID의 AVX/OSXSAVE와 XCR0의 XMM/YMM 보존 상태를 함께 확인합니다.
+- `SIMD::transform_pair`: 첫 호출에서 SSE 또는 AVX 함수 포인터를 한 번 선택하고 이후 같은 구현을 재사용합니다.
+- `Renderer::GdiBackBuffer::create/reset`: 화면 DC, 메모리 DC, DIB bitmap 및 이전 선택 객체의 수명을 한 객체가 관리합니다.
+- `Camera::Update`: `std::span<const bool, 256>`으로 키 입력 크기를 컴파일 시 계약화합니다.
+- `Texture::Sample`: stb_image의 RGBA byte 배열에서 RGB 채널을 정규화해 typed color로 반환합니다.
+- `sr::fxaa::Apply`: 입력/출력 `span`의 크기를 검증한 뒤 luminance 작성과 필터링을 별도 TBB pass로 실행합니다.
+- `SRMath::inverse`: Gauss-Jordan 소거가 실패하면 임의 행렬이나 예외 대신 `expected<mat4, MatrixError>`를 반환합니다.
+
+### C++11/14/17 코드에서 올린 이유
+
+C++11의 RAII와 스마트 포인터는 계속 좋은 기반이지만, raw 포인터가 비소유 버퍼인지 단일 객체인지 표현하지 못하고 파싱 실패를 예외 또는 별도 bool로 나눠 처리해야 했습니다. C++17의 `filesystem`, `from_chars`, if-initializer와 C++20의 `span`, ranges, concepts는 이 모호함을 타입과 반환값에 기록합니다. C++23의 `expected`, `to_underlying` 및 C++26의 고정 용량 컨테이너 방향까지 적용해, 코드의 주석뿐 아니라 컴파일러가 계약을 검사하도록 바꿨습니다.
+
+단, 최신 기능이 항상 더 빠르다는 이유로 교체한 것은 아닙니다. 단일 `vec4`는 128-bit SSE가 데이터 폭에 정확히 맞으므로 그대로 유지하고, 두 `vec4`를 동시에 변환하는 배치에만 256-bit AVX를 사용합니다. oneTBB와 stb_image도 자체 코드로 재작성하지 않고 외부 헤더/구현 경계에 격리했습니다.
+
+### 이전 현대화 작업 회고
+
+초기 전환은 `/std:c++latest`, `std::expected`, `std::span`, `sr.math.ixx`를 추가했지만 다음 부분이 부족했습니다.
+
+- `sr.math`가 빌드만 되고 실제 호출부에서 import되지 않았습니다. 현재 `AABB.cpp`가 모듈을 import하고 `VectorLike` concept로 경계 검사를 제약합니다.
+- AVX 구현 파일 이름이 `SIMD_AVX2.cpp`였지만 실제 명령과 프로젝트 옵션은 AVX 부동소수점 연산이었습니다. 파일명을 `SIMD_AVX.cpp`로 맞추고 AVX2가 필요하지 않은 이유를 주석화했습니다.
+- `stringstream`, `stoi`, 로더 내부 `MessageBox`가 남아 있었습니다. 파서는 `from_chars/expected`로 바꾸고 UI 표시는 Framework 한 곳으로 이동했습니다.
+- GDI 핸들은 정상 경로에서만 수동 해제됐습니다. 현재는 중간 실패와 resize에서도 RAII가 복원·해제를 수행합니다.
+- 클리핑 버퍼가 작은 고정 데이터임에도 `vector`를 사용했습니다. `inplace_vector` feature test와 fallback을 추가했습니다.
+- 값 반환형의 `const`, C 배열, `memset`, 매크로 상수가 남아 있었습니다. 값 의미론, `array`, ranges, `constexpr`로 정리했습니다.
+- 텍스처의 packed pixel을 `float` 하나로 변환해 RGB 전체가 과포화될 수 있었습니다. `Texture::Sample`이 채널별 `Color`를 반환하도록 수정했습니다.
+- FXAA의 이웃 luminance 준비가 TBB 작업 사이에서 같은 행을 중복 기록했습니다. 계산 pass를 분리해 읽기 전용 경계를 만들었습니다.
+- `GameObject`의 TLS reserve가 참조가 아닌 복사본에 적용됐습니다. 실제 `local()` 벡터를 최초 사용 시 reserve하도록 옮겼습니다.
+- `pch.h`가 PCH 비활성 상태에서도 표준 헤더를 전이 포함했습니다. 최소 Win32 경계 헤더로 교체하고 직접 의존성을 복구했습니다.
 
 ---
 

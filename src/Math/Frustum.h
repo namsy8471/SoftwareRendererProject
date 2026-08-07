@@ -1,14 +1,14 @@
 ﻿#pragma once
+#include <array>
 #include "Math/SRMath.h"
 #include "Math/AABB.h"
 
 struct Plane
 {
 	SRMath::vec3 normal = {0.f, 1.f, 0.f};
-	float distance; // Distance from origin
+	float distance = 0.0f; // 원점에서 평면까지의 signed distance
 
-	Plane() = default;
-	float GetSignedDistanceToPoint(const SRMath::vec3& point) const
+	[[nodiscard]] float SignedDistanceTo(const SRMath::vec3& point) const noexcept
 	{
 		return SRMath::dot(normal, point) + distance;
 	}
@@ -17,10 +17,9 @@ struct Plane
 class Frustum
 {
 public:
-	Plane planes[6]; // Left, Right, Bottom, Top, Near, Far
+	// C 배열보다 std::array가 범위 알고리즘과 크기 안전성을 제공한다.
+	std::array<Plane, 6> planes{}; // Left, Right, Bottom, Top, Near, Far
 
-	Frustum() = default;
-
-	void Update(const SRMath::mat4& viewProjectionMatrix);
-	bool IsAABBInFrustum(const AABB& aabb) const;
+	void Update(const SRMath::mat4& viewProjectionMatrix) noexcept;
+	[[nodiscard]] bool IsAABBInFrustum(const AABB& aabb) const noexcept;
 };

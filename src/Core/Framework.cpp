@@ -7,14 +7,95 @@
 #include "Graphics/Model.h"
 #include "Utils/Utils.h"
 
+#include <array>
+#include <numbers>
+#include <utility>
+
+namespace
+{
+constexpr float kLightGizmoLength = 1.5f;
+constexpr float kArrowHeadLength = 0.3f;
+constexpr float kArrowHeadWidth = 0.18f;
+
+// GetDC/ReleaseDC is a paired Win32 resource API. A scoped owner makes future
+// early returns safe and keeps raw HDC lifetime out of the frame loop.
+class WindowDc final
+{
+public:
+    explicit WindowDc(HWND window) noexcept : m_window(window), m_dc(GetDC(window)) {}
+    ~WindowDc() { if (m_dc) ReleaseDC(m_window, m_dc); }
+    WindowDc(const WindowDc&) = delete;
+    WindowDc& operator=(const WindowDc&) = delete;
+
+    [[nodiscard]] HDC get() const noexcept { return m_dc; }
+    [[nodiscard]] explicit operator bool() const noexcept { return m_dc != nullptr; }
+
+private:
+    HWND m_window = nullptr;
+    HDC m_dc = nullptr;
+};
+
+[[nodiscard]] std::wstring Utf8ToWide(std::string_view text)
+{
+    if (text.empty()) return {};
+    const int length = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+        text.data(), static_cast<int>(text.size()), nullptr, 0);
+    if (length <= 0) return L"Asset loading failed";
+
+    std::wstring converted(static_cast<std::size_t>(length), L'\0');
+    MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(),
+        static_cast<int>(text.size()), converted.data(), length);
+    return converted;
+}
+
+void AddDebugLine(DebugPrimitiveCommand& command, const SRMath::vec3& from,
+    const SRMath::vec3& to, const SRMath::vec4& color)
+{
+    command.vertices.push_back({ from, color });
+    command.vertices.push_back({ to, color });
+}
+
+void SubmitDirectionalLightGizmos(RenderQueue& renderQueue, std::span<const DirectionalLight> lights)
+{
+    for (std::size_t index = 0; index < lights.size(); ++index)
+    {
+        const auto& light = lights[index];
+        const SRMath::vec3 rayDirection = SRMath::normalize(light.rayDirection);
+        const SRMath::vec3 anchor{ -3.0f + static_cast<float>(index) * 3.0f, 3.0f, 0.0f };
+        const SRMath::vec3 tip = anchor + rayDirection * kLightGizmoLength;
+        const SRMath::vec3 up = std::abs(rayDirection.y) > 0.9f
+            ? SRMath::vec3{ 1.0f, 0.0f, 0.0f }
+            : SRMath::vec3{ 0.0f, 1.0f, 0.0f };
+        const SRMath::vec3 side = SRMath::normalize(SRMath::cross(rayDirection, up));
+
+        DebugPrimitiveCommand command;
+        command.worldTransform = SRMath::mat4::identity();
+        command.type = DebugPrimitiveType::Line;
+
+        // 노란색: DirectionalLight가 정의한 실제 광선 진행 방향.
+        const SRMath::vec4 rayColor{ 1.0f, 0.85f, 0.0f, 1.0f };
+        AddDebugLine(command, anchor, tip, rayColor);
+        AddDebugLine(command, tip, tip - rayDirection * kArrowHeadLength + side * kArrowHeadWidth, rayColor);
+        AddDebugLine(command, tip, tip - rayDirection * kArrowHeadLength - side * kArrowHeadWidth, rayColor);
+
+        // 청록색: Phong 난반사 계산에 사용되는 surface-to-light 방향.
+        const SRMath::vec4 shadingColor{ 0.0f, 0.85f, 1.0f, 1.0f };
+        AddDebugLine(command, anchor, anchor - rayDirection * (kLightGizmoLength * 0.55f), shadingColor);
+
+        renderQueue.Submit(std::move(command));
+    }
+}
+}
+
 Framework::Framework(HINSTANCE hInstance, int nCmdShow)
 {
     // 전역 문자열을 초기화합니다.
-    LoadStringW(hInstance, IDS_APP_TITLE, m_szTitle, MAX_LOADSTRING);
-    LoadStringW(hInstance, IDC_SOFTRENDERERPROJECT, m_szWindowClass, MAX_LOADSTRING);
+    LoadStringW(hInstance, IDS_APP_TITLE, m_szTitle.data(), static_cast<int>(m_szTitle.size()));
+    LoadStringW(hInstance, IDC_SOFTRENDERERPROJECT, m_szWindowClass.data(), static_cast<int>(m_szWindowClass.size()));
 
     // Window Class Register
-    WNDCLASSEXW wcex;
+    // 값 초기화로 모든 필드를 0/nullptr로 만든다. C의 ZeroMemory보다 타입 안전하다.
+    WNDCLASSEXW wcex{};
 
     wcex.cbSize = sizeof(WNDCLASSEX);
 
@@ -27,7 +108,7 @@ Framework::Framework(HINSTANCE hInstance, int nCmdShow)
     wcex.hCursor = LoadCursor(nullptr, IDC_ARROW);
     wcex.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
     wcex.lpszMenuName = MAKEINTRESOURCEW(IDC_SOFTRENDERERPROJECT);
-    wcex.lpszClassName = m_szWindowClass;
+    wcex.lpszClassName = m_szWindowClass.data();
     wcex.hIconSm = LoadIcon(wcex.hInstance, MAKEINTRESOURCE(IDI_SMALL));
 
     if (!RegisterClassExW(&wcex))
@@ -36,7 +117,7 @@ Framework::Framework(HINSTANCE hInstance, int nCmdShow)
     }
 
     // Init Class Instance
-    m_hWnd = CreateWindowW(m_szWindowClass, m_szTitle, WS_OVERLAPPEDWINDOW,
+    m_hWnd = CreateWindowW(m_szWindowClass.data(), m_szTitle.data(), WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT, 0, CW_USEDEFAULT, 0, nullptr, nullptr, hInstance, this);
 
     if (!m_hWnd)
@@ -61,43 +142,44 @@ Framework::Framework(HINSTANCE hInstance, int nCmdShow)
     m_camera = Camera(SRMath::vec3(0.f, 0.f, -5.f));
 
     m_lights.push_back(DirectionalLight());
-    m_lights.push_back(DirectionalLight{ SRMath::vec3(1.f, 0.f, 0.f), SRMath::vec3(1.0f, 1.0f, 1.0f) });
-    m_lights.push_back(DirectionalLight{ SRMath::vec3(0.f, 1.f, -1.f), SRMath::vec3(1.0f, 1.0f, 1.0f) });
+    //m_lights.push_back(DirectionalLight{ SRMath::vec3(1.f, 0.f, 0.f), SRMath::vec3(1.0f, 1.0f, 1.0f) });
+    //m_lights.push_back(DirectionalLight{ SRMath::vec3(0.f, 1.f, -1.f), SRMath::vec3(1.0f, 1.0f, 1.0f) });
 }
 
 
 Framework::~Framework() = default;
 
-bool Framework::initializeGameobject(const SRMath::vec3& pos, const SRMath::vec3& rotation, const SRMath::vec3& scale, const std::string modelName)
+bool Framework::initializeGameobject(const SRMath::vec3& pos, const SRMath::vec3& rotation,
+    const SRMath::vec3& scale, std::string_view modelName)
 {
-    try
+    const auto modelPath = MakeAssetPath(modelName);
+    auto model = ModelLoader::LoadOBJ(modelPath);
+    if (!model)
     {
-        std::string modelPath = MakeAssetPath(modelName);
-        auto m_gameobject = std::make_shared<GameObject>(pos, rotation, scale, ModelLoader::LoadOBJ(modelPath));
-
-        m_gameobjects.push_back(std::move(m_gameobject));
-        return true;
-    }
-    catch (const std::runtime_error& e)
-    {
-        std::string errorMessage = e.what();
-        std::wstring wErrorMessage(errorMessage.begin(), errorMessage.end());
-
-        MessageBox(m_hWnd, wErrorMessage.c_str(), L"GameObject Creation Error", MB_OK);
-
+        // 로더는 예외나 UI 호출 대신 구조화 오류를 반환한다. Framework만이
+        // WinAPI 사용자 메시지로 변환하므로 로더 테스트와 재사용이 쉬워진다.
+        std::wstring message = Utf8ToWide(model.error().message);
+        if (!model.error().path.empty())
+            message += L"\nPath: " + model.error().path.wstring();
+        if (model.error().line != 0)
+            message += L"\nLine: " + std::to_wstring(model.error().line);
+        MessageBoxW(m_hWnd, message.c_str(), L"GameObject Creation Error", MB_OK | MB_ICONERROR);
         return false;
     }
+
+    auto gameObject = std::make_shared<GameObject>(pos, rotation, scale, std::move(*model));
+    m_gameobjects.push_back(std::move(gameObject));
+    return true;
 }
 
 void Framework::Run()
 {
-    MSG msg;
-    ZeroMemory(&msg, sizeof(msg));
+    MSG msg{};
 
     // 기본 메시지 루프입니다:
     while (msg.message != WM_QUIT)
     {
-        if (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
+        if (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE))
         {
             TranslateMessage(&msg);
             DispatchMessage(&msg);
@@ -110,24 +192,23 @@ void Framework::Run()
 
             if (m_perfAnalyzer.GetAvgFPSForSecond() != prevFPS) {
                 // 문자열 버퍼를 준비하고
-                wchar_t buffer[100];
+                std::array<wchar_t, max_load_string> buffer{};
                 // "SoftrendererProject - FPS: 60" 같은 형식으로 문자열을 만듭니다.
-                swprintf_s(buffer, 100, L"%s - AvgFPS: %d",
-                    m_szTitle, m_perfAnalyzer.GetAvgFPSForSecond());
+                swprintf_s(buffer.data(), buffer.size(), L"%s - AvgFPS: %d",
+                    m_szTitle.data(), m_perfAnalyzer.GetAvgFPSForSecond());
 
                 // 창 제목을 설정합니다.
-                SetWindowText(m_hWnd, buffer);
+                SetWindowText(m_hWnd, buffer.data());
             }
 
             Framework::Update(m_perfAnalyzer.GetDeltaTime());
             Framework::Render();
 
-            HDC hdc = GetDC(m_hWnd);
-            if (m_pRenderer)
+            const WindowDc screenDc{ m_hWnd };
+            if (m_pRenderer && screenDc)
             {
-                m_pRenderer->Present(hdc);
+                m_pRenderer->Present(screenDc.get());
             }
-            ReleaseDC(m_hWnd, hdc);
         }
     }
 }
@@ -135,13 +216,11 @@ void Framework::Run()
 // Framework Logic Update(For Game)
 void Framework::Update(const float deltaTime)
 {
-    int width = m_pRenderer->GetWidth();
-    int height = m_pRenderer->GetHeight();
+    const int width = m_pRenderer->GetWidth();
+    const int height = m_pRenderer->GetHeight();
+    if (width <= 0 || height <= 0) return; // minimized windows have no valid aspect ratio
 
-    // Calculate aspect ratio
-    float aspectRatio = static_cast<float>(width) / height;
-
-    //TODO Logic Update
+    const float aspectRatio = static_cast<float>(width) / static_cast<float>(height);
     m_camera.Update(deltaTime, m_keys, aspectRatio);
 
 	m_renderQueue.Clear();
@@ -159,6 +238,9 @@ void Framework::Update(const float deltaTime)
             }
         }
     }
+
+    if (m_debugFlags.bShowLightDirection)
+        SubmitDirectionalLightGizmos(m_renderQueue, m_lights);
 }
 
 void Framework::Render()
@@ -197,15 +279,20 @@ LRESULT Framework::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
             m_debugFlags.bShowNormal = !m_debugFlags.bShowNormal;
 			CheckMenuBox(m_debugFlags.bShowNormal, ID_DEBUG_NORMALVECTOR);
             break;
-        
-        case ID_DEBUG_AABB: 
+
+        case ID_DEBUG_AABB:
             m_debugFlags.bShowAABB = !m_debugFlags.bShowAABB;
 			CheckMenuBox(m_debugFlags.bShowAABB, ID_DEBUG_AABB);
             break;
-        
-        case ID_DEBUG_WIREFRAME: 
+
+        case ID_DEBUG_WIREFRAME:
             m_debugFlags.bShowWireframe = !m_debugFlags.bShowWireframe;
 			CheckMenuBox(m_debugFlags.bShowWireframe, ID_DEBUG_WIREFRAME);
+            break;
+
+        case ID_DEBUG_LIGHTDIRECTION:
+            m_debugFlags.bShowLightDirection = !m_debugFlags.bShowLightDirection;
+            CheckMenuBox(m_debugFlags.bShowLightDirection, ID_DEBUG_LIGHTDIRECTION);
             break;
 
         case ID_ANTIALIASING_NONE:
@@ -232,9 +319,9 @@ LRESULT Framework::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
     case WM_PAINT:
     {
         // It is not used anymore
-        // 하지만 지우면 윈도우 에러 혹은 헬프 창이 안 뜨므로 남김. 
-        PAINTSTRUCT ps;
-        HDC hdc = BeginPaint(hWnd, &ps);
+        // 하지만 지우면 윈도우 에러 혹은 헬프 창이 안 뜨므로 남김.
+        PAINTSTRUCT ps{};
+        BeginPaint(hWnd, &ps);
         EndPaint(hWnd, &ps);
     }
     break;
@@ -247,15 +334,16 @@ LRESULT Framework::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
 
             Render();
 
-            HDC hdc = GetDC(hWnd);
-            m_pRenderer->Present(hdc);
-            ReleaseDC(hWnd, hdc);
+            const WindowDc screenDc{ hWnd };
+            if (screenDc) m_pRenderer->Present(screenDc.get());
         }
     }
     break;
 
     // Keyborad Input
     case WM_KEYDOWN:
+        // WPARAM은 배열 범위보다 클 수 있으므로 span 전환과 함께 경계를 검사한다.
+        if (wParam >= m_keys.size()) break;
         m_keys[wParam] = true;
         if (m_keys[VK_SPACE])
         {
@@ -272,7 +360,7 @@ LRESULT Framework::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
 
         break;
     case WM_KEYUP:
-        m_keys[wParam] = false;
+        if (wParam < m_keys.size()) m_keys[wParam] = false;
         break;
 
         // Mouse Input
@@ -298,8 +386,10 @@ LRESULT Framework::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
             m_camera.SetCameraPitch(newPitch);
 
 
-            if (m_camera.GetCameraPitch() > PI / 2.0f - 0.01f) m_camera.SetCameraPitch(PI / 2.0f - 0.01f);
-            if (m_camera.GetCameraPitch() < -PI / 2.0f + 0.01f) m_camera.SetCameraPitch(-PI / 2.0f + 0.01f);
+            constexpr float pitchMargin = 0.01f;
+            constexpr float halfPi = std::numbers::pi_v<float> / 2.0f;
+            m_camera.SetCameraPitch(std::clamp(m_camera.GetCameraPitch(),
+                -halfPi + pitchMargin, halfPi - pitchMargin));
 
             m_lastMousePos = currentMousePos;
         }
@@ -314,10 +404,9 @@ LRESULT Framework::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
     return 0;
 }
 
-void Framework::CheckMenuBox(bool isOn, const int& menuID)
+void Framework::CheckMenuBox(bool isOn, int menuID) const noexcept
 {
-    
-    HMENU hMenu = GetMenu(m_hWnd);
+    const HMENU hMenu = GetMenu(m_hWnd);
 
     // CheckMenuItem 함수를 호출하여 체크 표시를 업데이트합니다.
     if (isOn)

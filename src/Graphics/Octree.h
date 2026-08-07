@@ -1,4 +1,5 @@
 ﻿#pragma once
+#include <cstddef>
 #include <memory>
 #include <vector>
 #include "Math/SRMath.h"
@@ -22,19 +23,20 @@ private:
 	const Mesh* sourceMesh = nullptr;
 
 	void submitNodeRecursive(RenderQueue& renderQueue, const Frustum& frustum, const SRMath::mat4& worldTransform,
-		std::vector<MeshRenderCommand>& threadLocalCmd, std::vector<DebugPrimitiveCommand>& localDebugCmd, 
+		std::vector<MeshRenderCommand>& threadLocalCmd, std::vector<DebugPrimitiveCommand>& localDebugCmd,
 		const DebugFlags& debugFlags, const OctreeNode* node);
 
-	
 
-	static const int MAX_TRIANGLES_PER_NODE = 16;
-	static const int MAX_DEPTH = 8;
+
+	// 매크로나 별도 정의가 필요한 static const 대신 C++17 inline constexpr를
+	// 사용한다. 타입과 값이 선언 위치에 함께 있어 ODR 문제도 없다.
+	static constexpr std::size_t max_triangles_per_node = 16;
 public:
 	Octree();
 	~Octree();
 
 	void Build(const Mesh& mesh);
-	const OctreeNode* GetRoot() const { return root.get(); }
+	[[nodiscard]] const OctreeNode* GetRoot() const noexcept { return root.get(); }
 	void SubmitNodesToRenderQueue(RenderQueue& renderQueue, const Frustum& frustum, const SRMath::mat4& worldTransform,
 		std::vector<MeshRenderCommand>& threadLocalCmd, std::vector<DebugPrimitiveCommand>& localDebugCmd, const DebugFlags& debugFlags);
 };
