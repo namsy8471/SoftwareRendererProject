@@ -50,6 +50,7 @@
 *.pch
 *.idb
 *.tlog
+*.nativecodeanalysis.xml
 
 # 실행 파일 및 라이브러리
 *.exe

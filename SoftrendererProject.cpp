@@ -1,7 +1,7 @@
 ﻿// SoftrendererProject.cpp : 애플리케이션에 대한 진입점을 정의합니다.
 //
 
-#include "Core/pch.h"
+#include "Platform/Win32Headers.h"
 #include "SoftrendererProject.h"
 #include "Core/Framework.h"
 
@@ -17,4 +17,4 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     app.Run();
 
     return 0;
-} 
+}

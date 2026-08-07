@@ -43,6 +43,9 @@
     </Image>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="src\Modules\sr.math.ixx">
+      <Filter>소스 파일</Filter>
+    </ClCompile>
     <ClCompile Include="src\Core\Framework.cpp">
       <Filter>소스 파일</Filter>
     </ClCompile>
@@ -70,6 +73,15 @@
     <ClCompile Include="src\Math\Frustum.cpp">
       <Filter>소스 파일</Filter>
     </ClCompile>
+    <ClCompile Include="src\Math\SIMD.cpp">
+      <Filter>소스 파일</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Math\SIMD_AVX.cpp">
+      <Filter>소스 파일</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Renderer\FXAA.cpp">
+      <Filter>소스 파일</Filter>
+    </ClCompile>
     <ClCompile Include="src\Renderer\Renderer.cpp">
       <Filter>소스 파일</Filter>
     </ClCompile>
@@ -90,7 +102,7 @@
     <ClInclude Include="src\Core\Framework.h">
       <Filter>헤더 파일</Filter>
     </ClInclude>
-    <ClInclude Include="src\Core\pch.h">
+    <ClInclude Include="src\Platform\Win32Headers.h">
       <Filter>헤더 파일</Filter>
     </ClInclude>
     <ClInclude Include="src\Graphics\Mesh.h">
@@ -120,6 +132,9 @@
     <ClInclude Include="src\Math\SRMath.h">
       <Filter>헤더 파일</Filter>
     </ClInclude>
+    <ClInclude Include="src\Math\SIMD.h">
+      <Filter>헤더 파일</Filter>
+    </ClInclude>
     <ClInclude Include="src\Renderer\RenderCommand.h">
       <Filter>헤더 파일</Filter>
     </ClInclude>
@@ -138,10 +153,13 @@
     <ClInclude Include="src\Utils\DebugUtils.h">
       <Filter>헤더 파일</Filter>
     </ClInclude>
-    <ClInclude Include="src\Utils\PerformanceAnalyzer.h">
+    <ClInclude Include="src\Utils\AssetLoadError.h">
       <Filter>헤더 파일</Filter>
     </ClInclude>
-    <ClInclude Include="src\Utils\stb_image.h">
+    <ClInclude Include="src\Utils\FixedCapacityVector.h">
+      <Filter>헤더 파일</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Utils\PerformanceAnalyzer.h">
       <Filter>헤더 파일</Filter>
     </ClInclude>
     <ClInclude Include="resource.h">

@@ -11,17 +11,12 @@
 class Octree::OctreeNode {
 public:
 	AABB bounds;
-	std::unique_ptr<OctreeNode> children[8];
+	// 자식 수는 옥트리 정의상 항상 8개이므로 동적 컨테이너가 아닌 array가 맞다.
+	std::array<std::unique_ptr<OctreeNode>, 8> children{};
 	std::vector<unsigned int> triangleIndices;
 
-	OctreeNode(const AABB& bounds);
+	explicit OctreeNode(const AABB& bounds) : bounds(bounds) {}
 };
-
-Octree::OctreeNode::OctreeNode(const AABB& bounds) : bounds(bounds) {
-	for (int i = 0; i < 8; ++i) {
-		children[i] = nullptr;
-	}
-}
 
 // 옥트리 생성/소멸자 (기본 구현)
 Octree::Octree() = default;
@@ -36,7 +31,7 @@ void Octree::subdivide(OctreeNode* node)
 
 	// 1. 8개의 자식 노드를 생성하고 경계를 설정합니다.
 	//    인덱스 비트 의미: (i & 1) → X(+), (i & 2) → Y(+), (i & 4) → Z(+)
-	for (int i = 0; i < 8; i++)
+	for (std::size_t i = 0; i < node->children.size(); ++i)
 	{
 		AABB childBounds;
 		// min은 비트에 따라 center 또는 부모 min에서 시작
@@ -77,12 +72,12 @@ void Octree::insert(OctreeNode* node, unsigned int i0, unsigned int i1, unsigned
 	triBounds.max = { std::max({v0.x, v1.x, v2.x}), std::max({v0.y, v1.y, v2.y}), std::max({v0.z, v1.z, v2.z}) };
 
 	// 현재 노드가 내부 노드(자식이 있음)일 경우
-	if (node->children[0] != nullptr)
+	if (node->children.front())
 	{
 		// 삼각형이 어떤 자식 노드 하나에 '완전히' 포함되는지 확인
-		for (int i = 0; i < 8; ++i)
+		for (std::size_t i = 0; i < node->children.size(); ++i)
 		{
-			if (node->children[i]->bounds.AABBContains(triBounds))
+			if (node->children[i]->bounds.Contains(triBounds))
 			{
 				// 완전히 포함되면 해당 자식으로 삽입 (더 아래로 내려감)
 				insert(node->children[i].get(), i0, i1, i2);
@@ -99,7 +94,7 @@ void Octree::insert(OctreeNode* node, unsigned int i0, unsigned int i1, unsigned
 	node->triangleIndices.push_back(i2);
 
 	// 리프 노드가 너무 많은 삼각형을 가지면 분할 (분할 후 재배치는 subdivide 함수가 담당)
-	if (node->children[0] == nullptr && (node->triangleIndices.size() / 3) > MAX_TRIANGLES_PER_NODE)
+	if (!node->children.front() && (node->triangleIndices.size() / 3) > max_triangles_per_node)
 	{
 		subdivide(node);
 	}
@@ -122,8 +117,8 @@ void Octree::Build(const Mesh& mesh)
 }
 
 // 재귀적으로 프러스텀 컬링 및 렌더 큐 제출(디버그 AABB 포함)
-void Octree::submitNodeRecursive(RenderQueue& renderQueue, const Frustum& frustum, const SRMath::mat4& worldTransform, 
-	std::vector<MeshRenderCommand>& threadLocalCmd, std::vector<DebugPrimitiveCommand>& threadlocalDebugCmd, 
+void Octree::submitNodeRecursive(RenderQueue& renderQueue, const Frustum& frustum, const SRMath::mat4& worldTransform,
+	std::vector<MeshRenderCommand>& threadLocalCmd, std::vector<DebugPrimitiveCommand>& threadlocalDebugCmd,
 	const DebugFlags& debugFlags, const OctreeNode* node)
 {
 	// 노드 경계를 월드 공간으로 변환
@@ -136,10 +131,10 @@ void Octree::submitNodeRecursive(RenderQueue& renderQueue, const Frustum& frustu
 	{
 		MeshRenderCommand cmd;
 		cmd.sourceMesh = this->sourceMesh;                 // 원본 메시
-		cmd.indicesToDraw = &node->triangleIndices;        // 이 노드에 속한 삼각형 인덱스 서브셋
+		cmd.indicesToDraw = node->triangleIndices;         // 이 노드에 속한 삼각형 인덱스 서브셋
 		cmd.worldTransform = worldTransform;               // 오브젝트의 월드 변환
 		cmd.material = &this->sourceMesh->material;        // 메시의 재질을 사용
-			
+
 		// 와이어/필 모드 전환 (디버그 플래그에 따름)
 		if(debugFlags.bShowWireframe)
 		{
@@ -157,7 +152,7 @@ void Octree::submitNodeRecursive(RenderQueue& renderQueue, const Frustum& frustu
 	if (debugFlags.bShowAABB)
 	{
 		// AABB 8개 꼭짓점 계산
-		std::array<SRMath::vec3, 8> vertices = worldNodeAABB.GetVertice();
+		const auto vertices = worldNodeAABB.Corners();
 		SRMath::vec4 color = SRMath::vec4(1.0f, 0.0f, 0.0f, 1.0f); // 빨간색
 		std::vector<DebugVertex> debugVertices;
 
@@ -175,7 +170,7 @@ void Octree::submitNodeRecursive(RenderQueue& renderQueue, const Frustum& frustu
 		cmd.type = DebugPrimitiveType::Line;
 		threadlocalDebugCmd.push_back(cmd);
 	}
-	
+
 	// 자식 노드들에 대해 동일 처리 (존재하는 경우에만)
 	for(const auto & child : node->children)
 	{

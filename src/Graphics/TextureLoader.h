@@ -1,11 +1,13 @@
 ﻿#pragma once
-#include <string>
+#include <expected>
+#include <filesystem>
 #include <unordered_map>
 #include <memory>
+#include "Utils/AssetLoadError.h"
 
 struct StbiImageDeleter
 {
-	void operator()(unsigned char* p) const;
+	void operator()(unsigned char* p) const noexcept;
 };
 
 using StbiImagePtr = std::unique_ptr<unsigned char, StbiImageDeleter>;
@@ -16,6 +18,6 @@ struct Material;
 class TextureLoader
 {
 public:
-	static std::shared_ptr<Texture> LoadImageFile(const std::string& filepath);
-	static std::unordered_map<std::string, Material> LoadMTLFile(const std::string& filepath);
+	[[nodiscard]] static std::expected<std::shared_ptr<Texture>, AssetLoadError> LoadImageFile(const std::filesystem::path& filepath);
+	[[nodiscard]] static std::expected<std::unordered_map<std::string, Material>, AssetLoadError> LoadMTLFile(const std::filesystem::path& filepath);
 };

@@ -1,53 +1,153 @@
 ﻿#include "Graphics/ModelLoader.h"
+#include <algorithm>
+#include <array>
+#include <charconv>
+#include <compare>
 #include <fstream>
-#include <sstream>
 #include <map>
+#include <ranges>
+#include <string_view>
 #include <unordered_map>
-#include <tbb/tbb.h>
+#include <tbb/blocked_range.h>
+#include <tbb/combinable.h>
+#include <tbb/parallel_for.h>
 
-#include "Core/pch.h"
 #include "Graphics/TextureLoader.h"
 #include "Graphics/Model.h"
 #include "Graphics/Octree.h"
 #include "Graphics/Material.h"
 #include "Math/AABB.h"
 
-// v/vt/vn 조합을 하나의 정점 키로 사용하기 위한 구조체
-struct VertexKey
+namespace
 {
-    int pos_idx = -1;	// v: 위치 인덱스 (1 기반 → 0 기반 변환)
-    int tex_idx = -1;	// vt: 텍스처 좌표 인덱스
-    int nrm_idx = -1;	// vn: 법선 인덱스
-
-    // map의 key로 사용하기 위한 비교 연산자
-    // 정렬 기준: pos_idx → tex_idx → nrm_idx
-    bool operator<(const VertexKey& other) const
+    // v/vt/vn 조합을 하나의 정점 키로 사용한다. C++20의 defaulted
+    // spaceship은 C++11식 수동 사전식 비교 코드를 대체하고 실수를 줄인다.
+    struct VertexKey
     {
-        if (pos_idx < other.pos_idx) return true;
-        if (pos_idx > other.pos_idx) return false;
-        if (tex_idx < other.tex_idx) return true;
-        if (tex_idx > other.tex_idx) return false;
-        return nrm_idx < other.nrm_idx;
+        int pos_idx = -1;
+        int tex_idx = -1;
+        int nrm_idx = -1;
+
+        auto operator<=>(const VertexKey&) const = default;
+    };
+
+    [[nodiscard]] constexpr std::string_view trim_left(std::string_view text) noexcept
+    {
+        while (!text.empty() && (text.front() == ' ' || text.front() == '\t' || text.front() == '\r'))
+        {
+            text.remove_prefix(1);
+        }
+        return text;
     }
-};
+
+    [[nodiscard]] constexpr std::string_view take_token(std::string_view& input) noexcept
+    {
+        input = trim_left(input);
+        const auto separator = input.find_first_of(" \t\r");
+        const auto token = input.substr(0, separator);
+        input = separator == std::string_view::npos ? std::string_view{} : input.substr(separator);
+        return token;
+    }
+
+    template <typename Number>
+    [[nodiscard]] std::expected<Number, std::string_view> parse_number(std::string_view token) noexcept
+    {
+        if (token.empty()) return std::unexpected(token);
+        Number value{};
+        const auto [end, error] = std::from_chars(token.data(), token.data() + token.size(), value);
+        if (error != std::errc{} || end != token.data() + token.size())
+        {
+            return std::unexpected(token);
+        }
+        return value;
+    }
+
+    [[nodiscard]] std::expected<SRMath::vec3, std::string_view> parse_vec3(std::string_view input) noexcept
+    {
+        auto x = parse_number<float>(take_token(input));
+        auto y = parse_number<float>(take_token(input));
+        auto z = parse_number<float>(take_token(input));
+        if (!x) return std::unexpected(x.error());
+        if (!y) return std::unexpected(y.error());
+        if (!z) return std::unexpected(z.error());
+        return SRMath::vec3{ *x, *y, *z };
+    }
+
+    [[nodiscard]] std::expected<SRMath::vec2, std::string_view> parse_vec2(std::string_view input) noexcept
+    {
+        auto x = parse_number<float>(take_token(input));
+        auto y = parse_number<float>(take_token(input));
+        if (!x) return std::unexpected(x.error());
+        if (!y) return std::unexpected(y.error());
+        return SRMath::vec2{ *x, *y };
+    }
+
+    [[nodiscard]] std::expected<int, std::string_view> parse_obj_index(std::string_view token) noexcept
+    {
+        if (token.empty()) return -1;
+        auto parsed = parse_number<int>(token);
+        if (!parsed || *parsed <= 0) return std::unexpected(token);
+        return *parsed - 1;
+    }
+
+    // OBJ face 토큰(v, v/vt, v//vn, v/vt/vn)을 예외 없이 해석한다.
+    // stoi 예외 대신 expected를 써서 파일/행 번호를 로더 계층에서 보존한다.
+    [[nodiscard]] std::expected<VertexKey, std::string_view> parse_vertex_key(std::string_view token) noexcept
+    {
+        VertexKey key;
+        const auto firstSlash = token.find('/');
+        const auto secondSlash = firstSlash == std::string_view::npos
+            ? std::string_view::npos
+            : token.find('/', firstSlash + 1);
+
+        auto position = parse_obj_index(token.substr(0, firstSlash));
+        if (!position) return std::unexpected(position.error());
+        key.pos_idx = *position;
+
+        if (firstSlash == std::string_view::npos) return key;
+
+        const auto texToken = token.substr(firstSlash + 1,
+            secondSlash == std::string_view::npos ? secondSlash : secondSlash - firstSlash - 1);
+        if (!texToken.empty())
+        {
+            auto texture = parse_obj_index(texToken);
+            if (!texture) return std::unexpected(texture.error());
+            key.tex_idx = *texture;
+        }
+
+        if (secondSlash != std::string_view::npos)
+        {
+            auto normal = parse_obj_index(token.substr(secondSlash + 1));
+            if (!normal) return std::unexpected(normal.error());
+            key.nrm_idx = *normal;
+        }
+        return key;
+    }
+
+    [[nodiscard]] AssetLoadError malformed_obj(const std::filesystem::path& path,
+                                                std::size_t line,
+                                                std::string_view token)
+    {
+        return { "Malformed OBJ token: " + std::string(token), path, line };
+    }
+}
 
 // OBJ 로더: 파일 경로(확장자 없는 베이스 경로)를 받아 Model 구성
-std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
+std::expected<std::unique_ptr<Model>, AssetLoadError> ModelLoader::LoadOBJ(const std::filesystem::path& inputPath)
 {
+    auto filename = inputPath;
+    if (!filename.has_extension())
+        filename += ".obj";
     std::unique_ptr<Model> outModel = std::make_unique<Model>(); // 출력 모델
 	outModel->m_meshes.reserve(1000); // 초기 용량 예약
 
-    std::ifstream file(filename + ".obj"); // .obj 파일 열기
-    if (!file.is_open()) return nullptr;   // 실패 시 null 반환
+    std::ifstream file(filename); // .obj 파일 열기
+    if (!file.is_open())
+        return std::unexpected(AssetLoadError{ "Unable to open OBJ file: " + filename.string(), filename });
 
     // 텍스처/MTL 상대 경로 기반 디렉터리 계산
     // 예: "path\to\model" → "path\to\"
-    std::string directoryPath = "";
-    size_t last_slash_idx = filename.find_last_of("/\\");
-    if (std::string::npos != last_slash_idx)
-    {
-        directoryPath = filename.substr(0, last_slash_idx + 1);
-    }
+    const auto directoryPath = filename.parent_path();
 
     // 파일에서 모든 속성(v, vt, vn)을 임시 버퍼에 읽어들입니다.
     std::vector<SRMath::vec3> temp_positions; // v
@@ -69,52 +169,61 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
     std::map<VertexKey, unsigned int> vertexCache;
 
     std::string line; // 한 줄 버퍼
+    std::size_t lineNumber = 0;
     
     // OBJ 파일을 한 줄씩 읽어 파싱
     while (std::getline(file, line))
     {
-        std::stringstream ss(line);
-        std::string prefix;
-        ss >> prefix; // Read the Prefix(v, vt, vn, f)
+        ++lineNumber;
+        std::string_view arguments = line;
+        const std::string_view prefix = take_token(arguments);
+        if (prefix.empty() || prefix.starts_with('#')) continue;
 
         // 위치 벡터(v)
         if (prefix == "v")
         {
-            SRMath::vec3 pos;
-            ss >> pos.x >> pos.y >> pos.z;
-            temp_positions.emplace_back(pos);
+            auto position = parse_vec3(arguments);
+            if (!position) return std::unexpected(malformed_obj(filename, lineNumber, position.error()));
+            temp_positions.emplace_back(*position);
         }
 
         // 텍스처 좌표(vt)
         else if (prefix == "vt")
         {
-            SRMath::vec2 uv;
-            ss >> uv.x >> uv.y;
-            temp_texcoords.emplace_back(uv);
+            auto texcoord = parse_vec2(arguments);
+            if (!texcoord) return std::unexpected(malformed_obj(filename, lineNumber, texcoord.error()));
+            temp_texcoords.emplace_back(*texcoord);
 
         }
 
         // 법선 벡터(vn)
         else if (prefix == "vn")
         {
-            SRMath::vec3 nrm;
-            ss >> nrm.x >> nrm.y >> nrm.z;
-            temp_normals.emplace_back(nrm);
+            auto normal = parse_vec3(arguments);
+            if (!normal) return std::unexpected(malformed_obj(filename, lineNumber, normal.error()));
+            temp_normals.emplace_back(*normal);
             
         }
 
         // 머티리얼 라이브러리 참조(mtllib)
         else if (prefix == "mtllib")
         {
-            std::string mtlFilename;
-            ss >> mtlFilename;
+            const std::string mtlFilename(take_token(arguments));
+            const auto mtlPath = directoryPath / mtlFilename;
+            // OBJ의 MTL 참조는 선택 사항이다. 누락된 라이브러리는 기본 재질로 계속 로드한다.
+            if (!std::filesystem::exists(mtlPath))
+                continue;
+
             // 디렉터리 기준 경로를 사용하여 MTL 파싱
-            materials = TextureLoader::LoadMTLFile(directoryPath + mtlFilename);
+            auto loadedMaterials = TextureLoader::LoadMTLFile(mtlPath);
+            if (!loadedMaterials)
+                return std::unexpected(std::move(loadedMaterials.error()));
+            materials = std::move(*loadedMaterials);
         }
         // 머티리얼 선택(usemtl)
         else if (prefix == "usemtl")
         {
-            ss >> currentMaterialName;
+            currentMaterialName = std::string(take_token(arguments));
         }
         // 그룹 시작(g)
         else if (prefix == "g")
@@ -139,9 +248,11 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
                 auto& newMesh = outModel->m_meshes.back();
 
                 // 현재 머티리얼 이름으로 머티리얼 할당 (없으면 기본값 / 콜론 분리 폴백)
-                if(materials.find(currentMaterialName) != materials.end())
+                if (const auto material = materials.find(currentMaterialName); material != materials.end())
                 {
-                    newMesh.material = materials[currentMaterialName];
+                    // C++17 if-initializer는 조회 iterator의 수명을 분기 안으로
+                    // 제한하고 operator[]의 불필요한 두 번째 해시 탐색을 없앤다.
+                    newMesh.material = material->second;
                 }
                 else
                 {
@@ -167,7 +278,7 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
                     else
                     {
                         // 재질이 정의되지 않은 경우 기본 재질을 사용
-                        newMesh.material = Material();
+                        newMesh.material = Material{};
                     }
                 }
 
@@ -175,132 +286,99 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
                 newMesh.material.name = currentMaterialName;
             }
 
-			auto& meshToAddTo = outModel->m_meshes.back(); // 현재 면이 추가될 타겟 메시
-            // 여기서부터 파싱되는 면(face)들은 이 메시 그룹에 속하게 됨
-            std::string face_data;
-            int vertex_count_in_face = 0;     // 하나의 f 라인에 포함된 정점 수 (3~4)
-            unsigned int face_indices[4];     // 쿼드까지 지원한다고 가정
+			auto& meshToAddTo = outModel->m_meshes.back();
+            std::size_t vertexCount = 0;
+            std::array<unsigned int, 4> faceIndices{}; // 기존 기능과 동일하게 삼각형/쿼드 지원
 
-            // f 라인의 각 토큰(예: "v", "v/vt", "v//vn", "v/vt/vn") 파싱
-            while (ss >> face_data && vertex_count_in_face < 4)
+            while (!arguments.empty() && vertexCount < faceIndices.size())
             {
-                VertexKey key;
-                try {
-                    // 슬래시('/')의 위치를 찾아서 형식을 판별합니다.
-                    size_t first_slash = face_data.find('/');
-                    size_t second_slash = face_data.find('/', first_slash + 1);
+                const auto faceToken = take_token(arguments);
+                if (faceToken.empty()) break;
 
-                    if (first_slash == std::string::npos)
-                    {
-                        // 형식: "v" (예: "123")
-                        key.pos_idx = std::stoi(face_data) - 1;
-                    }
-                    else
-                    {
-                        // v 인덱스는 항상 첫 슬래시 앞에 있습니다.
-                        key.pos_idx = std::stoi(face_data.substr(0, first_slash)) - 1;
-
-                        if (second_slash == std::string::npos)
-                        {
-                            // 형식: "v/vt" (예: "123/456")
-                            key.tex_idx = std::stoi(face_data.substr(first_slash + 1)) - 1;
-                        }
-                        else
-                        {
-                            // 두 번째 슬래시가 첫 슬래시 바로 뒤에 있다면 "v//vn" 형식입니다.
-                            if (second_slash == first_slash + 1)
-                            {
-                                // 형식: "v//vn" (예: "123//789")
-                                key.nrm_idx = std::stoi(face_data.substr(second_slash + 1)) - 1;
-                            }
-                            else
-                            {
-                                // 형식: "v/vt/vn" (예: "123/456/789")
-                                key.tex_idx = std::stoi(face_data.substr(first_slash + 1, second_slash - first_slash - 1)) - 1;
-                                key.nrm_idx = std::stoi(face_data.substr(second_slash + 1)) - 1;
-                            }
-                        }
-                    }
+                auto key = parse_vertex_key(faceToken);
+                if (!key)
+                {
+                    // 로더가 MessageBox를 직접 띄우던 UI 결합을 제거했다. 오류는
+                    // expected로 Framework까지 전달되어 한 곳에서 사용자 메시지가 된다.
+                    return std::unexpected(malformed_obj(filename, lineNumber, key.error()));
                 }
-                catch (const std::exception& e) {
-                    // stoi 변환 중 오류가 발생하면 (예: 파일 손상), 해당 면은 건너뜁니다.
-                    std::wstringstream wss;
-                    wss << L"면(Face) 데이터를 처리하는 중 오류가 발생했습니다.\n\n"
-                        << L"오류 내용: " << e.what() << L"\n"
-                        << L"원본 데이터: " << face_data.c_str(); // std::string을 const char*로 변환
 
-                    // 메시지 박스를 화면에 표시합니다.
-                    MessageBoxW(
-                        nullptr,             // 부모 윈도우 핸들 (없으면 nullptr)
-                        wss.str().c_str(),   // 표시할 메시지
-                        L"데이터 처리 오류", // 메시지 박스 제목
-                        MB_OK | MB_ICONERROR // 확인 버튼과 오류 아이콘 표시
-                    );
-                    continue;
+                if (static_cast<std::size_t>(key->pos_idx) >= temp_positions.size())
+                {
+                    return std::unexpected(malformed_obj(filename, lineNumber, faceToken));
                 }
 
                 // 동일 v/vt/vn 조합이 이미 생성된 적이 있으면 캐시 재사용
-                auto it = vertexCache.find(key);
+                auto it = vertexCache.find(*key);
                 if (it != vertexCache.end())
                 {
-                    face_indices[vertex_count_in_face] = it->second;
+                    faceIndices[vertexCount] = it->second;
                 }
                 else
                 {
-                    // 새로운 정점 조합: 최종 정점 버퍼에 새로 추가
-                    Vertex new_vertex;
-                    if(key.pos_idx >= 0 && key.pos_idx < temp_positions.size()) {
-                        new_vertex.position = temp_positions[key.pos_idx];
+                    Vertex newVertex{};
+                    newVertex.position = temp_positions[static_cast<std::size_t>(key->pos_idx)];
+                    if (key->tex_idx >= 0)
+                    {
+                        if (static_cast<std::size_t>(key->tex_idx) >= temp_texcoords.size())
+                            return std::unexpected(malformed_obj(filename, lineNumber, faceToken));
+                        newVertex.texcoord = temp_texcoords[static_cast<std::size_t>(key->tex_idx)];
                     }
-                    if (key.tex_idx >= 0 && key.tex_idx < temp_texcoords.size()) {
-                        new_vertex.texcoord = temp_texcoords[key.tex_idx];
-                    }
-                    if (key.nrm_idx >= 0 && key.nrm_idx < temp_normals.size()) {
-                        new_vertex.normal = temp_normals[key.nrm_idx];
+                    if (key->nrm_idx >= 0)
+                    {
+                        if (static_cast<std::size_t>(key->nrm_idx) >= temp_normals.size())
+                            return std::unexpected(malformed_obj(filename, lineNumber, faceToken));
+                        newVertex.normal = temp_normals[static_cast<std::size_t>(key->nrm_idx)];
                     }
 
-                    meshToAddTo.vertices.emplace_back(new_vertex);
-                    unsigned int new_index = static_cast<unsigned int>(meshToAddTo.vertices.size() - 1);
-                    vertexCache[key] = new_index;
-                    face_indices[vertex_count_in_face] = new_index;
+                    meshToAddTo.vertices.emplace_back(newVertex);
+                    const auto newIndex = static_cast<unsigned int>(meshToAddTo.vertices.size() - 1);
+                    vertexCache.emplace(*key, newIndex);
+                    faceIndices[vertexCount] = newIndex;
                 }
-                vertex_count_in_face++;
+                ++vertexCount;
             }
 
-            // 4. 삼각 분할(Triangulation)하여 최종 인덱스 버퍼에 추가
-            // CCW 방향
-            for (int i = 0; i < vertex_count_in_face - 2; ++i)
+            // 이 renderer의 고정 face buffer는 삼각형/쿼드 계약이다. 과거에는
+            // 다섯 번째 이후 정점을 조용히 버려 손상된 geometry를 만들었으므로
+            // 지원하지 않는 n-gon을 행 번호가 있는 오류로 명시한다.
+            if (!trim_left(arguments).empty())
             {
-                meshToAddTo.indices.emplace_back(face_indices[0]);
-                meshToAddTo.indices.emplace_back(face_indices[i + 2]);
-                meshToAddTo.indices.emplace_back(face_indices[i + 1]);
+                return std::unexpected(
+                    malformed_obj(filename, lineNumber, "face has more than 4 vertices"));
+            }
+
+            if (vertexCount < 3)
+            {
+                return std::unexpected(malformed_obj(filename, lineNumber, "f"));
+            }
+
+            // 삼각 팬으로 CCW winding을 유지한다.
+            for (std::size_t i = 0; i < vertexCount - 2; ++i)
+            {
+                meshToAddTo.indices.emplace_back(faceIndices[0]);
+                meshToAddTo.indices.emplace_back(faceIndices[i + 2]);
+                meshToAddTo.indices.emplace_back(faceIndices[i + 1]);
             }
         }
     }
     
-	outModel->m_meshes.shrink_to_fit(); // 불필요한 용량 제거
-
     AABB modelAABB; // 모델 전체 AABB (모든 메시 통합용)
 
     // 메시별 후처리(법선 생성, AABB 계산, 옥트리 빌드)를 병렬 처리
     tbb::combinable<AABB> localAABB([] { return AABB(); }); // 스레드 로컬 AABB
 
-    tbb::parallel_for(tbb::blocked_range<int>(0, static_cast<int>(outModel->m_meshes.size())),
-        [&](const tbb::blocked_range<int>& r) {
-        for (int i = r.begin(); i != r.end(); i++)
+    tbb::parallel_for(tbb::blocked_range<std::size_t>(0, outModel->m_meshes.size()),
+        [&](const tbb::blocked_range<std::size_t>& r) {
+        for (std::size_t i = r.begin(); i != r.end(); ++i)
         {
             auto& mesh = outModel->m_meshes[i];
 
-            // OBJ에 vn이 실제로 존재하는지 여부 체크
-            bool hasNormals = true;
-            for (const auto& vertex : mesh.vertices)
-            {
-                if (vertex.normal != SRMath::vec3(0.0f, 0.0f, 0.0f))
-                {
-                    hasNormals = false;
-                    break;
-                }
-            }
+            // OBJ의 모든 정점에 유효한 vn이 있는지 확인한다.
+            // 하나라도 빠졌다면 일관된 조명을 위해 전체 메시 법선을 생성한다.
+            const bool hasNormals = std::ranges::all_of(mesh.vertices, [](const Vertex& vertex) {
+                return SRMath::dot(vertex.normal, vertex.normal) > 1e-12f;
+                });
 
             // If there is no Normal vector in OBJ File
             if (!hasNormals)
@@ -311,19 +389,21 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
                     vertex.normal = SRMath::vec3(0.0f, 0.0f, 0.0f);
                 }
 
-                // 모든 면을 순회하며 면의 법선을 계산하고, 면을 구성하는 정점들에 더해줌
-                for (size_t idx = 0; idx < mesh.indices.size(); idx += 3)
+                // 인덱스는 세 개가 한 삼각형이라는 구조를 chunk view로 직접
+                // 표현한다. C++11식 i += 3과 idx+n 수동 계산을 제거한다.
+                for (const auto triangle : mesh.indices | std::views::chunk(3))
                 {
-                    unsigned int i0 = mesh.indices[idx];
-                    unsigned int i1 = mesh.indices[idx + 1];
-                    unsigned int i2 = mesh.indices[idx + 2];
+                    const unsigned int i0 = triangle[0];
+                    const unsigned int i1 = triangle[1];
+                    const unsigned int i2 = triangle[2];
 
                     const SRMath::vec3& v0 = mesh.vertices[i0].position;
                     const SRMath::vec3& v1 = mesh.vertices[i1].position;
                     const SRMath::vec3& v2 = mesh.vertices[i2].position;
 
-                    // 삼각형 면 법선 (v0->v1) × (v0->v2)
-                    SRMath::vec3 face_normal = SRMath::cross(v1 - v0, v2 - v0);
+                    // 렌더링 인덱스는 화면 컬링을 위해 winding을 반전해 저장된다.
+                    // 자동 법선은 원본 OBJ의 바깥쪽을 향하도록 교차곱 순서를 반대로 사용한다.
+                    SRMath::vec3 face_normal = SRMath::cross(v2 - v0, v1 - v0);
 
                     // 0벡터 방지 후 정규화
                     float length = SRMath::length(face_normal);
@@ -372,6 +452,7 @@ std::unique_ptr<Model> ModelLoader::LoadOBJ(const std::string& filename)
     
     outModel->m_localAABB = modelAABB;
 
-    file.close(); // 파일 닫기
+    // ifstream은 RAII로 닫힌다. C++11식 명시적 close는 조기 반환 경로를
+    // 놓치기 쉬워 제거했다.
     return outModel; // 완성된 모델 반환
 }

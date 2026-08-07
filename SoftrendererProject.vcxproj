@@ -24,6 +24,9 @@
     <ProjectGuid>{b2f0613a-d5cd-4afc-bec5-a6fc91789b29}</ProjectGuid>
     <RootNamespace>SoftrendererProject</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+    <!-- Dependencies are vendored below src/ThirdParty. Disabling the global
+         vcpkg integration avoids an unrelated pwsh app-local fallback during builds. -->
+    <VcpkgEnabled>false</VcpkgEnabled>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
@@ -71,102 +74,130 @@
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
+  <!--
+    Third-party headers are treated as external code. Keep warning level and
+    static-analysis diagnostics strict for project sources, while preventing
+    vendor implementation details (oneTBB, etc.) from polluting our build.
+  -->
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <!-- Project code is /W4-clean; vendor headers are already isolated by
+           /external:W0, so new first-party warnings should fail the build. -->
+      <TreatWarningAsError>true</TreatWarningAsError>
+      <ExternalIncludeDirectories>$(SolutionDir)src\ThirdParty;$(SolutionDir)src\ThirdParty\OneTBB_2023.1.0\include;%(ExternalIncludeDirectories)</ExternalIncludeDirectories>
+      <ExternalWarningLevel>TurnOffAllWarnings</ExternalWarningLevel>
+      <DisableAnalyzeExternal>true</DisableAnalyzeExternal>
+    </ClCompile>
+  </ItemDefinitionGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <RunCodeAnalysis>false</RunCodeAnalysis>
     <EnableClangTidyCodeAnalysis>false</EnableClangTidyCodeAnalysis>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
-      <WarningLevel>Level3</WarningLevel>
+      <WarningLevel>Level4</WarningLevel>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>WIN32;_DEBUG;_WINDOWS;%(PreprocessorDefinitions);NOMINMAX;NOMINMAX</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WIN32;_DEBUG;_WINDOWS;%(PreprocessorDefinitions);NOMINMAX</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <LanguageStandard>stdcpp17</LanguageStandard>
+      <LanguageStandard>stdcpplatest</LanguageStandard>
+      <EnableModules>true</EnableModules>
+      <BuildStlModules>true</BuildStlModules>
+      <AdditionalIncludeDirectories>$(SolutionDir)src;$(SolutionDir);$(SolutionDir)src\ThirdParty;$(SolutionDir)src\ThirdParty\OneTBB_2023.1.0\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalOptions>/utf-8 /external:I"$(SolutionDir)src\ThirdParty" /external:I"$(SolutionDir)src\ThirdParty\OneTBB_2023.1.0\include" /external:W0 /analyze:external- %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalLibraryDirectories>$(SolutionDir)src\ThirdParty\OneTBB_2023.1.0\lib\ia32\vc14;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>tbb12_debug.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PostBuildEvent>
-      <Command>xcopy /E /I /Y "$(ProjectDir)assets" "$(OutDir)assets\"</Command>
+      <Command>xcopy /E /I /Y "$(ProjectDir)assets" "$(OutDir)assets\"
+copy /Y "$(ProjectDir)src\ThirdParty\OneTBB_2023.1.0\redist\ia32\vc14\tbb12_debug.dll" "$(OutDir)."</Command>
       <Message>Get assets in build folder</Message>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <ClCompile>
-      <WarningLevel>Level3</WarningLevel>
+      <WarningLevel>Level4</WarningLevel>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>WIN32;NDEBUG;_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WIN32;NDEBUG;_WINDOWS;NOMINMAX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <LanguageStandard>stdcpp17</LanguageStandard>
-      <OpenMPSupport>true</OpenMPSupport>
+      <LanguageStandard>stdcpplatest</LanguageStandard>
+      <EnableModules>true</EnableModules>
+      <BuildStlModules>true</BuildStlModules>
+      <AdditionalIncludeDirectories>$(SolutionDir)src;$(SolutionDir);$(SolutionDir)src\ThirdParty;$(SolutionDir)src\ThirdParty\OneTBB_2023.1.0\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalOptions>/utf-8 /external:I"$(SolutionDir)src\ThirdParty" /external:I"$(SolutionDir)src\ThirdParty\OneTBB_2023.1.0\include" /external:W0 /analyze:external- %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalLibraryDirectories>$(SolutionDir)src\ThirdParty\OneTBB_2023.1.0\lib\ia32\vc14;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>tbb12.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PostBuildEvent>
-      <Command>xcopy /E /I /Y "$(ProjectDir)assets" "$(OutDir)assets\"</Command>
+      <Command>xcopy /E /I /Y "$(ProjectDir)assets" "$(OutDir)assets\"
+copy /Y "$(ProjectDir)src\ThirdParty\OneTBB_2023.1.0\redist\ia32\vc14\tbb12.dll" "$(OutDir)."</Command>
       <Message>Get assets in build folder</Message>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
-      <WarningLevel>Level3</WarningLevel>
+      <WarningLevel>Level4</WarningLevel>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>_DEBUG;_WINDOWS;%(PreprocessorDefinitions);NOMINMAX;NOMINMAX</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_DEBUG;_WINDOWS;%(PreprocessorDefinitions);NOMINMAX</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <PrecompiledHeader>NotUsing</PrecompiledHeader>
-      <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
-      <LanguageStandard>stdcpp17</LanguageStandard>
-      <AdditionalIncludeDirectories>$(SolutionDir)src;$(SolutionDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <LanguageStandard>stdcpplatest</LanguageStandard>
+      <EnableModules>true</EnableModules>
+      <BuildStlModules>true</BuildStlModules>
+      <AdditionalIncludeDirectories>$(SolutionDir)src;$(SolutionDir);$(SolutionDir)src\ThirdParty;$(SolutionDir)src\ThirdParty\OneTBB_2023.1.0\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalOptions>/utf-8 /external:I"$(SolutionDir)src\ThirdParty" /external:I"$(SolutionDir)src\ThirdParty\OneTBB_2023.1.0\include" /external:W0 /analyze:external- %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalLibraryDirectories>$(SolutionDir)src\ThirdParty\OneTBB_2023.1.0\lib\intel64\vc14;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>tbb12_debug.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <ResourceCompile>
       <AdditionalIncludeDirectories>$(SolutionDir)src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ResourceCompile>
     <PostBuildEvent>
-      <Command>xcopy /E /I /Y "$(ProjectDir)assets" "$(OutDir)assets\"</Command>
+      <Command>xcopy /E /I /Y "$(ProjectDir)assets" "$(OutDir)assets\"
+copy /Y "$(ProjectDir)src\ThirdParty\OneTBB_2023.1.0\redist\intel64\vc14\tbb12_debug.dll" "$(OutDir)."</Command>
       <Message>Get assets in build folder</Message>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
-      <WarningLevel>Level3</WarningLevel>
+      <WarningLevel>Level4</WarningLevel>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>NDEBUG;_WINDOWS;NOMINMAX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <PrecompiledHeader>NotUsing</PrecompiledHeader>
-      <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
-      <LanguageStandard>stdcpp20</LanguageStandard>
+      <LanguageStandard>stdcpplatest</LanguageStandard>
       <AdditionalIncludeDirectories>$(SolutionDir)src;$(SolutionDir);$(SolutionDir)src\ThirdParty;$(SolutionDir)src\ThirdParty\OneTBB_2023.1.0\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <EnableModules>false</EnableModules>
-      <AdditionalOptions>/uft-8</AdditionalOptions>
+      <EnableModules>true</EnableModules>
+      <BuildStlModules>true</BuildStlModules>
+      <AdditionalOptions>/utf-8 /external:I"$(SolutionDir)src\ThirdParty" /external:I"$(SolutionDir)src\ThirdParty\OneTBB_2023.1.0\include" /external:W0 /analyze:external- %(AdditionalOptions)</AdditionalOptions>
       <OpenMPSupport>false</OpenMPSupport>
-      <ExternalWarningLevel>Level1</ExternalWarningLevel>
-      <DisableAnalyzeExternal>true</DisableAnalyzeExternal>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>$(SolutionDir)\src\ThirdParty\OneTBB_2023.1.0\lib\intel64\vc14;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>$(SolutionDir)\src\ThirdParty\OneTBB_2023.1.0\lib\intel64\vc14\tbb12.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>tbb12.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <ResourceCompile>
       <AdditionalIncludeDirectories>$(SolutionDir)src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ResourceCompile>
     <PostBuildEvent>
-      <Command>xcopy /E /I /Y "$(ProjectDir)assets" "$(OutDir)assets"
+      <Command>xcopy /E /I /Y "$(ProjectDir)assets" "$(OutDir)assets\"
 copy /Y "$(ProjectDir)src\ThirdParty\OneTBB_2023.1.0\redist\intel64\vc14\tbb12.dll" "$(OutDir)."</Command>
-    </PostBuildEvent>
-    <PostBuildEvent>
       <Message>Get assets in build folder</Message>
     </PostBuildEvent>
   </ItemDefinitionGroup>
@@ -178,6 +209,7 @@ copy /Y "$(ProjectDir)src\ThirdParty\OneTBB_2023.1.0\redist\intel64\vc14\tbb12.d
     <Image Include="SoftrendererProject.ico" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="src\Modules\sr.math.ixx" />
     <ClCompile Include="SoftrendererProject.cpp" />
     <ClCompile Include="src\Core\Framework.cpp" />
     <ClCompile Include="src\Graphics\Mesh.cpp" />
@@ -188,6 +220,11 @@ copy /Y "$(ProjectDir)src\ThirdParty\OneTBB_2023.1.0\redist\intel64\vc14\tbb12.d
     <ClCompile Include="src\Graphics\TextureLoader.cpp" />
     <ClCompile Include="src\Math\AABB.cpp" />
     <ClCompile Include="src\Math\Frustum.cpp" />
+    <ClCompile Include="src\Math\SIMD.cpp" />
+    <ClCompile Include="src\Math\SIMD_AVX.cpp">
+      <AdditionalOptions>/arch:AVX %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <ClCompile Include="src\Renderer\FXAA.cpp" />
     <ClCompile Include="src\Renderer\Renderer.cpp" />
     <ClCompile Include="src\Scene\Camera.cpp" />
     <ClCompile Include="src\Scene\GameObject.cpp" />
@@ -199,7 +236,7 @@ copy /Y "$(ProjectDir)src\ThirdParty\OneTBB_2023.1.0\redist\intel64\vc14\tbb12.d
     <ClInclude Include="src\Graphics\Material.h" />
     <ClInclude Include="resource.h" />
     <ClInclude Include="src\Core\Framework.h" />
-    <ClInclude Include="src\Core\pch.h" />
+    <ClInclude Include="src\Platform\Win32Headers.h" />
     <ClInclude Include="src\Graphics\Mesh.h" />
     <ClInclude Include="src\Graphics\Model.h" />
     <ClInclude Include="src\Graphics\ModelLoader.h" />
@@ -209,6 +246,7 @@ copy /Y "$(ProjectDir)src\ThirdParty\OneTBB_2023.1.0\redist\intel64\vc14\tbb12.d
     <ClInclude Include="src\Math\AABB.h" />
     <ClInclude Include="src\Math\Frustum.h" />
     <ClInclude Include="src\Math\SRMath.h" />
+    <ClInclude Include="src\Math\SIMD.h" />
     <ClInclude Include="src\Renderer\FXAA.h" />
     <ClInclude Include="src\Renderer\ShaderVertices.h" />
     <ClInclude Include="src\Renderer\Tile.h" />
@@ -218,8 +256,9 @@ copy /Y "$(ProjectDir)src\ThirdParty\OneTBB_2023.1.0\redist\intel64\vc14\tbb12.d
     <ClInclude Include="src\Scene\Camera.h" />
     <ClInclude Include="src\Scene\GameObject.h" />
     <ClInclude Include="src\Utils\DebugUtils.h" />
+    <ClInclude Include="src\Utils\AssetLoadError.h" />
+    <ClInclude Include="src\Utils\FixedCapacityVector.h" />
     <ClInclude Include="src\Utils\PerformanceAnalyzer.h" />
-    <ClInclude Include="src\Utils\stb_image.h" />
     <ClInclude Include="src\Utils\Utils.h" />
     <ClInclude Include="targetver.h" />
   </ItemGroup>

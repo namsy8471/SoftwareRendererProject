@@ -26,5 +26,5 @@ struct Mesh {
 	Mesh(Mesh&&) noexcept;
 	Mesh& operator=(Mesh&&) noexcept;
 
-	const AABB& GetLocalAABB() const { return localAABB; }
+	[[nodiscard]] const AABB& GetLocalAABB() const noexcept { return localAABB; }
 };

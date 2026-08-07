@@ -1,6 +1,8 @@
 ﻿#pragma once
 
 #include <vector>
+#include <span>
+#include <utility>
 #include "Renderer/RenderCommand.h"
 
 class RenderQueue {
@@ -10,12 +12,14 @@ private:
 
 public:
 
-	void Submit(const MeshRenderCommand& cmd) {
-		m_renderCommands.push_back(cmd);
+	// 값으로 받은 명령은 lvalue 호출에는 복사, 임시 객체에는 이동을 적용한다.
+	// 별도 const&/&& 오버로드 없이 동일한 소유권 규칙을 제공한다.
+	void Submit(MeshRenderCommand cmd) {
+		m_renderCommands.push_back(std::move(cmd));
 	}
 
-	void Submit(const DebugPrimitiveCommand& cmd) {
-		m_debugPrimitiveCmds.push_back(cmd);
+	void Submit(DebugPrimitiveCommand cmd) {
+		m_debugPrimitiveCmds.push_back(std::move(cmd));
 	}
 
 	void Clear() {
@@ -23,17 +27,12 @@ public:
 		m_debugPrimitiveCmds.clear();
 	}
 
-	const std::vector<MeshRenderCommand>& GetRenderCommands() const {
+	[[nodiscard]] std::span<const MeshRenderCommand> GetRenderCommands() const noexcept {
 		return m_renderCommands;
 	}
 
-	const std::vector<DebugPrimitiveCommand>& GetDebugCommands() const {
+	[[nodiscard]] std::span<const DebugPrimitiveCommand> GetDebugCommands() const noexcept {
 		return m_debugPrimitiveCmds;
 	}
 
-	void Sort() {
-		// 정렬 로직을 여기에 추가할 수 있습니다.
-		// 예를 들어, m_renderCommands를 특정 기준으로 정렬할 수 있습니다.
-		// 현재는 단순히 삽입 순서대로 유지합니다.
-	}
 };

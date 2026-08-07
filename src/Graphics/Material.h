@@ -1,5 +1,6 @@
 ﻿#pragma once
 #include <memory>
+#include <string>
 #include "Math/SRMath.h"
 
 class Texture;
@@ -7,13 +8,14 @@ class Texture;
 struct Material
 {
 	std::string name;						// 머티리얼 이름
-	SRMath::vec3 ka = { 0.5f, 0.5f, 0.5f};	// 기본 확산 색상
-	SRMath::vec3 kd = { 0.5f, 0.5f, 0.5f};	// 기본 난반사 색상
-	SRMath::vec3 ks = { 0.5f, 0.5f, 0.5f};	// 기본 정반사 색상
-	float Ns = 32.0f;						// 기본 반사율
-	float d = 1.0f;							// 투명도 (기본값: 1.0, 완전 불투명)
+	SRMath::vec3 ambient = { 0.5f, 0.5f, 0.5f };
+	SRMath::vec3 diffuse = { 0.5f, 0.5f, 0.5f };
+	SRMath::vec3 specular = { 0.5f, 0.5f, 0.5f };
+	float shininess = 32.0f;
+	float opacity = 1.0f;
 
-	std::shared_ptr<Texture> 
-		diffuseTexture = nullptr;			// 텍스쳐
-	int illum = 2;							// 조명 모델 (기본값: 2, Phong 조명 모델)
+	// 여러 mesh material이 같은 이미지 수명을 공유하므로 shared_ptr가 맞다.
+	// 빈 상태는 nullptr 리터럴보다 값 초기화로 표현한다.
+	std::shared_ptr<Texture> diffuseTexture{};
+	int illuminationModel = 2; // MTL illum 2: Phong 반사 모델
 };
