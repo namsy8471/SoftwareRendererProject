@@ -1,2 +1,6 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# 대용량 Wavefront 모델은 자동 줄바꿈 변환과 거대한 텍스트 diff를 피하고
+# 원본 바이트를 그대로 보존한다. 런타임 로더는 파일 내용을 텍스트로 파싱한다.
+/assets/**/*.obj binary
