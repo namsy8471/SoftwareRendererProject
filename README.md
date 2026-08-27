@@ -140,65 +140,115 @@ This project is a CPU-based software renderer developed to understand and implem
 * **OS 인터페이스 / OSインターフェース / OS Interface**: `WinAPI`
 * **라이브러리 / ライブラリ / Libraries**: `stb_image.h`, `oneTBB 2023.1.0`
 
-## Build
+## **빌드 (ビルド / Build)**
 
-Visual Studio 2026에서 솔루션을 열고 `Debug|x64`, `Release|x64`, `Debug|x86`, 또는 `Release|x86` 구성을 빌드합니다. 모든 구성은 `/std:c++latest`와 포함된 oneTBB 바이너리를 사용하며, 빌드 후 해당 아키텍처의 `tbb12.dll`을 출력 폴더로 복사합니다.
+Visual Studio 2026에서 솔루션을 열고 `Debug|x64`, `Release|x64`, `Debug|x86`, 또는 `Release|x86` 구성을 빌드합니다. 모든 구성은 `/std:c++latest`와 저장소에 포함된 oneTBB 바이너리를 사용하며, 빌드 후 해당 아키텍처의 `tbb12.dll`을 출력 폴더로 복사합니다.  
+Visual Studio 2026でソリューションを開き、`Debug|x64`、`Release|x64`、`Debug|x86`、または`Release|x86`構成をビルドします。すべての構成で`/std:c++latest`とリポジトリに同梱されたoneTBBバイナリを使用し、ビルド後に対象アーキテクチャの`tbb12.dll`を出力フォルダーへコピーします。  
+Open the solution in Visual Studio 2026 and build the `Debug|x64`, `Release|x64`, `Debug|x86`, or `Release|x86` configuration. Every configuration uses `/std:c++latest` and the vendored oneTBB binaries, then copies the architecture-appropriate `tbb12.dll` to the output directory after the build.
 
-## C++26 현대화 설계
+## **C++26 현대화 설계 (C++26モダナイゼーション設計 / C++26 Modernization Design)**
 
-이 프로젝트에서 “C++26”은 단순히 `/std:c++latest`를 켠다는 뜻이 아닙니다. MSVC v145가 현재 구현한 최신 표준 기능을 실제 API 계약에 사용하고, 아직 구현되지 않은 C++26 기능은 feature-test macro로 감지한 뒤 동일 계약의 프로젝트 fallback을 사용합니다. 따라서 사용 중인 컴파일러가 기능을 추가하면 호출부를 바꾸지 않고 표준 구현으로 전환됩니다.
+이 프로젝트에서 “C++26”은 단순히 `/std:c++latest`를 켠다는 뜻이 아닙니다. MSVC v145가 현재 구현한 최신 표준 기능을 실제 API 계약에 사용하고, 아직 구현되지 않은 C++26 기능은 feature-test macro로 감지한 뒤 동일 계약의 프로젝트 fallback을 사용합니다. 따라서 사용 중인 컴파일러가 기능을 추가하면 호출부를 바꾸지 않고 표준 구현으로 전환됩니다.  
+このプロジェクトにおける「C++26」は、単に`/std:c++latest`を有効にすることを意味しません。MSVC v145で現在実装されている最新の標準機能を実際のAPI契約に適用し、未実装のC++26機能はfeature-test macroで検出した上で、同じ契約を持つプロジェクト内のfallbackを使用します。そのため、使用中のコンパイラに標準機能が追加されれば、呼び出し側を変更せずに標準実装へ切り替えられます。  
+In this project, “C++26” means more than simply enabling `/std:c++latest`. Features currently implemented by MSVC v145 are used in real API contracts, while unavailable C++26 facilities are detected with feature-test macros and replaced by project fallbacks that provide the same contract. As compiler support improves, the implementation can therefore switch to the standard facility without changing call sites.
 
-| 이전 방식 | 현재 방식 | 변경 이유 |
+| 이전 방식<br>従来の方式<br>Previous approach | 현재 방식<br>現在の方式<br>Current approach | 변경 이유<br>変更理由<br>Reason for the change |
 | --- | --- | --- |
-| C++11 raw pointer + 별도 길이 | `std::span` 및 고정 extent span | 버퍼 길이를 타입에 포함해 범위 오류와 소유권 혼동 방지 |
-| 일반 C 배열과 `#define` 상수 | `std::array`, `inline constexpr`, scoped enum | 크기와 타입을 보존하고 매크로 이름 오염 제거; `__m128` ABI overlay만 주석과 함께 예외 유지 |
-| `stringstream`, `stoi` 예외 파싱 | `std::string_view`, `std::from_chars` | 임시 문자열·locale·예외 비용 없이 입력 오류 위치 반환 |
-| 로더 내부 `MessageBox`/예외 | `std::expected<T, AssetLoadError>` | 파일 파싱과 WinAPI UI를 분리해 테스트 가능한 로더 구성 |
-| 수동 템플릿 `static_assert` | named module의 C++20 `concept` | 잘못된 타입을 템플릿 본문이 아닌 호출 지점에서 진단 |
-| 헤더 반복 전처리 | `sr.math.ixx`와 `import std;` | 안정된 수학 계약을 모듈 인터페이스로 시험 적용하고 매크로 누출 감소 |
-| 고정 크기 클리핑용 `std::vector` | C++26 `std::inplace_vector` 호환 `FixedCapacityVector` | 작은 핫 패스에서 TLS 힙 할당 제거; MSVC 지원 시 표준 타입 자동 사용 |
-| `memset`, `ZeroMemory` | 값 초기화와 ranges 알고리즘 | byte 단위 조작을 요소 타입을 이해하는 연산으로 교체 |
-| float로 누적한 프레임 시간 | `std::chrono::steady_clock::duration` | 시계 단위를 타입으로 유지해 정밀도와 단위 안전성 확보 |
-| raw GDI 핸들 3개 수동 정리 | 이동 전용 `Renderer::GdiBackBuffer` | 선택 객체 복원 → bitmap 삭제 → DC 삭제 순서를 RAII로 보장 |
-| 하나의 SSE 경로 | CPUID/XCR0 런타임 디스패치 + SSE/AVX 별도 번역 단위 | 구형 CPU 호환성을 유지하며 두 `vec4` 배치만 256-bit AVX 사용 |
-| packed texture 정수를 `float`로 변환 | `Texture::Sample`이 `SRMath::Color` 반환 | 픽셀 포맷·엔디언 오해로 텍스처가 흰색이 되던 오류 제거 |
-| header-only FXAA와 겹치는 TBB 쓰기 | `span` API + 분리된 luminance/filter pass | 같은 값을 써도 data race인 동시 기록 제거, vendor 헤더를 `.cpp`로 격리 |
-| 효과 없는 TLS 복사본 `reserve` | 실제 TBB thread-local 참조를 최초 사용 시 reserve | 의도만 있고 효력이 없던 사전 할당 수정 |
-| 광범위한 `pch.h` 전이 include | 최소 `Platform/Win32Headers.h` + 직접 include | 자체 코드 의존성을 명시하고 WinAPI 매크로 노출 범위 축소 |
+| C++11 raw pointer + 별도 길이<br>C++11のraw pointer + 個別の長さ<br>C++11 raw pointer + separate length | `std::span` 및 고정 extent span<br>`std::span`および固定extentのspan<br>`std::span` and fixed-extent spans | 버퍼 길이를 타입에 포함해 범위 오류와 소유권 혼동 방지<br>バッファ長を型に含め、範囲エラーと所有権の混同を防止<br>Encode buffer length in the type to prevent bounds errors and ownership ambiguity |
+| 일반 C 배열과 `#define` 상수<br>通常のC配列と`#define`定数<br>Plain C arrays and `#define` constants | `std::array`, `inline constexpr`, scoped enum | 크기와 타입을 보존하고 매크로 이름 오염 제거; `__m128` ABI overlay만 주석과 함께 예외 유지<br>サイズと型を保持し、マクロによる名前汚染を排除。`__m128`のABI overlayのみ、理由をコメントした上で例外として維持<br>Preserve size and type information and remove macro name pollution; retain only the documented `__m128` ABI overlay as an exception |
+| `stringstream`, `stoi` 예외 파싱<br>`stringstream`、`stoi`による例外ベースの解析<br>Exception-based parsing with `stringstream` and `stoi` | `std::string_view`, `std::from_chars` | 임시 문자열·locale·예외 비용 없이 입력 오류 위치 반환<br>一時文字列、locale、例外のコストを避けながら入力エラー位置を返却<br>Report input error locations without temporary strings, locale processing, or exception overhead |
+| 로더 내부 `MessageBox`/예외<br>ローダー内部の`MessageBox`／例外<br>`MessageBox` and exceptions inside loaders | `std::expected<T, AssetLoadError>` | 파일 파싱과 WinAPI UI를 분리해 테스트 가능한 로더 구성<br>ファイル解析とWinAPI UIを分離し、テスト可能なローダーを構成<br>Separate file parsing from WinAPI UI to make loaders testable |
+| 수동 템플릿 `static_assert`<br>テンプレート内の手動`static_assert`<br>Manual template `static_assert` | named module의 C++20 `concept`<br>named module内のC++20 `concept`<br>C++20 `concept` in a named module | 잘못된 타입을 템플릿 본문이 아닌 호출 지점에서 진단<br>不正な型をテンプレート本体ではなく呼び出し箇所で診断<br>Diagnose invalid types at the call site instead of inside the template body |
+| 헤더 반복 전처리<br>ヘッダーの繰り返し前処理<br>Repeated header preprocessing | `sr.math.ixx`와 `import std;`<br>`sr.math.ixx`と`import std;`<br>`sr.math.ixx` and `import std;` | 안정된 수학 계약을 모듈 인터페이스로 시험 적용하고 매크로 누출 감소<br>安定した数学契約をモジュールインターフェースとして試験導入し、マクロ漏出を削減<br>Pilot a stable math contract through a module interface and reduce macro leakage |
+| 고정 크기 클리핑용 `std::vector`<br>固定容量クリッピング用の`std::vector`<br>`std::vector` for fixed-capacity clipping | C++26 `std::inplace_vector` 호환 `FixedCapacityVector`<br>C++26 `std::inplace_vector`互換の`FixedCapacityVector`<br>`FixedCapacityVector`, compatible with C++26 `std::inplace_vector` | 작은 hot path에서 TLS 힙 할당 제거; MSVC 지원 시 표준 타입 자동 사용<br>小規模なhot pathでTLSのヒープ確保を排除し、MSVC対応時は標準型を自動使用<br>Remove TLS heap allocations from a small hot path and automatically use the standard type when MSVC supports it |
+| `memset`, `ZeroMemory` | 값 초기화와 ranges 알고리즘<br>値初期化とrangesアルゴリズム<br>Value initialization and ranges algorithms | byte 단위 조작을 요소 타입을 이해하는 연산으로 교체<br>byte単位の操作を要素型を理解する処理へ置換<br>Replace byte-wise manipulation with operations that understand the element type |
+| float로 누적한 프레임 시간<br>floatで累積したフレーム時間<br>Frame time accumulated as float | `std::chrono::steady_clock::duration` | 시계 단위를 타입으로 유지해 정밀도와 단위 안전성 확보<br>時計の単位を型として保持し、精度と単位安全性を確保<br>Retain clock units in the type for precision and unit safety |
+| raw GDI 핸들 3개 수동 정리<br>3つのraw GDI handleを手動解放<br>Manual cleanup of three raw GDI handles | 이동 전용 `Renderer::GdiBackBuffer`<br>move-onlyな`Renderer::GdiBackBuffer`<br>Move-only `Renderer::GdiBackBuffer` | 선택 객체 복원 → bitmap 삭제 → DC 삭제 순서를 RAII로 보장<br>選択オブジェクトの復元 → bitmap削除 → DC削除の順序をRAIIで保証<br>Guarantee restore-selected-object → delete-bitmap → delete-DC ordering through RAII |
+| 하나의 SSE 경로<br>単一のSSE経路<br>Single SSE path | CPUID/XCR0 런타임 디스패치 + SSE/AVX 별도 번역 단위<br>CPUID/XCR0 runtime dispatch + SSE/AVX個別translation unit<br>CPUID/XCR0 runtime dispatch + separate SSE/AVX translation units | 구형 CPU 호환성을 유지하며 두 `vec4` 배치만 256-bit AVX 사용<br>旧CPUとの互換性を維持しつつ、2つの`vec4`を処理するbatchにのみ256-bit AVXを使用<br>Preserve compatibility with older CPUs while using 256-bit AVX only for batches of two `vec4` values |
+| packed texture 정수를 `float`로 변환<br>packed texture整数を`float`へ変換<br>Convert a packed texture integer to `float` | `Texture::Sample`이 `SRMath::Color` 반환<br>`Texture::Sample`が`SRMath::Color`を返却<br>`Texture::Sample` returns `SRMath::Color` | 픽셀 포맷·엔디언 오해로 텍스처가 흰색이 되던 오류 제거<br>pixel formatとendiannessの誤解によりテクスチャが白くなる不具合を修正<br>Fix white textures caused by incorrect assumptions about pixel format and endianness |
+| header-only FXAA와 겹치는 TBB 쓰기<br>header-only FXAAと重複するTBB書き込み<br>Header-only FXAA with overlapping TBB writes | `span` API + 분리된 luminance/filter pass<br>`span` API + 分離したluminance/filter pass<br>`span` API + separate luminance/filter passes | 같은 값을 써도 data race인 동시 기록 제거, vendor 헤더를 `.cpp`로 격리<br>同じ値でもdata raceとなる並行書き込みを排除し、vendor headerを`.cpp`へ隔離<br>Remove concurrent writes that constitute a data race even when values match, and isolate vendor headers in `.cpp` files |
+| 효과 없는 TLS 복사본 `reserve`<br>効果のないTLSコピーへの`reserve`<br>Ineffective `reserve` on a TLS copy | 실제 TBB thread-local 참조를 최초 사용 시 reserve<br>実際のTBB thread-local参照を初回使用時にreserve<br>Reserve the actual TBB thread-local reference on first use | 의도만 있고 효력이 없던 사전 할당 수정<br>意図だけで効果がなかった事前確保を修正<br>Fix preallocation that expressed intent but had no effect |
+| 광범위한 `pch.h` 전이 include<br>広範な`pch.h`の推移的include<br>Broad transitive includes from `pch.h` | 최소 `Platform/Win32Headers.h` + 직접 include<br>最小限の`Platform/Win32Headers.h` + 直接include<br>Minimal `Platform/Win32Headers.h` + direct includes | 자체 코드 의존성을 명시하고 WinAPI 매크로 노출 범위 축소<br>自作コードの依存関係を明示し、WinAPIマクロの露出範囲を縮小<br>Make first-party dependencies explicit and reduce WinAPI macro exposure |
 
-### 주요 현대화 함수
+### **주요 현대화 함수 (主なモダナイゼーション関数 / Key Modernization Functions)**
 
-- `ModelLoader::LoadOBJ`: OBJ 경로를 받아 모델 또는 행 번호가 포함된 `AssetLoadError`를 반환합니다. `from_chars` 기반 face 파서는 `v`, `v/vt`, `v//vn`, `v/vt/vn`을 예외 없이 해석합니다.
-- `TextureLoader::LoadMTLFile`: MTL 명령과 인수를 `string_view`로 나누고 숫자 변환 실패를 `expected`로 전달합니다.
-- `AABB::Transform`: 여덟 코너를 두 개씩 묶어 `SIMD::transform_pair`에 전달합니다.
-- `SIMD::avx_available`: CPUID의 AVX/OSXSAVE와 XCR0의 XMM/YMM 보존 상태를 함께 확인합니다.
-- `SIMD::transform_pair`: 첫 호출에서 SSE 또는 AVX 함수 포인터를 한 번 선택하고 이후 같은 구현을 재사용합니다.
-- `Renderer::GdiBackBuffer::create/reset`: 화면 DC, 메모리 DC, DIB bitmap 및 이전 선택 객체의 수명을 한 객체가 관리합니다.
-- `Camera::Update`: `std::span<const bool, 256>`으로 키 입력 크기를 컴파일 시 계약화합니다.
-- `Texture::Sample`: stb_image의 RGBA byte 배열에서 RGB 채널을 정규화해 typed color로 반환합니다.
-- `sr::fxaa::Apply`: 입력/출력 `span`의 크기를 검증한 뒤 luminance 작성과 필터링을 별도 TBB pass로 실행합니다.
-- `SRMath::inverse`: Gauss-Jordan 소거가 실패하면 임의 행렬이나 예외 대신 `expected<mat4, MatrixError>`를 반환합니다.
+- `ModelLoader::LoadOBJ`: OBJ 경로를 받아 모델 또는 행 번호가 포함된 `AssetLoadError`를 반환합니다. `from_chars` 기반 face 파서는 `v`, `v/vt`, `v//vn`, `v/vt/vn`을 예외 없이 해석합니다.  
+  `ModelLoader::LoadOBJ`：OBJのpathを受け取り、モデルまたは行番号を含む`AssetLoadError`を返します。`from_chars`ベースのface parserは`v`、`v/vt`、`v//vn`、`v/vt/vn`を例外なしで解析します。  
+  `ModelLoader::LoadOBJ`: Accepts an OBJ path and returns either a model or an `AssetLoadError` containing the line number. Its `from_chars`-based face parser handles `v`, `v/vt`, `v//vn`, and `v/vt/vn` without exceptions.
+- `TextureLoader::LoadMTLFile`: MTL 명령과 인수를 `string_view`로 나누고 숫자 변환 실패를 `expected`로 전달합니다.  
+  `TextureLoader::LoadMTLFile`：MTLのcommandとargumentを`string_view`で分割し、数値変換の失敗を`expected`で伝達します。  
+  `TextureLoader::LoadMTLFile`: Splits MTL commands and arguments with `string_view` and propagates numeric conversion failures through `expected`.
+- `AABB::Transform`: 여덟 코너를 두 개씩 묶어 `SIMD::transform_pair`에 전달합니다.  
+  `AABB::Transform`：8つのcornerを2つずつまとめ、`SIMD::transform_pair`へ渡します。  
+  `AABB::Transform`: Groups the eight corners into pairs and passes them to `SIMD::transform_pair`.
+- `SIMD::avx_available`: CPUID의 AVX/OSXSAVE와 XCR0의 XMM/YMM 보존 상태를 함께 확인합니다.  
+  `SIMD::avx_available`：CPUIDのAVX/OSXSAVE bitと、XCR0におけるXMM/YMM state保存の有効状態を合わせて確認します。  
+  `SIMD::avx_available`: Checks both CPUID AVX/OSXSAVE support and XCR0 XMM/YMM state preservation.
+- `SIMD::transform_pair`: 첫 호출에서 SSE 또는 AVX 함수 포인터를 한 번 선택하고 이후 같은 구현을 재사용합니다.  
+  `SIMD::transform_pair`：初回呼び出し時にSSEまたはAVXのfunction pointerを一度だけ選択し、以降は同じ実装を再利用します。  
+  `SIMD::transform_pair`: Selects an SSE or AVX function pointer once on the first call and reuses that implementation thereafter.
+- `Renderer::GdiBackBuffer::create/reset`: 화면 DC, 메모리 DC, DIB bitmap 및 이전 선택 객체의 수명을 한 객체가 관리합니다.  
+  `Renderer::GdiBackBuffer::create/reset`：screen DC、memory DC、DIB bitmap、および以前選択されていたobjectの寿命を1つのobjectで管理します。  
+  `Renderer::GdiBackBuffer::create/reset`: Manages the lifetimes of the screen DC, memory DC, DIB bitmap, and previously selected object as one resource-owning object.
+- `Camera::Update`: `std::span<const bool, 256>`으로 키 입력 크기를 컴파일 시 계약화합니다.  
+  `Camera::Update`：`std::span<const bool, 256>`によりkey inputのサイズをcompile-time contractとして表現します。  
+  `Camera::Update`: Expresses the key-input size as a compile-time contract with `std::span<const bool, 256>`.
+- `Texture::Sample`: stb_image의 RGBA byte 배열에서 RGB 채널을 정규화해 typed color로 반환합니다.  
+  `Texture::Sample`：stb_imageのRGBA byte配列からRGB channelを正規化し、型付けされたcolorとして返します。  
+  `Texture::Sample`: Normalizes RGB channels from stb_image's RGBA byte array and returns a typed color.
+- `sr::fxaa::Apply`: 입력/출력 `span`의 크기를 검증한 뒤 luminance 작성과 필터링을 별도 TBB pass로 실행합니다.  
+  `sr::fxaa::Apply`：入出力`span`のサイズを検証した後、luminance生成とfilter処理を別々のTBB passで実行します。  
+  `sr::fxaa::Apply`: Validates input and output `span` sizes, then runs luminance generation and filtering as separate TBB passes.
+- `SRMath::inverse`: Gauss-Jordan 소거가 실패하면 임의 행렬이나 예외 대신 `expected<mat4, MatrixError>`를 반환합니다.  
+  `SRMath::inverse`：Gauss-Jordan eliminationに失敗した場合、任意の行列や例外ではなく`expected<mat4, MatrixError>`を返します。  
+  `SRMath::inverse`: Returns `expected<mat4, MatrixError>` instead of an arbitrary matrix or exception when Gauss–Jordan elimination fails.
 
-### C++11/14/17 코드에서 올린 이유
+### **C++11/14/17 코드에서 올린 이유 (C++11/14/17コードから更新した理由 / Why the Code Was Upgraded from C++11/14/17)**
 
-C++11의 RAII와 스마트 포인터는 계속 좋은 기반이지만, raw 포인터가 비소유 버퍼인지 단일 객체인지 표현하지 못하고 파싱 실패를 예외 또는 별도 bool로 나눠 처리해야 했습니다. C++17의 `filesystem`, `from_chars`, if-initializer와 C++20의 `span`, ranges, concepts는 이 모호함을 타입과 반환값에 기록합니다. C++23의 `expected`, `to_underlying` 및 C++26의 고정 용량 컨테이너 방향까지 적용해, 코드의 주석뿐 아니라 컴파일러가 계약을 검사하도록 바꿨습니다.
+C++11의 RAII와 스마트 포인터는 계속 좋은 기반이지만, raw 포인터가 비소유 버퍼인지 단일 객체인지 표현하지 못하고 파싱 실패를 예외 또는 별도 bool로 나눠 처리해야 했습니다. C++17의 `filesystem`, `from_chars`, if-initializer와 C++20의 `span`, ranges, concepts는 이 모호함을 타입과 반환값에 기록합니다. C++23의 `expected`, `to_underlying` 및 C++26의 고정 용량 컨테이너 방향까지 적용해, 코드의 주석뿐 아니라 컴파일러가 계약을 검사하도록 바꿨습니다.  
+C++11のRAIIとsmart pointerは現在も優れた基盤ですが、raw pointerだけでは非所有bufferなのか単一objectなのかを表現できず、解析失敗も例外または別のboolに分けて処理する必要がありました。C++17の`filesystem`、`from_chars`、if-initializerと、C++20の`span`、ranges、conceptsは、この曖昧さを型と戻り値に記録します。さらにC++23の`expected`、`to_underlying`とC++26の固定容量containerの方向性まで適用し、コメントだけでなくコンパイラが契約を検査できるようにしました。  
+C++11 RAII and smart pointers remain a strong foundation, but raw pointers cannot state whether they refer to a non-owning buffer or a single object, and parsing failures must be split between exceptions and separate Boolean results. C++17 `filesystem`, `from_chars`, and if-initializers together with C++20 `span`, ranges, and concepts encode that ambiguity in types and return values. C++23 `expected` and `to_underlying`, plus the C++26 direction for fixed-capacity containers, further allow the compiler—not only comments—to verify API contracts.
 
-단, 최신 기능이 항상 더 빠르다는 이유로 교체한 것은 아닙니다. 단일 `vec4`는 128-bit SSE가 데이터 폭에 정확히 맞으므로 그대로 유지하고, 두 `vec4`를 동시에 변환하는 배치에만 256-bit AVX를 사용합니다. oneTBB와 stb_image도 자체 코드로 재작성하지 않고 외부 헤더/구현 경계에 격리했습니다.
+단, 최신 기능이 항상 더 빠르다는 이유로 교체한 것은 아닙니다. 단일 `vec4`는 128-bit SSE가 데이터 폭에 정확히 맞으므로 그대로 유지하고, 두 `vec4`를 동시에 변환하는 batch에만 256-bit AVX를 사용합니다. oneTBB와 stb_image도 자체 코드로 재작성하지 않고 외부 헤더/구현 경계에 격리했습니다.  
+ただし、最新機能なら常に高速であるという理由で置き換えたわけではありません。単一の`vec4`には128-bit SSEがデータ幅と正確に一致するため維持し、2つの`vec4`を同時に変換するbatchにのみ256-bit AVXを使用します。oneTBBとstb_imageも独自実装へ書き換えず、外部header／実装の境界に隔離しました。  
+The code was not replaced merely on the assumption that newer features are always faster. A single `vec4` exactly matches the width of 128-bit SSE, so that path remains; 256-bit AVX is used only for batches that transform two `vec4` values together. oneTBB and stb_image were also retained rather than rewritten and isolated behind external header and implementation boundaries.
 
-### 이전 현대화 작업 회고
+### **이전 현대화 작업 회고 (以前のモダナイゼーション作業の振り返り / Retrospective on the Earlier Modernization)**
 
-초기 전환은 `/std:c++latest`, `std::expected`, `std::span`, `sr.math.ixx`를 추가했지만 다음 부분이 부족했습니다.
+초기 전환은 `/std:c++latest`, `std::expected`, `std::span`, `sr.math.ixx`를 추가했지만 다음 부분이 부족했습니다.  
+初期移行では`/std:c++latest`、`std::expected`、`std::span`、`sr.math.ixx`を追加しましたが、次の点が不足していました。  
+The initial migration added `/std:c++latest`, `std::expected`, `std::span`, and `sr.math.ixx`, but the following gaps remained.
 
-- `sr.math`가 빌드만 되고 실제 호출부에서 import되지 않았습니다. 현재 `AABB.cpp`가 모듈을 import하고 `VectorLike` concept로 경계 검사를 제약합니다.
-- AVX 구현 파일 이름이 `SIMD_AVX2.cpp`였지만 실제 명령과 프로젝트 옵션은 AVX 부동소수점 연산이었습니다. 파일명을 `SIMD_AVX.cpp`로 맞추고 AVX2가 필요하지 않은 이유를 주석화했습니다.
-- `stringstream`, `stoi`, 로더 내부 `MessageBox`가 남아 있었습니다. 파서는 `from_chars/expected`로 바꾸고 UI 표시는 Framework 한 곳으로 이동했습니다.
-- GDI 핸들은 정상 경로에서만 수동 해제됐습니다. 현재는 중간 실패와 resize에서도 RAII가 복원·해제를 수행합니다.
-- 클리핑 버퍼가 작은 고정 데이터임에도 `vector`를 사용했습니다. `inplace_vector` feature test와 fallback을 추가했습니다.
-- 값 반환형의 `const`, C 배열, `memset`, 매크로 상수가 남아 있었습니다. 값 의미론, `array`, ranges, `constexpr`로 정리했습니다.
-- 텍스처의 packed pixel을 `float` 하나로 변환해 RGB 전체가 과포화될 수 있었습니다. `Texture::Sample`이 채널별 `Color`를 반환하도록 수정했습니다.
-- FXAA의 이웃 luminance 준비가 TBB 작업 사이에서 같은 행을 중복 기록했습니다. 계산 pass를 분리해 읽기 전용 경계를 만들었습니다.
-- `GameObject`의 TLS reserve가 참조가 아닌 복사본에 적용됐습니다. 실제 `local()` 벡터를 최초 사용 시 reserve하도록 옮겼습니다.
-- `pch.h`가 PCH 비활성 상태에서도 표준 헤더를 전이 포함했습니다. 최소 Win32 경계 헤더로 교체하고 직접 의존성을 복구했습니다.
+- `sr.math`가 빌드만 되고 실제 호출부에서 import되지 않았습니다. 현재 `AABB.cpp`가 모듈을 import하고 `VectorLike` concept로 경계 검사를 제약합니다.  
+  `sr.math`はビルドされるだけで、実際の呼び出し側からimportされていませんでした。現在は`AABB.cpp`がmoduleをimportし、`VectorLike` conceptで境界の型契約を制約しています。  
+  `sr.math` was built but never imported by a real call site. `AABB.cpp` now imports the module and constrains its boundary checks with the `VectorLike` concept.
+- AVX 구현 파일 이름이 `SIMD_AVX2.cpp`였지만 실제 명령과 프로젝트 옵션은 AVX 부동소수점 연산이었습니다. 파일명을 `SIMD_AVX.cpp`로 맞추고 AVX2가 필요하지 않은 이유를 주석화했습니다.  
+  AVX実装ファイルは`SIMD_AVX2.cpp`という名前でしたが、実際の命令とproject optionはAVXの浮動小数点演算でした。ファイル名を`SIMD_AVX.cpp`に修正し、AVX2が不要な理由をコメントに記載しました。  
+  The AVX implementation was named `SIMD_AVX2.cpp`, although its instructions and project option used AVX floating-point operations. It was renamed to `SIMD_AVX.cpp`, and comments now explain why AVX2 is unnecessary.
+- `stringstream`, `stoi`, 로더 내부 `MessageBox`가 남아 있었습니다. 파서는 `from_chars/expected`로 바꾸고 UI 표시는 Framework 한 곳으로 이동했습니다.  
+  `stringstream`、`stoi`、ローダー内部の`MessageBox`が残っていました。parserを`from_chars/expected`へ変更し、UI表示をFrameworkの一箇所へ移動しました。  
+  `stringstream`, `stoi`, and loader-owned `MessageBox` calls remained. Parsing now uses `from_chars/expected`, and UI presentation is centralized in the Framework.
+- GDI 핸들은 정상 경로에서만 수동 해제됐습니다. 현재는 중간 실패와 resize에서도 RAII가 복원·해제를 수행합니다.  
+  GDI handleは正常経路でのみ手動解放されていました。現在は途中の失敗やresize時にもRAIIが復元と解放を行います。  
+  GDI handles were manually released only on the successful path. RAII now restores and releases them during intermediate failures and resize operations as well.
+- 클리핑 버퍼가 작은 고정 데이터임에도 `vector`를 사용했습니다. `inplace_vector` feature test와 fallback을 추가했습니다.  
+  clipping bufferは小さな固定容量データであるにもかかわらず`vector`を使用していました。`inplace_vector`のfeature testとfallbackを追加しました。  
+  The clipping buffer used `vector` despite having a small fixed capacity. An `inplace_vector` feature test and fallback were added.
+- 값 반환형의 `const`, C 배열, `memset`, 매크로 상수가 남아 있었습니다. 값 의미론, `array`, ranges, `constexpr`로 정리했습니다.  
+  値戻り型の`const`、C配列、`memset`、マクロ定数が残っていました。値semantics、`array`、ranges、`constexpr`を用いる形に整理しました。  
+  Top-level `const` on value returns, C arrays, `memset`, and macro constants remained. They were replaced with value semantics, `array`, ranges, and `constexpr`.
+- 텍스처의 packed pixel을 `float` 하나로 변환해 RGB 전체가 과포화될 수 있었습니다. `Texture::Sample`이 채널별 `Color`를 반환하도록 수정했습니다.  
+  textureのpacked pixelを単一の`float`へ変換していたため、RGB全体が過飽和になる可能性がありました。`Texture::Sample`がchannel別の`Color`を返すよう修正しました。  
+  Converting a packed texture pixel to a single `float` could oversaturate every RGB channel. `Texture::Sample` now returns a channel-aware `Color`.
+- FXAA의 이웃 luminance 준비가 TBB 작업 사이에서 같은 행을 중복 기록했습니다. 계산 pass를 분리해 읽기 전용 경계를 만들었습니다.  
+  FXAAの隣接luminance準備では、TBB task間で同じ行を重複して書き込んでいました。計算passを分離し、読み取り専用の境界を作りました。  
+  FXAA neighbor-luminance preparation wrote the same rows from overlapping TBB tasks. The calculation was split into passes to establish a read-only boundary.
+- `GameObject`의 TLS reserve가 참조가 아닌 복사본에 적용됐습니다. 실제 `local()` 벡터를 최초 사용 시 reserve하도록 옮겼습니다.  
+  `GameObject`のTLS reserveは参照ではなくコピーに適用されていました。実際の`local()` vectorを初回使用時にreserveするよう移動しました。  
+  `GameObject` reserved a copy rather than the TLS reference. Reservation now occurs on the actual `local()` vector on first use.
+- `pch.h`가 PCH 비활성 상태에서도 표준 헤더를 전이 포함했습니다. 최소 Win32 경계 헤더로 교체하고 직접 의존성을 복구했습니다.  
+  `pch.h`はPCHが無効な状態でも標準headerを推移的にincludeしていました。最小限のWin32境界headerへ置き換え、直接依存関係を復元しました。  
+  `pch.h` transitively included standard headers even while PCH was disabled. It was replaced with a minimal Win32 boundary header, and direct dependencies were restored.
 
 ---
 
