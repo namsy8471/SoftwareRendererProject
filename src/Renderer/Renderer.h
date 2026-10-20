@@ -1,138 +1,158 @@
-﻿#pragma once
+#pragma once
 #include <vector>
+#include <array>
 #include <cstdint>
-#include <unordered_map>
-#include <memory>
 #include <span>
+#include <optional>
+#include <tbb/concurrent_vector.h>
 #include <tbb/enumerable_thread_specific.h>
-
-#include "Platform/Win32Headers.h"
 #include "Math/SRMath.h"
 #include "Graphics/Mesh.h"
+#include "Renderer/RenderCommand.h"
 #include "Renderer/Tile.h"
-#include "Renderer/ShaderVertices.h"
+#include "Renderer/RenderTypes.h"
+#include "Renderer/RenderTarget.h"
+#include "Renderer/Rasterizer.h"
 #include "Utils/FixedCapacityVector.h"
 
-class Frustum;
 class RenderQueue;
 class Camera;
 struct DirectionalLight;
-struct DebugPrimitiveCommand;
 struct MeshRenderCommand;
-struct Material;
+struct DebugPrimitiveCommand;
+enum class ERasterizeMode;
 
-enum class ELineAlgorithm
-{
-	Bresenham,
-	DDA
-};
-
-enum class EAAAlgorithm
-{
-	None,
-	FXAA	// Fast Approxiate Anti-Aliasing
-};
-
+// 프레임 순서와 병렬 작업만 소유한다. 창과 대상 버퍼의 수명은 호출자가 관리한다.
 class Renderer
 {
-private:
-	// 삼각형을 6개 평면으로 자를 때 최대 정점 수는 작고 고정적이다.
-	// C++26 inplace_vector(또는 동일 API fallback)로 프레임별 힙 할당을 없앤다.
-	using ClipBuffer = sr::FixedCapacityVector<ShadedVertex, 12>;
+  private:
+    using ClipBuffer = sr::FixedCapacityVector<ShadedVertex, 12>;
+    using FrameContext = RenderFrameContext;
+    static constexpr int maximumLineBands = 32;
+    int m_width = 0, m_height = 0;
+    int m_lineBandCount = 0, m_lineBandHeight = 0;
+    ELineAlgorithm m_currentLineAlgorithm = ELineAlgorithm::Bresenham;
+    EAAAlgorithm m_currentAAAlgorithm = EAAAlgorithm::None;
+    RenderOptions m_options;
+    RenderStats m_stats;
+    struct TileReference
+    {
+        std::size_t tileIndex;
+        TriangleRef *triangle;
+    };
+    struct TileScatterState
+    {
+        std::size_t count = 0;
+        std::size_t cursor = 0;
+    };
+    // 모든 타일의 참조를 한 저장소에 모은다. offsets의 인접 두 값이 한 타일의
+    // 반개구간이며, 타일마다 남는 과거 capacity를 누적하지 않는다.
+    std::vector<TriangleRef *> m_tileReferences;
+    std::vector<std::size_t> m_tileOffsets;
+    std::vector<RenderStats> m_tileStats;
+    std::vector<std::uint64_t> m_commandTriangleBases;
+    std::vector<unsigned int> m_fxaaSnapshot;
+    // 프레임마다 값을 갱신하고 capacity만 재사용한다. worker는 이 저장소를 읽기만 한다.
+    std::vector<PreparedDirectionalLight> m_preparedLights;
 
-	// GDI는 unique_ptr 하나로는 처리할 수 없다. 비트맵을 삭제하기 전에 DC에
-	// 선택돼 있던 원래 객체를 복원해야 하므로 세 핸들을 하나의 RAII 타입이
-	// 생성/복원/해제 순서까지 소유한다.
-	class GdiBackBuffer
-	{
-	private:
-		HDC m_memoryDc = nullptr;
-		HBITMAP m_bitmap = nullptr;
-		HGDIOBJ m_previousBitmap = nullptr;
+    static constexpr std::size_t debugLineChunkSize = 256;
+    struct DebugLineCommand
+    {
+        const DebugPrimitiveCommand *command;
+        SRMath::mat4 modelViewProjection;
+        std::size_t firstLine, lineCount;
+    };
+    struct DebugLineChunk
+    {
+        std::size_t commandIndex, firstLine, lineCount;
+    };
+    // 입력 line 순번이 슬롯 번호다. 병렬 준비가 끝난 뒤 이 순서로 band에
+    // 넣어 색이 다른 법선/디버그 선이 겹쳐도 기존 제출 순서를 유지한다.
+    std::vector<DebugLineCommand> m_debugLineCommands;
+    std::vector<DebugLineChunk> m_debugLineChunks;
+    std::vector<std::optional<Rasterizer::PreparedDebugLine>> m_preparedDebugLines;
+    std::array<std::vector<std::size_t>, maximumLineBands> m_debugLineBins;
 
-	public:
-		GdiBackBuffer() = default;
-		~GdiBackBuffer() { reset(); }
-		GdiBackBuffer(const GdiBackBuffer&) = delete;
-		GdiBackBuffer& operator=(const GdiBackBuffer&) = delete;
-		GdiBackBuffer(GdiBackBuffer&& other) noexcept;
-		GdiBackBuffer& operator=(GdiBackBuffer&& other) noexcept;
+    struct CommandCacheKey
+    {
+        const Mesh *mesh = nullptr;
+        const Vertex *vertices = nullptr;
+        std::size_t vertexCount = 0;
+        // 행렬 객체의 padding이 아니라 16개 float 각각의 비트를 비교한다.
+        std::array<std::uint32_t, 16> worldBits{}, viewProjectionBits{};
+        ERasterizeMode rasterizeMode{};
+        bool operator==(const CommandCacheKey &) const = default;
+    };
+    struct WorkerScratch
+    {
+        tbb::concurrent_vector<TriangleRef> triangles;
+        // worker만 삽입하고 frontend join 뒤 해당 band 작업들이 읽기만 한다.
+        // 삼각형 풀의 주소는 안정적이며 프레임 초기화 때 벡터 용량을 재사용한다.
+        std::array<std::vector<TriangleRef *>, maximumLineBands> wireBins;
+        // 참조는 worker별 단일 배열에 삽입한다. count/cursor만 tile별로 두며
+        // touched 목록으로 초기화한다. 순수 X-ray에는 이 메타데이터도 만들지 않는다.
+        std::vector<TileReference> tileReferences;
+        std::vector<TileScatterState> tileScatter;
+        std::vector<std::size_t> touchedTileIds;
+        ClipBuffer clipInput, clipOutput, clippedVertices;
+        std::vector<ShadedVertex> shadedVertices;
+        std::vector<std::uint64_t> vertexStamps;
+        std::uint64_t commandStamp = 0;
+        // 한 worker의 현재 프레임에서 마지막으로 처리한 키 하나만 재사용한다.
+        // 포인터는 queue와 같은 수명 계약으로 빌리며 프레임 밖으로 재사용하지 않는다.
+        CommandCacheKey transformCacheKey;
+        bool transformCacheValid = false;
+        SRMath::mat4 modelViewProjection = SRMath::mat4::identity();
+        SRMath::mat4 normalMatrix = SRMath::mat4::identity();
+        WorkerScratch();
+        void BeginFrame();
+        void BeginCommand(std::size_t vertexCount);
+        bool BeginCachedCommand(const MeshRenderCommand &, const SRMath::mat4 &viewProjection);
+    };
+    tbb::enumerable_thread_specific<WorkerScratch> m_workerScratch;
+    // frontend join 뒤 고정한 비소유 목록. scatter는 각 worker의 cursor만
+    // 독점 갱신하며, 이 단계에서 ETS나 삼각형 풀을 늘리지 않는다.
+    std::vector<WorkerScratch *> m_activeTileWorkers;
 
-		[[nodiscard]] bool create(HWND window, int width, int height, unsigned int*& pixels) noexcept;
-		void reset() noexcept;
-		[[nodiscard]] HDC get() const noexcept { return m_memoryDc; }
-	};
+    void ensureViewport(int width, int height);
+    std::span<const PreparedDirectionalLight> prepareLights(std::span<const DirectionalLight>);
+    void prepareFrame();
+    void binCommands(const RenderQueue &, const FrameContext &);
+    void collectActiveTileWorkers();
+    void prepareTileReferences();
+    void updateRetainedBinBytes();
+    void processCommand(const MeshRenderCommand &, const FrameContext &, WorkerScratch &,
+                        std::uint64_t triangleBase);
+    void binTriangle(const MeshRenderCommand &, const ShadedVertex &, const ShadedVertex &,
+                     const ShadedVertex &, const FrameContext &, WorkerScratch &,
+                     std::uint64_t primitiveId = 0);
+    static ShadedVertex shadeVertex(const Vertex &, const SRMath::mat4 &, const SRMath::mat4 &,
+                                    const SRMath::mat4 &);
+    static const ShadedVertex &cachedVertex(unsigned int, const MeshRenderCommand &, const SRMath::mat4 &,
+                                            const SRMath::mat4 &, WorkerScratch &);
+    static std::uint8_t computeOutcode(const SRMath::vec4 &) noexcept;
+    static ShadedVertex interpolate(const ShadedVertex &, const ShadedVertex &, float);
+    static void clipPolygonAgainstPlane(ClipBuffer &, const ClipBuffer &, const __m128 &);
+    static void clipTriangle(ClipBuffer &, const ShadedVertex &, const ShadedVertex &, const ShadedVertex &,
+                             ClipBuffer &, ClipBuffer &);
+    void renderTiles(RenderTarget &, const FrameContext &, bool needsDepthPrepass);
+    void renderLines(RenderTarget &, const RenderQueue &, const FrameContext &);
+    void renderDepthTestedLines(RenderTarget &, const RenderQueue &, const FrameContext &);
+    void applyPostProcessing(RenderTarget &);
+    friend struct RendererTestAccess;
 
-	GdiBackBuffer m_backBuffer;
+  public:
+    Renderer() = default;
+    Renderer(const Renderer &) = delete;
+    Renderer &operator=(const Renderer &) = delete;
+    void SetLineAlgorithm(ELineAlgorithm algorithm) noexcept { m_currentLineAlgorithm = algorithm; }
+    void SetAAAlgorithm(EAAAlgorithm algorithm) noexcept { m_currentAAAlgorithm = algorithm; }
+    void SetOptions(RenderOptions options) noexcept { m_options = options; }
+    [[nodiscard]] RenderOptions GetOptions() const noexcept { return m_options; }
+    [[nodiscard]] const RenderStats &GetStats() const noexcept { return m_stats; }
 
-	int m_width = 0;
-	int m_height = 0;
-
-	unsigned int* m_pPixelData = nullptr;
-	std::vector<float> m_depthBuffer;
-
-	ELineAlgorithm m_currentLineAlgorithm = ELineAlgorithm::Bresenham;
-
-	EAAAlgorithm m_currentAAAlgorithm = EAAAlgorithm::None;
-
-	// Renderer Optimization
-	std::vector<tbb::concurrent_vector<TriangleRef*>> m_finalTriangleBins;
-	tbb::enumerable_thread_specific<tbb::concurrent_vector<TriangleRef>> m_threadTrianglePools; // 실제 TriangleRef 객체들이 저장될 스레드별 메모리 풀
-	tbb::enumerable_thread_specific<ClipBuffer> m_threadClipBuffer1, m_threadClipBuffer2, m_threadClippedVertices;
-	tbb::enumerable_thread_specific<std::unordered_map<const MeshRenderCommand*, SRMath::mat4>>m_threadNormalMatrixCache;
-
-	tbb::enumerable_thread_specific<std::vector<ShadedVertex>> m_threadShadedVertexBuffers; // 클립 공간 좌표를 저장할 버퍼
-	tbb::enumerable_thread_specific<std::vector<std::uint64_t>> m_threadStamps;
-	// 프레임 카운터 추가 (스레드 셰이더버퍼와 스탬프 데이터 오염 방지)
-	std::uint64_t m_frameCounter = 0;
-
-	// Resize용 재초기화 함수
-	bool reInit(HWND hWnd);
-	void shutdownForResize() noexcept;
-
-	// 선 그리기 알고리즘 셀렉터
-	void drawLineByBresenham(int x0, int y0, int x1, int y1, unsigned int color);
-	void drawLineByDDA(int x0, int y0, int x1, int y1, unsigned int color);
-
-	// 그리기 함수
-	void drawPixel(int x, int y, unsigned int color);
-	void drawLine(int x0, int y0, int x1, int y1, unsigned int color);
-	void drawTriangle(int x0, int y0, int x1, int y1, int x2, int y2, unsigned int color);
-	void drawTriangle(const SRMath::vec2& v0, const SRMath::vec2& v1, const SRMath::vec2& v2, unsigned int color);
-
-	void renderTile(int tx, int ty, const tbb::concurrent_vector<TriangleRef*>& triangleBin,
-		const SRMath::vec3& camPos, std::span<const DirectionalLight> lights);
-
-	void resterizationForTile(const ShadedVertex& sv0, const ShadedVertex& sv1, const ShadedVertex& sv2, const Material* material,
-		std::span<const DirectionalLight> lights, const SRMath::vec3& camPos, const MeshRenderCommand& cmd, int tile_minX, int tile_minY, int tile_maxX, int tile_maxY);
-	void drawFilledTriangleForTile(const RasterizerVertex& v0, const RasterizerVertex& v1, const RasterizerVertex& v2, const Material* material, std::span<const DirectionalLight> lights, const SRMath::vec3& camPos, int tile_minX, int tile_minY, int tile_maxX, int tile_maxY);
-
-	void drawDebugPrimitive(const DebugPrimitiveCommand& cmd, const SRMath::mat4& vp);
-
-	ShadedVertex interpolate(const ShadedVertex& v0, const ShadedVertex& v1, float t);
-	void clipPolygonAgainstPlane(ClipBuffer& out_vertices, const ClipBuffer& vertices, const __m128& plane);
-	void clipTriangle(ClipBuffer& out_vertices, const ShadedVertex& v0, const ShadedVertex& v1, const ShadedVertex& v2,
-		ClipBuffer& buffer1, ClipBuffer& buffer2);
-
-
-public:
-	Renderer(HWND hWnd);
-	~Renderer();
-	Renderer(const Renderer&) = delete;
-	Renderer& operator=(const Renderer&) = delete;
-	Renderer(Renderer&&) = delete;
-	Renderer& operator=(Renderer&&) = delete;
-
-	void SetLineAlgorithm(ELineAlgorithm eLineAlgorithm) { m_currentLineAlgorithm = eLineAlgorithm; }
-	void SetAAAlgorithm(EAAAlgorithm eAAAlgorithm) { m_currentAAAlgorithm = eAAAlgorithm; }
-
-	void Clear();
-	void Present(HDC hScreenDC) const;
-	void RenderScene(const RenderQueue& queue, const Camera& camera, std::span<const DirectionalLight> lights);
-
-	void OnResize(HWND hWnd);
-
-	// Getter
-	[[nodiscard]] int GetWidth() const noexcept { return m_width; }
-	[[nodiscard]] int GetHeight() const noexcept { return m_height; }
+    // target.Clear → RenderScene → presenter.Present. 참조는 동기 호출 동안만 빌린다.
+    // 같은 Renderer/target을 동시에 호출하지 않는다. 빈 target은 안전한 no-op이다.
+    void RenderScene(RenderTarget &target, const RenderQueue &queue, const Camera &camera,
+                     std::span<const DirectionalLight> lights);
 };

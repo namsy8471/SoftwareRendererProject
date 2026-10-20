@@ -1,0 +1,248 @@
+#include "Math/SRMath.h"
+#include "Math/SIMD.h"
+#include "Math/AABB.h"
+#include "Math/Frustum.h"
+#include "Utils/FixedCapacityVector.h"
+#include <array>
+#include <bit>
+#include <iostream>
+#include <random>
+
+#include "TestHarness.h"
+#include "TestSupport.h"
+
+using namespace sr::test;
+
+namespace
+{
+void frustumSelectionTests()
+{
+    // SIMD 선택과 독립인 이전 scalar-if 기준이다. dot의 덧셈 순서나 평면 순서,
+    // distance < 0의 NaN 보수적 결과는 바꾸지 않고 P-vertex 선택만 비교한다.
+    const auto positiveVertex = [](const Plane &plane, const AABB &box)
+    {
+        SRMath::vec3 point = box.min;
+        if (plane.normal.x >= 0.f)
+            point.x = box.max.x;
+        if (plane.normal.y >= 0.f)
+            point.y = box.max.y;
+        if (plane.normal.z >= 0.f)
+            point.z = box.max.z;
+        return point;
+    };
+    const auto scalarReference = [&](const Frustum &frustum, const AABB &box)
+    {
+        for (const auto &plane : frustum.planes)
+            if (SRMath::dot(plane.normal, positiveVertex(plane, box)) + plane.distance < 0.f)
+                return false;
+        return true;
+    };
+    const auto compare = [&](const Frustum &frustum, const AABB &box)
+    {
+        const bool expected = scalarReference(frustum, box);
+        check(frustum.IsAABBInFrustum(box) == expected,
+              "frustum SIMD vertex selection matches old scalar ifs");
+        auto dirtyFrustum = frustum;
+        auto dirtyBox = box;
+        dirtyBox.min.data[3] = std::bit_cast<float>(std::uint32_t{0x7FC01234});
+        dirtyBox.max.data[3] = -std::numeric_limits<float>::infinity();
+        for (std::size_t i = 0; i < dirtyFrustum.planes.size(); ++i)
+            dirtyFrustum.planes[i].normal.data[3] = i % 2 == 0
+                                                        ? std::numeric_limits<float>::infinity()
+                                                        : std::bit_cast<float>(std::uint32_t{0xFFC05678});
+        check(scalarReference(dirtyFrustum, dirtyBox) == expected &&
+                  dirtyFrustum.IsAABBInFrustum(dirtyBox) == expected,
+              "frustum comparison ignores dirty vec3 fourth lanes including NaN and infinity");
+        return expected;
+    };
+    const auto accepting = []
+    {
+        Frustum frustum;
+        for (auto &plane : frustum.planes)
+        {
+            plane.normal = {0.f, 0.f, 0.f};
+            plane.distance = 1.f;
+        }
+        return frustum;
+    };
+    AABB box;
+    box.min = {-1.f, -2.f, -3.f};
+    box.max = {2.f, 3.f, 4.f};
+    {
+        struct RestoreMxcsr
+        {
+            unsigned int value = _mm_getcsr();
+            ~RestoreMxcsr() { _mm_setcsr(value); }
+        } restore;
+        // unused w를 비교해도 bool은 같을 수 있다. QNaN/SNaN의 invalid 상태까지
+        // 검사하되 예외 mask/DAZ/FTZ는 건드리지 않고 어떤 종료 경로든 원래 MXCSR를 복구한다.
+        for (const auto bits : {std::uint32_t{0x7FC01234}, std::uint32_t{0x7F801234}})
+        {
+            auto dirtyFrustum = accepting();
+            auto dirtyBox = box;
+            for (auto &plane : dirtyFrustum.planes)
+                plane.normal.data[3] = std::bit_cast<float>(bits);
+            dirtyBox.min.data[3] = std::bit_cast<float>(bits);
+            dirtyBox.max.data[3] = std::bit_cast<float>(bits);
+            const auto clearInvalid = restore.value & ~static_cast<unsigned int>(_MM_EXCEPT_INVALID);
+            _mm_setcsr(clearInvalid);
+            const bool expected = scalarReference(dirtyFrustum, dirtyBox);
+            const auto scalarStatus = _mm_getcsr();
+            _mm_setcsr(clearInvalid);
+            const bool actual = dirtyFrustum.IsAABBInFrustum(dirtyBox);
+            const auto simdStatus = _mm_getcsr();
+            _mm_setcsr(restore.value); // 검사/예외 처리에 들어가기 전에도 호출자의 원래 상태를 돌려준다.
+            check(expected && actual == expected && (scalarStatus & _MM_EXCEPT_INVALID) == 0 &&
+                      (simdStatus & _MM_EXCEPT_INVALID) == 0,
+                  "unused fourth-lane NaN never changes the MXCSR invalid flag");
+        }
+    }
+    for (std::size_t index = 0; index < 6; ++index)
+    {
+        auto frustum = accepting();
+        auto &plane = frustum.planes[index];
+        plane.normal = {2.f, -3.f, 4.f}; // public planes는 정규화되어 있다고 가정하지 않는다.
+        plane.distance = -SRMath::dot(plane.normal, positiveVertex(plane, box));
+        check(compare(frustum, box), "frustum exact plane contact remains visible");
+        plane.distance = std::nextafter(plane.distance, -std::numeric_limits<float>::infinity());
+        check(!compare(frustum, box), "frustum one-ULP outside plane rejects at every plane position");
+        plane.distance = std::nextafter(plane.distance, std::numeric_limits<float>::infinity());
+        plane.distance = std::nextafter(plane.distance, std::numeric_limits<float>::infinity());
+        check(compare(frustum, box), "frustum one-ULP inside plane remains visible");
+    }
+    for (const float zero : {0.f, -0.f})
+    {
+        auto frustum = accepting();
+        auto unusualBox = box;
+        unusualBox.min.x = std::numeric_limits<float>::infinity();
+        unusualBox.max.x = 1.f;
+        frustum.planes[0].normal = {zero, 0.f, 0.f};
+        frustum.planes[0].distance = -1.f;
+        // >=0은 -0에서도 max를 택한다. sign-bit로 min을 고르면 0*Inf=NaN 때문에 오답이다.
+        check(!compare(frustum, unusualBox), "both signed zeros select the maximum endpoint");
+    }
+    const std::array special{0.f,
+                             -0.f,
+                             std::numeric_limits<float>::denorm_min(),
+                             -std::numeric_limits<float>::denorm_min(),
+                             std::numeric_limits<float>::min(),
+                             -std::numeric_limits<float>::min(),
+                             std::numeric_limits<float>::max(),
+                             -std::numeric_limits<float>::max(),
+                             std::numeric_limits<float>::infinity(),
+                             -std::numeric_limits<float>::infinity(),
+                             std::numeric_limits<float>::quiet_NaN()};
+    for (std::size_t index = 0; index < 6; ++index)
+        for (std::size_t axis = 0; axis < 3; ++axis)
+            for (const float value : special)
+                for (int field = 0; field < 4; ++field)
+                {
+                    auto frustum = accepting();
+                    auto unusualBox = box;
+                    auto &plane = frustum.planes[index];
+                    plane.normal = {2.f, -3.f, 4.f};
+                    plane.distance = -4.f;
+                    if (field == 0)
+                        plane.normal[axis] = value;
+                    else if (field == 1)
+                        plane.distance = value;
+                    else if (field == 2)
+                        unusualBox.min[axis] = value;
+                    else
+                        unusualBox.max[axis] = value;
+                    compare(frustum, unusualBox);
+                }
+    auto nanPlane = accepting();
+    nanPlane.planes[0].normal.x = std::numeric_limits<float>::quiet_NaN();
+    check(compare(nanPlane, box), "unordered plane distance conservatively keeps the box");
+    nanPlane.planes[5].distance = -1.f;
+    check(!compare(nanPlane, box), "later rejecting plane still rejects after an unordered plane");
+    compare(accepting(), AABB{}); // 기존 공개 API의 empty/inverted bounds 동작도 유지한다.
+
+    std::uint32_t state = 0xF2A73B19u;
+    const auto coordinate = [&]
+    {
+        state = state * 1664525u + 1013904223u;
+        return static_cast<float>(static_cast<int>((state >> 8) % 8193) - 4096) / 128.f;
+    };
+    std::size_t accepted = 0, rejected = 0;
+    for (std::size_t iteration = 0; iteration < 2048; ++iteration)
+    {
+        AABB randomBox;
+        for (std::size_t axis = 0; axis < 3; ++axis)
+        {
+            randomBox.min[axis] = coordinate();
+            randomBox.max[axis] = randomBox.min[axis] + std::abs(coordinate());
+        }
+        Frustum frustum;
+        for (std::size_t index = 0; index < frustum.planes.size(); ++index)
+        {
+            auto &plane = frustum.planes[index];
+            for (std::size_t axis = 0; axis < 3; ++axis)
+                plane.normal[axis] = coordinate();
+            if (iteration % 4 == 0)
+                plane.normal[iteration % 3] = iteration % 8 == 0 ? -0.f : 0.f;
+            // 전부 통과/특정 순서의 평면만 기각/임의 distance를 섞어 early-exit도 편향 없이 검사한다.
+            if (iteration % 3 == 0)
+                plane.distance = coordinate();
+            else
+                plane.distance = -SRMath::dot(plane.normal, positiveVertex(plane, randomBox)) +
+                                 (iteration % 3 == 1 || index != iteration % 6 ? 2.f : -2.f);
+        }
+        if (compare(frustum, randomBox))
+            ++accepted;
+        else
+            ++rejected;
+    }
+    check(accepted != 0 && rejected != 0, "random frustum selection suite exercises both results");
+}
+
+void mathTests()
+{
+    using namespace SRMath;
+    const mat4 transform = translate(vec3{3.f, -2.f, 1.f}) * scale(vec3{2.f, 3.f, 4.f});
+    const auto inverted = inverse(transform);
+    check(inverted.has_value(), "invertible matrix");
+    const vec4 input{1.f, 2.f, 3.f, 1.f};
+    vectorNear(*inverted * (transform * input), input);
+    check(!inverse(mat4{0.f}), "singular matrix");
+    const auto normalMatrix = inverse_transpose(scale(vec3{2.f, 3.f, 4.f}));
+    check(normalMatrix.has_value(), "normal matrix");
+    vectorNear(*normalMatrix * vec4{1.f, 1.f, 1.f, 0.f}, vec4{0.5f, 1.f / 3.f, 0.25f, 0.f});
+    const auto pair = SIMD::transform_pair(transform, input, vec4{2.f, 1.f, -1.f, 1.f});
+    vectorNear(pair.first, transform * input);
+    vectorNear(pair.second, transform * vec4{2.f, 1.f, -1.f, 1.f});
+    std::cout << "SIMD dispatch: " << (SIMD::avx_available() ? "AVX" : "SSE") << '\n';
+    AABB box;
+    box.Encapsulate(vec3{-0.5f, -0.5f, -0.5f});
+    box.Encapsulate(vec3{0.5f, 0.5f, 0.5f});
+    check(box.IsValid(), "valid AABB");
+    Frustum frustum;
+    frustum.Update(mat4::identity());
+    check(frustum.IsAABBInFrustum(box), "inside frustum");
+    check(!frustum.IsAABBInFrustum(box.Transform(translate(vec3{10.f, 0.f, 0.f}))), "outside frustum");
+    check(!AABB{}.IsValid(), "empty bounds");
+    sr::FixedCapacityVector<int, 3> fixed;
+    fixed.emplace_back(1);
+    fixed.emplace_back(2);
+    fixed.emplace_back(3);
+    bool rejected = false;
+    try
+    {
+        fixed.emplace_back(4);
+    }
+    catch (const std::exception &)
+    {
+        rejected = true;
+    }
+    check(rejected && fixed.size() == 3, "fixed capacity overflow");
+    fixed.clear();
+    check(fixed.empty(), "fixed capacity reset");
+}
+} // namespace
+
+void sr::test::RegisterMathTests(TestRegistry &registry)
+{
+    registry.Add("math.core", mathTests);
+    registry.Add("math.frustumSelection", frustumSelectionTests);
+}

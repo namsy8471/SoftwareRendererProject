@@ -78,14 +78,14 @@ DirectX 11을 사용하며 부족하다고 느꼈던 렌더링 파이프라인�
 - 고정소수점 edge function 기반 triangle rasterization
 - 원근 보정 attribute interpolation
 - Directional light 기반 Phong illumination
-- OBJ/MTL 및 diffuse texture loading
+- OBJ/MTL 로딩과 별도 이미지 디코딩 API (`map_Kd` 자동 연결은 미지원)
 - Bresenham/DDA line drawing과 FXAA
 
 ### 시스템·최적화
 
 - Render queue와 16×16 tile binning
 - oneTBB 기반 command 처리와 tile rasterization
-- thread-local vertex cache, stamp, clip buffer와 triangle pool
+- renderer별 `WorkerScratch`에 모은 worker별 clip buffer·triangle pool과 프레임 한정 단일 키 정점·변환 행렬 캐시: 정확히 같은 키의 명령만 재사용하며 상세 계약은 [유지보수 문서](MAINTENANCE.md)에 설명
 - 자체 수학 라이브러리 `SRMath`의 SSE 연산
 - CPUID/XCR0 검사 후 SSE/AVX 구현을 선택하는 runtime dispatch
 - AABB와 octree를 이용한 coarse/fine frustum culling
@@ -94,39 +94,45 @@ DirectX 11을 사용하며 부족하다고 느꼈던 렌더링 파이프라인�
 
 ## 렌더링 아키텍처
 
-```text
-SoftrendererProject.exe
-├─ Framework
-│  ├─ WinAPI window / input / frame loop
-│  └─ Camera / GameObject update
-├─ Asset Pipeline
-│  ├─ OBJ / MTL parser
-│  ├─ Texture loader
-│  └─ Missing-normal generation
-├─ Scene Submission
-│  ├─ AABB / Frustum / Octree culling
-│  └─ RenderQueue
-└─ Renderer
-   ├─ Vertex transform / back-face culling / clipping
-   ├─ 16×16 tile binning
-   ├─ Parallel rasterization / depth / Phong shading
-   ├─ Optional FXAA
-   └─ GDI DIB Present
+```mermaid
+flowchart LR
+    App["WinMain / Framework<br/>Win32 message loop · input · timing"]
+    Assets["Asset Pipeline<br/>OBJ · MTL · texture · normal generation"]
+    Scene["Scene<br/>Camera · GameObject · transforms"]
+    Submit["Scene Submission<br/>AABB / Frustum / Octree · RenderQueue"]
+    Frontend["Renderer Front End<br/>MVP · culling · clipping · 16×16 binning"]
+    Tiles["Rasterizer / oneTBB Tiles<br/>prepared triangles · depth · Phong"]
+    Lines["Line Row Bands<br/>parallel wires / large normal batches · sequential overlays"]
+    Post["Post Process<br/>optional FXAA"]
+    Target["RenderTarget<br/>borrowed pixels · owned depth / IDs"]
+    Present["GdiPresenter<br/>owned 32-bit DIB · BitBlt"]
+    Math["Math / SIMD<br/>SRMath · SSE · runtime AVX dispatch"]
+
+    App -->|startup load| Assets
+    Assets -->|Model / Mesh| Scene
+    App -->|frame update| Scene
+    Scene --> Submit --> Frontend --> Tiles --> Lines --> Post --> Present
+    App --> Target
+    Tiles -. writes .-> Target
+    Present -. lends PixelSurfaceView .-> Target
+    Math -.-> Assets
+    Math -.-> Scene
+    Math -.-> Frontend
 ```
 
-```text
-OBJ · MTL · Texture
-→ Scene update
-→ Frustum / Octree culling
-→ RenderQueue
-→ Vertex transform / clipping
-→ Tile binning
-→ Rasterization / depth test / shading
-→ Optional FXAA
-→ GDI Present
-```
+렌더 명령은 안정된 객체·메시·옥트리 순서로 수집됩니다. 클리핑된 `PreparedTriangle`은 worker별 `concurrent_vector` 풀에 한 번 만들고, `(tileIndex, triangle*)` 참조는 worker별 flat 배열에 기록합니다. 타일별 count/cursor와 touched ID를 두고, front-end join 뒤 고정한 활성 worker 목록에서 prefix offset과 서로 겹치지 않는 목적 구간을 계산합니다. Worker별 병렬 scatter가 단일 포인터 배열을 채우고 join한 뒤, 각 타일 span을 선택적으로 정렬하고 래스터화합니다. oneTBB를 그대로 사용하며 primitive ID와 픽셀 소유권 규칙은 바뀌지 않습니다. 기본 빠른 X-ray만 있는 장면은 flat 타일 참조·worker 메타데이터의 신규 할당과 depth prepass를 건너뜁니다.
 
-렌더 명령은 장면 객체에서 수집됩니다. 화면에 영향을 주는 삼각형은 타일별 bin으로 분배되고, 서로 다른 타일을 oneTBB worker가 병렬 처리합니다. 최종 픽셀은 32-bit DIB 백버퍼에 기록된 뒤 `BitBlt`로 표시됩니다.
+타일별 vector의 누적 capacity 대신 worker별 flat 참조와 최종 포인터 배열의 capacity를 재사용합니다. `binReferences`는 논리 참조를 한 번만 세고, `retainedBinBytes`는 flat/최종/wire/debug 저장소와 count/cursor/offset, 헤더, touched/활성 worker 목록을 포함합니다. `binMs`는 front-end 참조 준비, `rasterMs`는 prefix·scatter·정렬·래스터화 시간입니다. 이 구조의 속도·메모리 비교는 진행 중이며 성능 향상이나 최종 채택을 뜻하지 않습니다.
+
+`Renderer`는 창 핸들 없이 `RenderTarget&`를 받아 프레임을 조정합니다. `RenderTarget`은 stride가 있는 비소유 `PixelSurfaceView`와 소유 깊이·ID 버퍼를 연결하고, `GdiPresenter`는 DIB 생성·resize·표시를 담당합니다. 앱은 DIB에 직접 쓰므로 표시 계층 분리로 추가 화면 복사가 생기지 않습니다. FXAA의 기존 입력 snapshot은 유지합니다.
+
+와이어프레임의 기본값은 가려진 선도 보여주는 빠른 **X-ray 표시**입니다. `Hidden-line wireframe (depth prepass)`를 켠 경우에만 와이어가 포함된 프레임에서 모든 면의 depth-only 패스를 먼저 실행하고 와이어의 숨은 선을 제거합니다. 기본 혼합 모드에서는 와이어 면이 채움 면을 가리지 않으며 prepass도 없습니다. 법선의 깊이 정책은 독립적입니다. 항상 존재하는 면 깊이를 검사하되, 옵션 OFF에서는 채움 면이 기록한 깊이만 사용하므로 순수 X-ray 와이어 장면에는 법선을 가릴 면 깊이가 없습니다. AABB·광원은 깊이를 무시하는 설명용 오버레이이며, 모든 선 패스 뒤에 선택적으로 FXAA를 적용합니다.
+
+와이어 선은 oneTBB의 서로 겹치지 않는 Y행 band로 병렬 처리합니다. band 수는 약 64행 단위를 기준으로 최대 32개이며, front-end가 완성한 삼각형 풀과 깊이·primitive ID는 읽기 전용입니다. `BeginLineRows`는 픽셀 쓰기 범위만 제한하고 선을 band 경계로 자르거나 새 끝점에서 재시작하지 않아 Bresenham/DDA의 기존 픽셀 규칙을 유지합니다. 와이어 join 뒤 DepthTested 선이 256개 이상이면 256개 선 단위 chunk로 변환·클리핑을 병렬 준비하고, 원본 제출 순서를 보존하는 bin과 Y행 band로 그립니다. 더 적은 법선은 기존 순차 경로를 사용하며, 오버레이는 법선 작업 join 뒤 순차 처리합니다.
+
+타일 내부 front-to-back 정렬과 현재 프레임 타일 깊이를 이용하는 Hi-Z는 메뉴에서 선택하는 실험 옵션이며 **둘 다 기본 꺼짐**입니다. 미기록 픽셀·동일 깊이·수치적으로 불확실한 경우는 Hi-Z로 기각하지 않습니다. 검사와 요약 갱신 비용도 있으므로 가림이 많다는 이유만으로 성능 향상을 보장하지 않습니다. 선택적 패스 시간·카운터와 최신 비교 상태는 [가시성 변경 기록](PERFORMANCE.md#renderer-visibility-2026)을 참고하세요.
+
+계층별 책임, 초기 자산 로드, 프레임 실행 순서, 소유권, 병렬 처리와 현재 플랫폼 경계는 [ARCHITECTURE.md](ARCHITECTURE.md)에 한국어·영어·일본어로 정리했습니다.
 
 ## 문제 해결 사례
 
@@ -141,6 +147,7 @@ OBJ · MTL · Texture
 | 누락 법선 | Teapot 일부 face에서 normal이 없어 shading 오류 | face normal 누적 후 smooth normal 생성 |
 | MTL 이름 | 콜론이 포함된 material key lookup 실패 | 마지막 콜론 뒤 이름으로 fallback lookup |
 | 멀티스레딩 | 단일 스레드 rasterization과 반복 할당이 병목 | tile rendering, TBB, TLS cache/pool |
+| 유지보수 | 큰 함수와 분산된 상태로 변경 영향 추적이 어려움 | 책임별 파일, WorkerScratch, 자동 회귀 테스트 |
 
 ### 1. C++ 표준 준수와 자원 수명
 
@@ -148,7 +155,7 @@ OBJ · MTL · Texture
 
 **원인 분석:** 자원의 소유자와 해제 순서가 타입이 아니라 호출 규약과 주석에만 표현돼 있었습니다. 특히 DIB bitmap은 삭제 전에 DC에 선택돼 있던 원래 object를 복원해야 하므로 단순 raw pointer 하나로 수명을 표현할 수 없었습니다.
 
-**해결:** 생성자와 소멸자에서 수명을 관리하고, 화면 DC·memory DC·DIB bitmap·이전 선택 object를 이동 전용 `Renderer::GdiBackBuffer`로 묶었습니다. 형변환은 `static_cast`와 필요한 경계의 `reinterpret_cast`로 명시했으며, 자체 코드는 `/W4 /WX`, vendor header는 external warning 경계로 분리했습니다.
+**해결:** 생성자와 소멸자에서 수명을 관리하고, memory DC·DIB bitmap·이전 선택 object를 이동 전용 `sr::platform::GdiBackBuffer`로 묶고, 빌린 화면 DC는 별도 scope guard로 반환합니다. 형변환은 `static_cast`와 필요한 경계의 `reinterpret_cast`로 명시했으며, 자체 코드는 `/W4 /WX`, vendor header는 external warning 경계로 분리했습니다.
 
 **결과:** 중간 실패와 resize에서도 동일한 RAII 정리 규칙을 사용할 수 있게 됐고, 외부 코드의 경고를 제외한 프로젝트 소스는 경고를 오류로 취급하는 설정을 통과하도록 유지했습니다.
 
@@ -194,13 +201,13 @@ OBJ · MTL · Texture
 
 ### 6. 콜론이 포함된 MTL material 이름
 
-**문제:** 일부 OBJ의 `usemtl` 이름에 콜론(`:`)이 포함돼 있을 때 MTL에서 읽은 material key와 정확히 일치하지 않아 color와 texture 정보를 찾지 못했습니다.
+**문제:** 일부 OBJ의 `usemtl` 이름에 콜론(`:`)이 포함돼 있을 때 MTL에서 읽은 material key와 정확히 일치하지 않아 색상·광택 속성을 찾지 못했습니다.
 
 **원인 분석:** OBJ 쪽 이름은 `object-part:material` 형태였지만 MTL map에는 콜론 뒤의 실제 material 이름만 존재하는 경우가 있었습니다. 전체 문자열로만 lookup하면 fallback 없이 기본 material로 남았습니다.
 
 **해결:** 먼저 전체 이름으로 lookup하고, 실패하면 마지막 콜론 위치를 찾아 그 뒤의 substring으로 material map을 다시 검색했습니다.
 
-**결과:** 콜론이 포함된 모델도 원래 의도한 material로 재매핑되어 color와 texture를 올바르게 불러올 수 있게 됐습니다.
+**결과:** 콜론이 포함된 모델도 원래 의도한 material로 재매핑되어 색상·광택 속성을 올바르게 적용할 수 있게 됐습니다. 이미지 디코딩 API는 별도이며 MTL의 `map_Kd` 자동 연결은 지원하지 않습니다.
 
 ### 7. 타일 기반 멀티스레딩 성능 최적화
 
@@ -211,6 +218,16 @@ OBJ · MTL · Texture
 **해결:** 화면을 16×16 tile로 나누고, triangle의 screen-space AABB를 이용해 영향을 받는 tile bin에 참조를 등록했습니다. 각 tile은 oneTBB task로 병렬 처리하고, vertex result·stamp·clip buffer·triangle pool은 thread-local storage에서 재사용했습니다. `reserve()`, high-watermark cache와 ping-pong buffer로 재할당을 줄였습니다.
 
 **결과:** 개발 당시 단일 스레드 약 5 FPS에서 멀티스레드 약 60 FPS까지 향상된 측정이 있었고, 2025-08-27에 남긴 비교 이미지에서는 8 FPS에서 58 FPS로 향상됐습니다. 두 수치는 측정 시점과 조건이 다른 개발 기록이며 표준화된 벤치마크는 아닙니다.
+
+### 8. 기능을 유지하면서 책임과 상태 분리
+
+**문제:** 렌더링 단계와 임시 상태가 큰 함수에 섞여 있어, 정점 처리·타일 분배·디버그 출력 중 어디를 수정해야 하는지 실행 흐름을 따라가며 확인하기 어려웠습니다.
+
+**원인 분석:** 정점 변환과 viewport 계산이 중복돼 있었고, worker의 캐시·클리핑 버퍼·삼각형 풀이 따로 관리됐습니다. 화면 전체에 쓰는 선 그리기도 타일 내부만 쓰는 채움 경로와 같은 병렬 실행 규칙을 사용할 수는 없었습니다.
+
+**해결:** `RenderScene`을 단계별 조정 함수로 줄이고, Frontend·Clipping·Rasterizer·Shading과 플랫폼 GDI 구현을 분리했습니다. 임시 상태는 renderer 인스턴스별 `WorkerScratch`로 묶었습니다. 당시에는 와이어프레임·디버그 선을 채움 뒤 순차 처리해 경합을 제거했고, 후속 변경에서 와이어와 큰 법선 묶음을 쓰기 행이 겹치지 않는 band로 병렬화했습니다. 작은 법선 묶음과 오버레이는 순차 처리합니다. OBJ 로더는 문장 해석·인덱스 검증·법선 생성·공간 구조 생성으로 나눴으며, Framework와 Scene도 초기화·갱신·명령 수집의 책임을 구분했습니다.
+
+**결과:** 함수 이름과 호출 순서로 프레임 흐름을 읽을 수 있게 됐고, 구조 정리와 실제 버그 수정을 회귀 테스트로 구분해 기록했습니다. C++26 Preview, oneTBB와 SSE/AVX 경로는 유지했으며, 이번 변경의 성능 향상을 주장하지는 않습니다.
 
 <details>
 <summary><strong>C++26 현대화 설계 자세히 보기</strong></summary>
@@ -225,13 +242,89 @@ OBJ · MTL · Texture
 | loader 내부 `MessageBox`/예외 | `std::expected<T, AssetLoadError>` | parsing과 WinAPI UI 분리 |
 | template 내부 `static_assert` | C++20 concepts와 `sr.math` module | 잘못된 타입을 호출 지점에서 진단 |
 | clipping용 `std::vector` | `FixedCapacityVector` / `std::inplace_vector` 호환 경로 | 고정 크기 hot path의 heap allocation 제거 |
-| raw GDI handle 수동 정리 | 이동 전용 `Renderer::GdiBackBuffer` | 선택 object 복원 → bitmap 삭제 → DC 삭제 순서 보장 |
+| raw GDI handle 수동 정리 | 이동 전용 `sr::platform::GdiBackBuffer` | 선택 object 복원 → bitmap 삭제 → DC 삭제 순서 보장 |
 | 단일 SSE 경로 | CPUID/XCR0 runtime dispatch + 별도 AVX translation unit | 구형 CPU 경로를 유지하며 유효한 batch만 AVX 사용 |
 | 겹치는 FXAA parallel write | `span` API + luminance/filter pass 분리 | 같은 값을 쓰더라도 발생하는 data race 제거 |
 
-프로젝트는 `/std:c++latest`를 사용합니다. 아직 제공되지 않는 C++26 library 기능은 feature-test macro로 확인하고 동일한 계약의 fallback을 사용합니다. 최신 기능이 항상 빠르다는 이유로 교체한 것은 아니며, 단일 `vec4`처럼 SSE 폭이 정확히 맞는 연산은 그대로 유지합니다.
+프로젝트는 `/std:c++latest`를 사용합니다. 아직 제공되지 않는 C++26 library 기능은 feature-test macro로 확인하고 현재 값 타입에 필요한 연산을 제공하는 fallback을 사용합니다. 고정 용량 fallback의 `clear()`는 논리 크기만 초기화하므로 `std::inplace_vector`와 원소 파괴 시점이 같지는 않습니다. 최신 기능이 항상 빠르다는 이유로 교체한 것은 아니며, 단일 `vec4`처럼 SSE 폭이 정확히 맞는 연산은 그대로 유지합니다.
 
 </details>
+
+## 유지보수와 테스트
+
+### 코드를 읽는 순서
+
+| 관심사 | 주요 코드와 역할 |
+|---|---|
+| 프레임 조정 | `Framework::runFrame` → `GameObject::Update/SubmitToRenderQueue` → `Renderer::RenderScene` |
+| 렌더링 단계 | `prepareFrame` → `binCommands` → `renderTiles` → `renderLines` → `applyPostProcessing` |
+| 렌더러 구현 | `RendererFrontend.cpp`, `RendererClipping.cpp`, `Rasterizer.cpp`, `RendererShading.cpp` |
+| 상태와 수명 | renderer별 `WorkerScratch`, 비소유 `RenderQueue`, `RenderTarget`의 깊이·ID, `GdiPresenter`의 DIB |
+| 자산 해석 | `ModelLoader.cpp`, `TextureLoader.cpp`, 공통 토큰·숫자 해석용 `AssetParsing.h` |
+| 수학 | `SRMath.h`는 include 진입점으로 유지하고 FixedPoint·Vector·Matrix 헤더로 구현 분리 |
+| 빌드와 규칙 | 앱·테스트 공통 `build/*.props`, 자체 코드용 `.clang-format`; ThirdParty는 포맷 대상에서 제외 |
+
+설계 의도·좌표계·소유권·병렬 실행 조건은 한국어 주석으로 설명합니다. 자세한 계약과 코드 위치는 [유지보수 가이드](MAINTENANCE.md#한국어)를 참고하세요.
+
+### 수정한 동작과 회귀 검사
+
+| 항목 | 수정 및 검증 내용 |
+|---|---|
+| 클리핑 | 동차 좌표에서 선형 보간 후 래스터 단계에서만 원근 보정. 기각 시 출력 초기화, 6개 평면·고정 용량·입력 불변성 검사 |
+| Win32 Release 보간 | 복합 vec 임시값 경로에서 입력 훼손을 재현. 동일한 sub → mul → add 순서의 명시적 SSE 연산으로 표현하고 허용 오차는 유지 |
+| 선 그리기 | 초기 순차화로 타일 간 경합 제거. 현재 와이어·큰 법선 묶음은 순서 보존 disjoint Y행 band, 작은 법선·오버레이는 순차. 픽셀·깊이·ID·통계·padding과 band 경계 검사 |
+| Scene·입력 | 부모 변환과 자식 가시성, 중복·순환 연결 거부, Space 자동 반복과 알고리즘 메뉴 상태 검사 |
+| 버퍼·후처리 | renderer 인스턴스 분리, 프레임 초기화, 0×0 resize와 복구, Phong·FXAA 검사 |
+
+### 테스트 실행과 확인 결과
+
+`RendererTests`는 외부 테스트 프레임워크 없이 실행되며, Release에서도 실패하면 비정상 종료 코드를 반환합니다. 저장소 루트의 PowerShell에서 실행합니다.
+
+```powershell
+# 앱과 테스트를 네 구성에서 모두 재빌드하고 실행
+./tests/RunTests.ps1 -Rebuild
+
+# 선택한 구성만 빌드하고 실행
+./tests/RunTests.ps1 -Platforms x64 -Configurations Debug
+
+# x64 Release만 빌드하고 일부 테스트만 실행 (실패와 요약만 출력)
+./tests/RunTests.ps1 -Quick -Filter golden
+
+# headless srcli로 모드별 프레임 시간 측정 (목표 100fps, JSON Lines 저장)
+./tests/Bench.ps1
+```
+
+창 없이 같은 데모 장면을 렌더링하는 `srcli`(`tools/srcli`)와 골든 이미지 테스트(`tests/golden/*.png`)가 있습니다. `srcli render --out frame.png`로 프레임을 PNG로 저장할 수 있고, `CMakeLists.txt`로 Linux 등에서도 코어·srcli·테스트를 빌드할 수 있습니다(`tools/dev.sh`). AI 작업용 요약은 [CLAUDE.md](CLAUDE.md)에 있습니다.
+
+벤치마크는 60프레임 준비 후 지정한 프레임을 측정합니다. `none | sort | hiz | both`를 비교하고 `stats`는 진단할 때만 씁니다. 기본 `wire`는 X-ray이며 숨은 와이어는 마지막 `hidden`으로 선택합니다. 계측 없이 선택하려면 앞 진단 자리에 `nostats`를 명시합니다. 합성 장면은 `occluded | open`이며 표시 비용을 포함하지 않습니다. 상세 조건은 [유지보수 가이드](MAINTENANCE.md)를 참고하세요.
+
+```powershell
+.\tests\bin\x64\Release\RendererTests.exe . --benchmark 600 1280 720 fill none
+.\tests\bin\x64\Release\RendererTests.exe . --benchmark 600 1280 720 normal both stats
+.\tests\bin\x64\Release\RendererTests.exe . --benchmark 600 1280 720 wire none nostats hidden
+.\tests\bin\x64\Release\RendererTests.exe . --visibility-benchmark 600 1280 720 fill both occluded
+.\tests\bin\x64\Release\RendererTests.exe . --visibility-benchmark 600 1920 1080 fill none open
+.\tests\bin\x64\Release\RendererTests.exe . --visibility-benchmark 120 1280 720 wire none occluded nostats hidden
+```
+
+다음 표는 가시성 변경 이전 리팩터링의 2026-10-05 검증 기록입니다. 이번 버퍼 분리·숨은 선·정렬·Hi-Z의 검증 완료를 뜻하지 않습니다. 새 검증 상태는 [가시성 변경 기록](PERFORMANCE.md#renderer-visibility-2026)에 별도로 기록하며, 로그는 Git 대상에서 제외된 `tests/bin/logs`에 저장됩니다.
+
+| 구성 | 앱·테스트 재빌드 | 런타임 테스트 | 경고 |
+|---|---|---|---|
+| Debug × x64 | 통과 | 통과 | 0 |
+| Release × x64 | 통과 | 통과 | 0 |
+| Debug × Win32 | 통과 | 통과 | 0 |
+| Release × Win32 | 통과 | 통과 | 0 |
+
+행렬·법선 변환, AABB/Frustum, viewport, 정상·오류 자산과 SIMD 수치 비교도 검사합니다. IronMan·teapot은 숨겨진 Win32 창의 GDI 버퍼에서 회전·디버그 모드·FXAA를 실행했습니다. 앱과 테스트의 자산 배포 및 아키텍처별 oneTBB DLL 해시도 확인했습니다.
+
+**검증 범위:** 이 테스트는 headless 런타임이나 수동 시각 회귀를 대신하지 않습니다. 실제 카메라·마우스·최소화 조작, 변경 전후 화면 비교, AVX 미지원 실기기 검증은 아직 수행하지 않았습니다. 기존 8 → 58 FPS 이미지는 이번 리팩터링의 측정 결과가 아닙니다.
+
+**이전 성능 기록:** VS CPU Usage와 VTune으로 타일 중복 등록·선 렌더링 비용을 확인한 이전 최적화에서는 Release x64, 1280×720, 숨겨진 GDI 창의 3회 비교로 기본 채움·법선·와이어프레임 시간이 약 39.5%·26.8%·30.5% 감소했습니다. 이는 이번 숨은 와이어 옵션·정렬·Hi-Z의 결과가 아닙니다. 새 비교에서는 X-ray/숨은 와이어 설정과 법선 정책을 구분합니다. 당시 조건은 [성능 기록](PERFORMANCE.md#한국어), 새 비교는 [가시성 변경 기록](PERFORMANCE.md#renderer-visibility-2026)에 기록합니다.
+
+새 회귀 테스트는 메모리 target의 stride·padding·잘못된 크기·0 크기·깊이/ID와 FXAA, 가림·같은 깊이·단일/다중 worker의 픽셀·깊이 결과를 검사합니다. 메모리 렌더 테스트와 `srcli`는 창 없이 실행됩니다. FXAA의 기존 red/blue 휘도 가중치 불일치는 구조 변경과 분리해 유지하고 테스트로 고정합니다.
+
+**도구체인 제한:** MSVC 14.51.36231에서 소스 분리 후 `/GL` 링크 중 C1001 내부 컴파일러 오류가 발생해 Release의 LTCG만 비활성화했습니다. 일반 최적화와 SSE/AVX는 유지합니다. 도구체인 갱신 후 테스트와 성능 측정을 거쳐 재활성화할 수 있습니다.
 
 ## 빌드와 실행
 
@@ -249,9 +342,9 @@ oneTBB 2023.1.0과 stb_image는 `src/ThirdParty`에 포함돼 있어 별도 pack
 1. 저장소 루트의 `SoftrendererProject.sln`을 엽니다.
 2. `Release | x64` 또는 필요한 구성을 선택합니다.
 3. **Build > Build Solution**을 실행합니다.
-4. **Debug > Start Without Debugging**으로 실행합니다.
+4. `SoftrendererProject`를 시작 프로젝트로 지정하고 **Debug > Start Without Debugging**으로 실행합니다. `RendererTests`는 별도의 콘솔 테스트 실행 파일입니다.
 
-지원 구성은 `Debug|x64`, `Release|x64`, `Debug|Win32`, `Release|Win32`입니다. 빌드 후 `assets`와 해당 architecture의 `tbb12.dll`이 출력 directory로 자동 복사됩니다.
+지원 구성은 `Debug|x64`, `Release|x64`, `Debug|Win32`, `Release|Win32`입니다. 빌드 후 `assets`와 해당 architecture의 `tbb12_debug.dll`(Debug) 또는 `tbb12.dll`(Release)이 출력 directory로 자동 복사됩니다.
 
 ### 명령줄
 
@@ -273,6 +366,8 @@ msbuild .\SoftrendererProject.sln /m /p:Configuration=Release /p:Platform=x64
 
 창 상단 menu에서는 Bresenham/DDA line drawing, None/FXAA, Normal Vector/AABB/Wire Frame/Light Direction 표시를 선택할 수 있습니다.
 
+Algorithms의 `Front-to-back sorting (experimental)`, `Hi-Z culling (experimental)`, `Hidden-line wireframe (depth prepass)`은 독립 옵션이며 모두 기본 꺼짐입니다. Debug의 Wire Frame은 기본 X-ray 와이어를 표시하고, 숨은 와이어 옵션을 추가로 켜면 면 depth prepass와 숨은 선 제거를 사용합니다. 법선은 별도의 깊이 정책을 유지하고 AABB·광원 방향은 오버레이로 표시합니다.
+
 <details>
 <summary><strong>디렉터리 구조 보기</strong></summary>
 
@@ -281,16 +376,26 @@ msbuild .\SoftrendererProject.sln /m /p:Configuration=Release /p:Platform=x64
 ```text
 SoftwareRendererProject/
 ├─ assets/                 # OBJ, MTL, texture assets
+├─ build/                  # 앱·테스트 공통 MSBuild 설정과 소스 목록
+├─ tests/                  # 회귀 테스트, 골든 이미지, fixture, 실행 스크립트
+├─ tools/srcli/            # headless 벤치마크·PNG 덤프 CLI
 ├─ src/
-│  ├─ Core/               # WinAPI application과 main loop
+│  ├─ Core/               # WinAPI Framework, 데모 장면, headless 실행기
 │  ├─ Graphics/           # Model, Mesh, Material, Texture, Octree
 │  ├─ Math/               # SRMath, AABB, Frustum, SSE/AVX dispatch
 │  ├─ Modules/            # sr.math C++ module interface
-│  ├─ Platform/           # 최소 Win32 boundary header
+│  ├─ Platform/           # Win32 boundary header와 GDI 백버퍼 RAII
 │  ├─ Renderer/           # RenderQueue, clipping, tile rasterizer, FXAA
 │  ├─ Scene/              # Camera와 GameObject
 │  ├─ ThirdParty/         # oneTBB와 stb_image
 │  └─ Utils/              # error type, fixed-capacity storage, timing
+├─ ARCHITECTURE.md
+├─ CLAUDE.md              # AI 작업용 요약(명령, 규칙, 성능 기준)
+├─ CMakeLists.txt         # headless 빌드(코어, srcli, 테스트)
+├─ MAINTENANCE.md
+├─ PERFORMANCE.md
+├─ RendererTests.vcxproj
+├─ SrCli.vcxproj
 ├─ SoftrendererProject.sln
 └─ SoftrendererProject.vcxproj
 ```
@@ -305,6 +410,9 @@ SoftwareRendererProject/
 - lighting은 directional light 기반 Phong model을 중심으로 구현돼 있습니다.
 - 공개 FPS는 서로 다른 개발 단계의 기록이며 동일 조건의 정식 benchmark가 아닙니다.
 - 현재 구조는 CPU rendering pipeline 학습과 최적화에 집중하며 GPU API backend나 범용 scene editor는 범위에 포함하지 않습니다.
+- `sr.math`는 부분적으로 도입한 module입니다. 전체 소스를 named module이나 `import std;`로 전환한 상태는 아닙니다.
+- 렌더 코어와 headless 도구(`srcli`, 테스트)는 CMake로 GCC에서도 빌드되지만, 창 앱과 Framework/GDI 테스트는 Windows/MSVC 전용입니다. 새로운 Job System은 추가하지 않았습니다.
+- MTL은 색상·광택 값을 해석하며 `map_Kd`를 자동 연결하지 않습니다. 이미지 디코딩은 별도의 `LoadImageFile` API입니다.
 
 ## 외부 라이브러리
 

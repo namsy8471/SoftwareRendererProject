@@ -4,12 +4,15 @@
 #include <stdexcept>
 #include <string_view>
 #include <vector>
-#include <windows.h>
+#if defined(_WIN32)
+#include "Platform/Win32Headers.h"
+#endif
 
-// GetModuleFileNameW의 MAX_PATH 고정 버퍼는 긴 경로에서 잘릴 수 있다. C++11
-// vector를 성장 버퍼로 사용해 필요한 길이까지 반복하고 path로 소유권을 넘긴다.
 [[nodiscard]] inline std::filesystem::path GetExecutableDirectory()
 {
+#if !defined(_WIN32)
+    return std::filesystem::read_symlink("/proc/self/exe").parent_path();
+#else
     std::vector<wchar_t> buffer(260);
     for (;;)
     {
@@ -20,6 +23,7 @@
             return std::filesystem::path(buffer.data(), buffer.data() + length).parent_path();
         buffer.resize(buffer.size() * 2);
     }
+#endif
 }
 
 [[nodiscard]] inline std::filesystem::path MakeAssetPath(std::string_view nameWithExt)

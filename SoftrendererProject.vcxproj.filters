@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
     <Filter Include="소스 파일">
@@ -190,4 +190,24 @@
       <Filter>헤더 파일</Filter>
     </ClInclude>
   </ItemGroup>
+  <ItemGroup><ClCompile Include="src\Platform\GdiBackBuffer.cpp" /></ItemGroup>
+  <ItemGroup><ClInclude Include="src\Platform\GdiBackBuffer.h" /></ItemGroup>
+  <ItemGroup><ClCompile Include="src\Renderer\RendererClipping.cpp" /></ItemGroup>
+  <ItemGroup><ClCompile Include="src\Renderer\RendererFrontend.cpp" /></ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="src\Renderer\Rasterizer.cpp" />
+    <ClCompile Include="src\Renderer\RenderTarget.cpp" />
+    <ClCompile Include="src\Platform\GdiPresenter.cpp" />
+    <ClInclude Include="src\Renderer\Rasterizer.h" />
+    <ClInclude Include="src\Renderer\RenderTarget.h" />
+    <ClInclude Include="src\Renderer\RenderTypes.h" />
+    <ClInclude Include="src\Platform\GdiPresenter.h" />
+  </ItemGroup>
+  <ItemGroup><ClInclude Include="src\Math\FixedPoint.h" /></ItemGroup>
+  <ItemGroup><ClInclude Include="src\Math\Vector.h" /></ItemGroup>
+  <ItemGroup><ClInclude Include="src\Math\Matrix.h" /></ItemGroup>
+  <ItemGroup><ClInclude Include="src\Graphics\AssetParsing.h" /></ItemGroup>
+  <ItemGroup><ClInclude Include="src\Renderer\DebugGizmos.h" /></ItemGroup>
+  <ItemGroup><ClCompile Include="src\Renderer\DebugGizmos.cpp" /></ItemGroup>
+  <ItemGroup><ClCompile Include="src\Renderer\RendererShading.cpp" /></ItemGroup>
 </Project>

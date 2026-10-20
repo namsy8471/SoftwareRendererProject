@@ -1,1098 +1,422 @@
-﻿#include "Renderer.h"
-#include <array>
-#include <vector>
-#include <algorithm>
-#include <limits>
-#include <cmath>
-#include <unordered_map>
-#include <utility>
-#include <tbb/tbb.h>
-
-#include "Graphics/Mesh.h"
-#include "Graphics/Texture.h"
-#include "Math/AABB.h"
-#include "Graphics/Octree.h"
-#include "Math/Frustum.h"
-#include "Scene/Camera.h"
-#include "Graphics/light.h"
+#include "Renderer/Renderer.h"
 #include "Renderer/RenderQueue.h"
-#include "Graphics/Material.h"
-#include "Renderer/Tile.h"
 #include "Renderer/FXAA.h"
-#include "Renderer/ShaderVertices.h"
+#include "Graphics/Light.h"
+#include "Scene/Camera.h"
+#include <algorithm>
+#include <array>
+#include <chrono>
+#include <limits>
+#include <stdexcept>
+#include <tbb/blocked_range.h>
+#include <tbb/parallel_for.h>
 
-constexpr std::size_t max_triangles_per_thread_pool = 10'000;
-
-Renderer::GdiBackBuffer::GdiBackBuffer(GdiBackBuffer&& other) noexcept
-    : m_memoryDc(std::exchange(other.m_memoryDc, nullptr)),
-      m_bitmap(std::exchange(other.m_bitmap, nullptr)),
-      m_previousBitmap(std::exchange(other.m_previousBitmap, nullptr))
+namespace
 {
+using FrameClock = std::chrono::steady_clock;
+double elapsedMilliseconds(FrameClock::time_point start)
+{
+    return std::chrono::duration<double, std::milli>(FrameClock::now() - start).count();
+}
+} // namespace
+
+void Renderer::ensureViewport(int width, int height)
+{
+    if (width == m_width && height == m_height)
+        return;
+    const auto tilesX = (static_cast<std::size_t>(width) + tileSize - 1) / tileSize;
+    const auto tilesY = (static_cast<std::size_t>(height) + tileSize - 1) / tileSize;
+    if (tilesY != 0 && tilesX > std::numeric_limits<std::size_t>::max() / tilesY)
+        throw std::length_error("Viewport tile count exceeded");
+    const auto tileCount = tilesX * tilesY;
+    if (tileCount == std::numeric_limits<std::size_t>::max())
+        throw std::length_error("Viewport tile offset count exceeded");
+    // 두 할당 성공 후 viewport를 교체한다. offset의 마지막 원소는 전체 참조 수다.
+    std::vector<std::size_t> offsets(tileCount + 1);
+    std::vector<RenderStats> stats(tileCount);
+    m_tileOffsets.swap(offsets);
+    m_tileStats.swap(stats);
+    m_width = width;
+    m_height = height;
+    // 빈 target은 진입 전에 거른다. 덧셈 기반 ceil의 int overflow를 피한다.
+    m_lineBandCount = std::min(maximumLineBands, (height - 1) / 64 + 1);
+    m_lineBandHeight = (height - 1) / m_lineBandCount + 1;
 }
 
-Renderer::GdiBackBuffer& Renderer::GdiBackBuffer::operator=(GdiBackBuffer&& other) noexcept
+std::span<const PreparedDirectionalLight> Renderer::prepareLights(std::span<const DirectionalLight> lights)
 {
-    if (this == &other) return *this;
-    reset();
-    m_memoryDc = std::exchange(other.m_memoryDc, nullptr);
-    m_bitmap = std::exchange(other.m_bitmap, nullptr);
-    m_previousBitmap = std::exchange(other.m_previousBitmap, nullptr);
-    return *this;
+    // 이전 프레임의 광원 변경/삭제를 즉시 반영한다. reserve 실패 시 worker를 시작하지 않으며,
+    // 부분 준비 상태를 다음 프레임으로 재사용하지 않는다. 같은 Renderer의 동시 호출은 금지한다.
+    m_preparedLights.clear();
+    m_preparedLights.reserve(lights.size());
+    for (const auto &light : lights)
+        m_preparedLights.push_back(PreparedDirectionalLight::From(light));
+    return m_preparedLights;
 }
 
-bool Renderer::GdiBackBuffer::create(HWND window, int width, int height, unsigned int*& pixels) noexcept
+void Renderer::RenderScene(RenderTarget &target, const RenderQueue &queue, const Camera &camera,
+                           std::span<const DirectionalLight> lights)
 {
-    reset();
-    pixels = nullptr;
-
-    HDC screenDc = GetDC(window);
-    if (!screenDc) return false;
-
-    // MSVC v145가 아직 C++23 <scope>를 제공하지 않아 동일 계약의 작은
-    // 프로젝트 RAII guard를 사용한다. 모든 조기 반환에서 화면 DC가 해제된다.
-    struct ScreenDcGuard
+    m_stats = {};
+    if (target.Empty())
+        return;
+    const auto started = FrameClock::now();
+    ensureViewport(target.Width(), target.Height());
+    const FrameContext frame{camera.GetProjectionMatrix() * camera.GetViewMatrix(), camera.GetCameraPos(),
+                             prepareLights(lights), (m_width + tileSize - 1) / tileSize,
+                             (m_height + tileSize - 1) / tileSize};
+    prepareFrame();
+    if (m_options.collectStats)
+        m_stats.prepareMs = elapsedMilliseconds(started);
+    auto stage = FrameClock::now();
+    binCommands(queue, frame);
+    if (m_options.collectStats)
     {
-        HWND window;
-        HDC dc;
-        ~ScreenDcGuard() { ReleaseDC(window, dc); }
-    };
-    const ScreenDcGuard releaseScreenDc{ window, screenDc };
-
-    m_memoryDc = CreateCompatibleDC(screenDc);
-    if (!m_memoryDc) return false;
-
-    BITMAPINFO bitmapInfo{};
-    bitmapInfo.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    bitmapInfo.bmiHeader.biWidth = width;
-    bitmapInfo.bmiHeader.biHeight = -height;
-    bitmapInfo.bmiHeader.biPlanes = 1;
-    bitmapInfo.bmiHeader.biBitCount = 32;
-    bitmapInfo.bmiHeader.biCompression = BI_RGB;
-
-    void* rawPixels = nullptr;
-    m_bitmap = CreateDIBSection(m_memoryDc, &bitmapInfo, DIB_RGB_COLORS, &rawPixels, nullptr, 0);
-    if (!m_bitmap)
-    {
-        reset();
-        return false;
+        m_stats.binMs = elapsedMilliseconds(stage);
+        for (const auto &scratch : m_workerScratch)
+        {
+            m_stats.preparedTriangles += scratch.triangles.size();
+            m_stats.liveTriangleBytes += scratch.triangles.size() * sizeof(TriangleRef);
+            m_stats.retainedTriangleBytes += scratch.triangles.capacity() * sizeof(TriangleRef);
+            // 최종 scatter 복사본과 중복 합산하지 않는 논리적 triangle→tile 수다.
+            m_stats.binReferences += scratch.tileReferences.size();
+        }
     }
-
-    m_previousBitmap = SelectObject(m_memoryDc, m_bitmap);
-    if (!m_previousBitmap || m_previousBitmap == HGDI_ERROR)
+    const bool needsDepthPrepass =
+        m_options.hiddenWireframe &&
+        std::ranges::any_of(queue.GetRenderCommands(), [](const auto &command)
+                            { return command.rasterizeMode == ERasterizeMode::Wireframe; });
+    stage = FrameClock::now();
+    renderTiles(target, frame, needsDepthPrepass);
+    if (m_options.collectStats)
     {
-        reset();
-        return false;
+        m_stats.rasterMs = elapsedMilliseconds(stage);
+        for (const auto &stats : m_tileStats)
+            m_stats.MergeCounters(stats);
+        for (auto id : target.PrimitiveIds())
+            m_stats.finalFilledPixels += id != RenderTarget::emptyOwner;
     }
-
-    pixels = static_cast<unsigned int*>(rawPixels);
-    return true;
-}
-
-void Renderer::GdiBackBuffer::reset() noexcept
-{
-    if (m_memoryDc && m_previousBitmap && m_previousBitmap != HGDI_ERROR)
-        SelectObject(m_memoryDc, m_previousBitmap);
-    if (m_bitmap)
-        DeleteObject(m_bitmap);
-    if (m_memoryDc)
-        DeleteDC(m_memoryDc);
-
-    m_previousBitmap = nullptr;
-    m_bitmap = nullptr;
-    m_memoryDc = nullptr;
-}
-
-
-// 설명: GDI 백버퍼/DC 초기 상태 설정
-Renderer::Renderer(HWND hWnd)
-{
-	if(!reInit(hWnd)) throw std::runtime_error("Failed to initialize Renderer");
-}
-
-// 설명: 리소스 해제는 Shutdown()에서 수행
-Renderer::~Renderer()
-{
-    shutdownForResize();
-}
-
-// 화면 경계 검사 후 지정 좌표에 픽셀 기록
-void Renderer::drawPixel(int x, int y, unsigned int color)
-{
-    // Checking Boundary
-    // 화면 밖을 침범해서 메모리를 오염시키는 것을 방지합니다.
-    if (x < 0 || x >= m_width || y < 0 || y >= m_height)
+    stage = FrameClock::now();
+    renderLines(target, queue, frame);
+    if (m_options.collectStats)
     {
+        m_stats.lineMs = elapsedMilliseconds(stage);
+        // scatter/법선 bin의 이번 프레임 할당까지 완료된 후 실제 보유 용량을 센다.
+        updateRetainedBinBytes();
+    }
+    stage = FrameClock::now();
+    applyPostProcessing(target);
+    if (m_options.collectStats)
+        m_stats.postMs = elapsedMilliseconds(stage);
+}
+
+void Renderer::prepareTileReferences()
+{
+    m_tileReferences.clear();
+    if (m_activeTileWorkers.empty())
+    {
+        // fill→X-ray 또는 빈 프레임 전환에서도 이전 offset/참조가 남지 않는다.
+        std::ranges::fill(m_tileOffsets, 0);
         return;
     }
 
-    // !! Important
-    // Color exchange to RGB from BGR
-    unsigned char r = (color >> 16) & 0xFF;
-    unsigned char g = (color >> 8) & 0xFF;
-    unsigned char b = (color >> 0) & 0xFF;
-
-    unsigned int newColor = (r << 0) | (g << 8) | (b << 16);
-
-    // 1차원 배열 인덱스를 계산해서 픽셀 값을 직접 씁니다.
-    m_pPixelData[y * m_width + x] = newColor;
-}
-
-// Bresenham Algorithm
-// 정수 기반 오차 누적 방식으로 선분을 그립니다.
-void Renderer::drawLineByBresenham(int x0, int y0, int x1, int y1, unsigned int color)
-{
-    const int dx = abs(x1 - x0);
-    const int sx = (x0 < x1) ? 1 : -1;
-    const int dy = -abs(y1 - y0); // y는 음수인 것이 계산에 편리
-    const int sy = (y0 < y1) ? 1 : -1;
-
-    int err = dx + dy;
-
-    while (true)
+    // 타일 순서의 prefix 안에 worker 순서대로 서로 겹치지 않는 목적 구간을
+    // 배정한다. 기존 private-bin 병합과 같은 worker별 삽입 순서를 보존한다.
+    std::size_t total = 0;
+    for (std::size_t tile = 0; tile < m_tileStats.size(); ++tile)
     {
-        // 안전 인덱스 검사 후 픽셀 쓰기
-        int idx = y0 * m_width + x0;
-        if (idx >= 0 && static_cast<std::size_t>(idx) < m_depthBuffer.size())
+        m_tileOffsets[tile] = total;
+        for (auto *worker : m_activeTileWorkers)
         {
-            drawPixel(x0, y0, color);
-        }
-
-        // 종료 조건
-        if (x0 == x1 && y0 == y1) break;
-
-        int e2 = 2 * err;
-
-        // x 스텝 진행
-        if (e2 >= dy)
-        {
-            err += dy;
-            x0 += sx;
-        }
-        // y 스텝 진행
-        if (e2 <= dx)
-        {
-            err += dx;
-            y0 += sy;
+            auto &state = worker->tileScatter[tile];
+            if (state.count > m_tileReferences.max_size() - total)
+                throw std::length_error("Tile reference prefix capacity exceeded");
+            state.cursor = total;
+            total += state.count;
         }
     }
+    m_tileOffsets.back() = total;
+    // vector 용량을 프레임 간 재사용한다. 실패하면 scatter/래스터는 시작하지 않으며
+    // 다음 prepareFrame이 private count/참조를 초기화한다.
+    m_tileReferences.resize(total);
+
+    // 각 작업은 한 worker의 cursor와 사전 배정된 목적 슬롯만 쓴다. 모든 count는
+    // frontend push 성공 후 증가했으므로 매 참조가 정확히 한 슬롯을 채운다.
+    tbb::parallel_for(tbb::blocked_range<std::size_t>(0, m_activeTileWorkers.size(), 1),
+                      [&](const tbb::blocked_range<std::size_t> &range)
+                      {
+                          for (auto index = range.begin(); index != range.end(); ++index)
+                          {
+                              auto &worker = *m_activeTileWorkers[index];
+                              for (const auto &reference : worker.tileReferences)
+                                  m_tileReferences[worker.tileScatter[reference.tileIndex].cursor++] =
+                                      reference.triangle;
+                          }
+                      });
 }
 
-// DDA(Digital Differential Analyzer) Algorithm
-// 실수 증분 기반으로 선분을 그립니다.
-void Renderer::drawLineByDDA(int x0, int y0, int x1, int y1, unsigned int color)
+void Renderer::renderTiles(RenderTarget &target, const FrameContext &frame, bool needsDepthPrepass)
 {
-    const int dx = x1 - x0;
-    const int dy = y1 - y0;
-
-    int steps = abs(dx) > abs(dy) ? abs(dx) : abs(dy);
-
-    // steps가 0인 경우(시작점과 끝점이 같음) 즉시 픽셀을 그리고 종료
-    if (steps == 0) {
-        drawPixel(x0, y0, color);
+    // scatter join 뒤에만 각 타일의 span을 정렬/래스터한다.
+    prepareTileReferences();
+    if (m_tileReferences.empty())
+    {
+        // 빈 X-ray 프레임에는 타일 작업을 만들지 않되 이전 통계는 지운다.
+        std::ranges::fill(m_tileStats, RenderStats{});
         return;
     }
-
-    const double x_inc = dx / (double)steps;
-    const double y_inc = dy / (double)steps;
-
-    double x = x0;
-    double y = y0;
-    
-    for (int i = 0; i <= steps; i++) {
-        // 반올림하여 정수 픽셀에 기록
-        drawPixel(static_cast<int> (round(x)), static_cast<int> (round(y)), color);
-        x += x_inc;
-        y += y_inc;
-    }
-    
-}
-
-// 현재 설정된 알고리즘으로 선분을 그립니다.
-void Renderer::drawLine(int x0, int y0, int x1, int y1, unsigned int color)
-{
-    switch (m_currentLineAlgorithm)
-    {
-    case ELineAlgorithm::Bresenham:
-        drawLineByBresenham(x0, y0, x1, y1, color);
-        break;
-    
-    case ELineAlgorithm::DDA:
-        drawLineByDDA(x0, y0, x1, y1, color);
-        break;
-    }
-}
-
-// 3개의 점으로 삼각형 외곽선 렌더링 (정수 좌표)
-void Renderer::drawTriangle(int x0, int y0, int x1, int y1, int x2, int y2, unsigned int color)
-{
-    drawLine(x0, y0, x1, y1, color);
-    drawLine(x1, y1, x2, y2, color);
-    drawLine(x2, y2, x0, y0, color);
-}
-
-// 3개의 점으로 삼각형 외곽선 렌더링 (vec2 좌표)
-void Renderer::drawTriangle(const SRMath::vec2& v0, const SRMath::vec2& v1, const SRMath::vec2& v2, unsigned int color)
-{
-    drawTriangle(static_cast<int> (v0.x), static_cast<int>(v0.y), static_cast<int>(v1.x), static_cast<int>(v1.y),
-        static_cast<int>(v2.x), static_cast<int>(v2.y), color);
-}
-
-// 렌더러 클리어
-void Renderer::Clear()
-{
-	// 화면을 검정(0)으로 초기화
-    // memset의 byte 단위 계약 대신 요소 타입을 아는 범위 알고리즘을 사용한다.
-    std::ranges::fill_n(m_pPixelData, m_depthBuffer.size(), 0u);
-
-    // 깊이 버퍼는 가장 낮은 값으로 초기화 (더 큰 z^-1만 패스)
-	std::fill(m_depthBuffer.begin(), m_depthBuffer.end(), std::numeric_limits<float>::lowest());
-
-    for(auto& storage : m_finalTriangleBins) storage.clear();
-	
-}
-
-// 설명: 백버퍼(m_hMemDC)의 내용을 화면 DC로 복사 (Present)
-void Renderer::Present(HDC hScreenDC) const
-{
-    // BitBlt API를 사용해 메모리 DC의 내용을 화면 DC로 복사합니다.
-    BitBlt(hScreenDC,      // 복사 대상 DC (화면)
-        0, 0,           // 대상의 시작 좌표 (x, y)
-        m_width,        // 복사할 너비
-        m_height,       // 복사할 높이
-        m_backBuffer.get(), // 복사 원본 DC (백버퍼)
-        0, 0,           // 원본의 시작 좌표 (x, y)
-        SRCCOPY);       // 복사 방식 (그대로 복사)
-}
-
-
-void Renderer::drawDebugPrimitive(const DebugPrimitiveCommand& cmd, const SRMath::mat4& vp)
-{
-    if (cmd.vertices.empty()) return;
-
-    const SRMath::mat4 modelMatrix = cmd.worldTransform;
-    SRMath::mat4 mvp = vp * modelMatrix;
-
-    switch (cmd.type)
-    {
-        // 선분 그리기
-    case DebugPrimitiveType::Line:
-    {
-        // DebugVertex는 alpha를 포함하지만 GDI 선은 RGB만 사용한다. vec4 ->
-        // vec3 축소를 명시해 w를 의도적으로 버리는 지점을 드러낸다.
-        const SRMath::vec3 color{ cmd.vertices[0].color };
-
-        for (std::size_t i = 0; i + 1 < cmd.vertices.size(); i += 2)
+    tbb::parallel_for(
+        tbb::blocked_range<std::size_t>(0, m_tileStats.size()),
+        [&](const tbb::blocked_range<std::size_t> &range)
         {
-            const DebugVertex& start_pos_world = cmd.vertices[i];
-            const DebugVertex& end_pos_world = cmd.vertices[i + 1];
-
-            auto start_clip = mvp * start_pos_world.position;
-            auto end_clip = mvp * end_pos_world.position;
-
-            if (start_clip.w <= 0.1f || end_clip.w <= 0.1f) continue;
-
-            start_clip.x /= start_clip.w;
-            start_clip.y /= start_clip.w;
-            end_clip.x /= end_clip.w;
-            end_clip.y /= end_clip.w;
-
-            int startX = static_cast<int>((start_clip.x + 1.0f) * 0.5f * m_width);
-            int startY = static_cast<int>((1.0f - start_clip.y) * 0.5f * m_height);
-            int endX = static_cast<int>((end_clip.x + 1.0f) * 0.5f * m_width);
-            int endY = static_cast<int>((1.0f - end_clip.y) * 0.5f * m_height);
-
-            drawLine(startX, startY, endX, endY,
-                RGB(color.x * 255.f, color.y * 255.f, color.z * 255.f));
-        }
-        break;
-    }
-    }
-
-    // 다른 디버그 프리미티브 타입도 추가 가능
-}
-
-// 속성(Attribute) 보간 함수
-ShadedVertex Renderer::interpolate(const ShadedVertex& v0, const ShadedVertex& v1, float t)
-{
-	// Sutherland-Hodgman 알고리즘을 사용하여 두 정점 사이의 속성을 선형 보간합니다.
-
-    ShadedVertex result;
-    // 모든 속성을 선형 보간합니다.
-    // 클립 공간 좌표는 t를 사용해 그대로 선형 보간합니다.
-    // 결과 정점의 w 값은 이 보간을 통해 자연스럽게 계산됩니다.
-    result.posClip = v0.posClip + (v1.posClip - v0.posClip) * t;
-
-    // --- 원근 보정 시작 ---
-
-    // 1. 각 정점의 1/w 값을 계산합니다.
-    float inv_w0 = 1.0f / v0.posClip.w;
-    float inv_w1 = 1.0f / v1.posClip.w;
-
-    // 2. 1/w 값을 t를 이용해 선형 보간합니다.
-    float interp_inv_w = inv_w0 + (inv_w1 - inv_w0) * t;
-
-    // 3. 보간된 1/w의 역수를 취해, 새 정점의 w값에 해당하는 보정 계수를 구합니다.
-    //    (사실 이 값은 result.pos_clip.w와 거의 동일합니다)
-    float interp_w = 1.0f / interp_inv_w;
-
-    // 4. 나머지 모든 속성들은 (속성/w) 값을 보간한 뒤, 보정된 w를 곱해줍니다.
-    //    아래 수식은 (v0.attr/v0.w * (1-t) + v1.attr/v1.w * t) / (1/v0.w * (1-t) + 1/v1.w * t)
-    //    를 정리한 형태입니다.
-    result.posWorld = (v0.posWorld * inv_w0 * (1.0f - t) + v1.posWorld * inv_w1 * t) * interp_w;
-    result.normalWorld = (v0.normalWorld * inv_w0 * (1.0f - t) + v1.normalWorld * inv_w1 * t) * interp_w;
-    result.texcoord = (v0.texcoord * inv_w0 * (1.0f - t) + v1.texcoord * inv_w1 * t) * interp_w;
-
-    return result;
-}
-
-// 하나의 평면으로 폴리곤을 클리핑하는 함수
-void Renderer::clipPolygonAgainstPlane(ClipBuffer& outVertices,
-    const ClipBuffer& inVertices, const __m128& plane)
-{
-	outVertices.clear();
-    if(inVertices.empty()) return;
-
-    // SIMD 최적화를 위해 0 벡터를 미리 생성
-    const __m128 zero = _mm_setzero_ps();
-
-    for (size_t i = 0; i < inVertices.size(); ++i)
-    {
-        const ShadedVertex& current_v = inVertices[i];
-        const ShadedVertex& prev_v = inVertices[i == 0 ? inVertices.size() - 1 : i - 1];
-
-        // 각 정점의 w 값에 plane_sign을 곱한 값과, 특정 축(axis) 값을 비교합니다.
-        // 예: Left Plane (w + x >= 0) -> axis=0(x), sign=1. dist = w + x
-
-        // --- SIMD 거리 계산 ---
-        __m128 currentPosPs = _mm_load_ps(&current_v.posClip.x);
-        __m128 prevPosPs = _mm_load_ps(&prev_v.posClip.x);
-
-        __m128 distsPs = _mm_dp_ps(currentPosPs, plane, 0xF1); // dists_ps = [current_dist, ?, ?, ?]
-        distsPs = _mm_add_ps(distsPs, _mm_dp_ps(prevPosPs, plane, 0xF2)); // dists_ps = [current_dist, prev_dist, ?, ?]
-
-        // 비교 연산까지 모두 SIMD로 처리하여 파이프라인 스톨 제거
-        __m128 inside_mask_ps = _mm_cmpge_ps(distsPs, zero); // [c_inside_mask, p_inside_mask, ?, ?]
-
-        // SIMD 마스크 결과를 정수 하나로 매우 빠르게 추출
-        int inside_mask = _mm_movemask_ps(inside_mask_ps);
-
-        bool isCurrentInside = inside_mask & 1;
-        bool isPrevInside =    inside_mask & 2;
-
-        if (isCurrentInside != isPrevInside)
-        {
-            // 교차점 계산은 스칼라로 수행 (SIMD->스칼라 변환이 필요하므로)
-            float currentDist = _mm_cvtss_f32(distsPs);
-            float prevDist = _mm_cvtss_f32(_mm_shuffle_ps(distsPs, distsPs, _MM_SHUFFLE(1, 1, 1, 1)));
-
-            // 두 정점이 평면을 기준으로 서로 다른 쪽에 있으면 교차점을 계산
-            float t = prevDist / (prevDist - currentDist);
-            ShadedVertex intersection = interpolate(prev_v, current_v, t);
-            outVertices.emplace_back(intersection);
-        }
-
-        if (isCurrentInside)
-        {
-            // 현재 정점이 평면 안쪽에 있으면 결과에 추가
-            outVertices.emplace_back(current_v);
-        }
-    }
-}
-
-// C++11 scoped enum은 평면 비트를 전역 정수 이름으로 흘리지 않는다. C++23
-// to_underlying로 비트 마스크가 필요한 지점에서만 명시적으로 정수화한다.
-enum class ClipPlane : std::uint8_t
-{
-    left = 1u << 0,
-    right = 1u << 1,
-    bottom = 1u << 2,
-    top = 1u << 3,
-    near_plane = 1u << 4,
-    far_plane = 1u << 5
-};
-
-// 절두체 평면에 대한 아웃코드 계산 함수
-[[nodiscard]] std::uint8_t ComputeOutcode(const SRMath::vec4& posClip) noexcept
-{
-    std::uint8_t outcode = 0;
-
-    if (posClip.x < -posClip.w) outcode |= std::to_underlying(ClipPlane::left);
-    if (posClip.x > posClip.w) outcode |= std::to_underlying(ClipPlane::right);
-    if (posClip.y < -posClip.w) outcode |= std::to_underlying(ClipPlane::bottom);
-    if (posClip.y > posClip.w) outcode |= std::to_underlying(ClipPlane::top);
-    if (posClip.z < -posClip.w) outcode |= std::to_underlying(ClipPlane::near_plane);
-    if (posClip.z > posClip.w) outcode |= std::to_underlying(ClipPlane::far_plane);
-
-    return outcode;
-}
-
-// 삼각형을 6개의 절두체 평면으로 클리핑하는 메인 함수
-void Renderer::clipTriangle(ClipBuffer& outVertices, const ShadedVertex& v0, const ShadedVertex& v1, const ShadedVertex& v2,
-    ClipBuffer& buffer1, ClipBuffer& buffer2)
-{
-    buffer1.clear();
-    buffer1.emplace_back(v0);
-    buffer1.emplace_back(v1);
-    buffer1.emplace_back(v2);
-
-	auto* in_v = &buffer1;
-	auto* out_v = &buffer2;
-
-	// 6개의 절두체 평면에 대해 클리핑을 수행합니다.
-    // // _mm_set_ps는 인자 순서가 (w, z, y, x)로 역순임에 주의!
-    const __m128 plane_left = _mm_set_ps(1.0f, 0.0f, 0.0f, 1.0f);  //  x + w >= 0
-    const __m128 plane_right = _mm_set_ps(1.0f, 0.0f, 0.0f, -1.0f); // -x + w >= 0
-    const __m128 plane_bottom = _mm_set_ps(1.0f, 0.0f, 1.0f, 0.0f);  //  y + w >= 0
-    const __m128 plane_top = _mm_set_ps(1.0f, 0.0f, -1.0f, 0.0f); // -y + w >= 0
-    const __m128 plane_near = _mm_set_ps(1.0f, 1.0f, 0.0f, 0.0f);  //  z + w >= 0
-    const __m128 plane_far = _mm_set_ps(1.0f, -1.0f, 0.0f, 0.0f); // -z + w >= 0
-
-    // Near Plane  ( w + z >= 0 )
-    clipPolygonAgainstPlane(*out_v, *in_v, plane_near);
-    if (out_v->empty()) return; // 클리핑 결과가 비어있으면 더 이상 진행하지 않습니다.
-    std::swap(in_v, out_v);
-
-    // Far Plane   ( w - z >= 0 )
-    clipPolygonAgainstPlane(*out_v, *in_v, plane_far);
-    if (out_v->empty()) return;
-    std::swap(in_v, out_v);
-
-    // Left Plane  ( w + x >= 0 )
-    clipPolygonAgainstPlane(*out_v, *in_v, plane_left);
-    if( out_v->empty()) return; 
-	std::swap(in_v, out_v);
-
-    // Right Plane ( w - x >= 0 )
-    clipPolygonAgainstPlane(*out_v, *in_v, plane_right);
-    if (out_v->empty()) return;
-    std::swap(in_v, out_v);
-    
-    // Bottom Plane( w + y >= 0 )
-    clipPolygonAgainstPlane(*out_v, *in_v, plane_bottom);
-    if (out_v->empty()) return;
-    std::swap(in_v, out_v);
-    
-    // Top Plane   ( w - y >= 0 )
-    clipPolygonAgainstPlane(*out_v, *in_v, plane_top);
-    if (out_v->empty()) return;
-    std::swap(in_v, out_v);
-    
-	outVertices = *in_v; // 최종 결과를 out_vertices에 저장
-}
-
-
-void Renderer::RenderScene(const RenderQueue& queue, const Camera& camera, std::span<const DirectionalLight> lights)
-{
-    const SRMath::mat4& viewMatrix = camera.GetViewMatrix();
-    const SRMath::mat4& projectionMatrix = camera.GetProjectionMatrix();
-	const SRMath::mat4& vp = projectionMatrix * viewMatrix;
-
-    // 타일 데이터 버퍼 초기화
-    int numTilesX = (m_width + tile_size - 1) / tile_size;
-    int numTilesY = (m_height + tile_size - 1) / tile_size;
-	int totalTiles = numTilesX * numTilesY;
-
-    m_frameCounter++;
-
-    size_t cmd_count = queue.GetRenderCommands().size();
-    // 병렬 Binning: 각 스레드는 자기 ID에 맞는 개인 사물함에만 접근
-    tbb::parallel_for(tbb::blocked_range<int>(0, static_cast<int>(cmd_count)),
-        [&](const tbb::blocked_range<int>& r) {
-            
-			auto& myPool = m_threadTrianglePools.local(); // 각 스레드의 삼각형 풀
-            auto& myThreadShadedVertex = m_threadShadedVertexBuffers.local();     // 각 스레드마다 타일에 클리프 공간 좌표를 저장
-            auto& myThreadStamp = m_threadStamps.local();                         // 각 스레드마다 타일에 스탬프를 저장
-            auto& myThreadClipBuffer1 = m_threadClipBuffer1.local();
-            auto& myThreadClipBuffer2 = m_threadClipBuffer2.local();
-            auto& myThreadClippedVertices = m_threadClippedVertices.local();
-            auto& myThreadNormalMatrixCache = m_threadNormalMatrixCache.local();  // 역행렬 캐시
-
-			thread_local std::uint64_t lastCleaned_frame =
-				std::numeric_limits<std::uint64_t>::max();
-
-            if (lastCleaned_frame != m_frameCounter) {
-
-                myPool.clear();
-                myThreadClipBuffer1.clear();
-                myThreadClipBuffer2.clear();
-                myThreadClippedVertices.clear();
-                myThreadNormalMatrixCache.clear();
-
-                lastCleaned_frame = m_frameCounter;
-			}
-
-            for (int cmd_idx = r.begin(); cmd_idx != r.end(); ++cmd_idx)
+            for (auto index = range.begin(); index != range.end(); ++index)
             {
-                const auto& cmd = queue.GetRenderCommands()[cmd_idx];
-                const Mesh* mesh = cmd.sourceMesh;
-                const SRMath::mat4& worldTransform = cmd.worldTransform;
-                const SRMath::mat4 mvp = vp * worldTransform;
-
-                if (myThreadNormalMatrixCache.find(&cmd) == myThreadNormalMatrixCache.end())
-                    myThreadNormalMatrixCache.try_emplace(&cmd, SRMath::inverse_transpose(worldTransform).value_or(SRMath::mat4(1.f)));
-
-                const SRMath::mat4 inverseTransposeWorld = myThreadNormalMatrixCache.at(&cmd);
-
-                const auto& vertices = mesh->vertices;
-                const auto indices = cmd.indicesToDraw; // 실제 그릴 인덱스 목록
-
-                const std::uint64_t myStamp =
-					(m_frameCounter << 32) | static_cast<std::uint64_t>(cmd_idx);
-
-                // --- High-Watermark 로직으로 캐시 크기 관리 ---
-                if (myThreadShadedVertex.size() < vertices.size())
+                auto bin =
+                    std::span<TriangleRef *>(m_tileReferences)
+                        .subspan(m_tileOffsets[index], m_tileOffsets[index + 1] - m_tileOffsets[index]);
+                auto &stats = m_tileStats[index];
+                stats = {};
+                if (bin.empty())
+                    continue;
+                if (m_options.frontToBack)
+                    std::sort(bin.begin(), bin.end(),
+                              [](const auto *a, const auto *b)
+                              {
+                                  if (a->maximumInverseW != b->maximumInverseW)
+                                      return a->maximumInverseW > b->maximumInverseW;
+                                  return a->primitiveId < b->primitiveId;
+                              });
+                const int x = static_cast<int>(index % frame.tilesX) * tileSize;
+                const int y = static_cast<int>(index / frame.tilesX) * tileSize;
+                Rasterizer rasterizer(target, frame, m_options.collectStats ? &stats : nullptr);
+                rasterizer.BeginTile(
+                    {x, y, std::min(x + tileSize, m_width), std::min(y + tileSize, m_height)}, m_options.hiZ);
+                if (needsDepthPrepass)
                 {
-                    myThreadShadedVertex.resize(vertices.size());
-                    myThreadStamp.resize(vertices.size(),
-						std::numeric_limits<std::uint64_t>::max());
+                    // 혼합 모드도 모든 면의 깊이를 먼저 완성해야 뒤쪽 채움 색이 남지 않는다.
+                    for (const auto *triangle : bin)
+                        rasterizer.DrawTriangle(*triangle, RasterPass::DepthOnly);
+                    for (const auto *triangle : bin)
+                        if (triangle->sourceCommand->rasterizeMode == ERasterizeMode::Fill)
+                            rasterizer.DrawTriangle(*triangle, RasterPass::ShadeVisible);
                 }
-
-                // 메쉬의 모든 '삼각형'을 순회합니다.
-                for (size_t i = 0; i < indices.size(); i += 3)
-                {
-                    // 삼각형의 세 정점 인덱스를 가져옵니다.
-                    uint32_t i0 = indices[i];
-                    uint32_t i1 = indices[i + 1];
-                    uint32_t i2 = indices[i + 2];
-
-                    ShadedVertex sv0, sv1, sv2;
-
-                    // --- 정점 0 셰이딩 및 캐싱 ---
-                    if (myThreadStamp[i0] != myStamp) {
-                        // 캐시 미스(Cache Miss): 처음 보는 정점이므로 모든 셰이딩 수행
-                        const Vertex& vIn = vertices[i0];
-                        ShadedVertex temp_sv;
-                        temp_sv.posClip = mvp * SRMath::vec4(vIn.position, 1.0f);
-                        temp_sv.posWorld = SRMath::vec3(worldTransform * SRMath::vec4(vIn.position, 1.0f));
-                        temp_sv.normalWorld = SRMath::normalize(SRMath::vec3(inverseTransposeWorld * SRMath::vec4(vIn.normal, 0.0f)));
-                        temp_sv.texcoord = vIn.texcoord;
-
-                        // 계산이 끝난 ShadedVertex를 캐시에 저장
-                        myThreadShadedVertex[i0] = temp_sv;
-                        myThreadStamp[i0] = myStamp;
-                    }
-
-                    sv0 = myThreadShadedVertex[i0];
-
-                    // --- 정점 1 셰이딩 및 캐싱 ---
-                    if (myThreadStamp[i1] != myStamp) {
-                        // 캐시 미스(Cache Miss): 처음 보는 정점이므로 모든 셰이딩 수행
-                        const Vertex& vIn = vertices[i1];
-                        ShadedVertex temp_sv;
-                        temp_sv.posClip = mvp * SRMath::vec4(vIn.position, 1.0f);
-                        temp_sv.posWorld = SRMath::vec3(worldTransform * SRMath::vec4(vIn.position, 1.0f));
-                        temp_sv.normalWorld = SRMath::normalize(SRMath::vec3(inverseTransposeWorld * SRMath::vec4(vIn.normal, 0.0f)));
-                        temp_sv.texcoord = vIn.texcoord;
-
-                        // 계산이 끝난 ShadedVertex를 캐시에 저장
-                        myThreadShadedVertex[i1] = temp_sv;
-                        myThreadStamp[i1] = myStamp;
-                    }
-
-                    sv1 = myThreadShadedVertex[i1];
-
-                    // --- 정점 2 셰이딩 및 캐싱 ---
-                    if (myThreadStamp[i2] != myStamp) {
-                        // 캐시 미스(Cache Miss): 처음 보는 정점이므로 모든 셰이딩 수행
-                        const Vertex& vIn = vertices[i2];
-                        ShadedVertex temp_sv;
-                        temp_sv.posClip = mvp * SRMath::vec4(vIn.position, 1.0f);
-                        temp_sv.posWorld = SRMath::vec3(worldTransform * SRMath::vec4(vIn.position, 1.0f));
-                        temp_sv.normalWorld = SRMath::normalize(SRMath::vec3(inverseTransposeWorld * SRMath::vec4(vIn.normal, 0.0f)));
-                        temp_sv.texcoord = vIn.texcoord;
-
-                        // 계산이 끝난 ShadedVertex를 캐시에 저장
-                        myThreadShadedVertex[i2] = temp_sv;
-                        myThreadStamp[i2] = myStamp;
-                    }
-
-                    sv2 = myThreadShadedVertex[i2];
-
-                    const SRMath::vec4& v0Clip = sv0.posClip;
-                    const SRMath::vec4& v1Clip = sv1.posClip;
-                    const SRMath::vec4& v2Clip = sv2.posClip;
-
-                    // 원근 나누기를 통해 NDC(-1~1) 좌표를 구합니다.
-                    SRMath::vec3 v0Ndc = SRMath::vec3(v0Clip) / v0Clip.w;
-                    SRMath::vec3 v1Ndc = SRMath::vec3(v1Clip) / v1Clip.w;
-                    SRMath::vec3 v2Ndc = SRMath::vec3(v2Clip) / v2Clip.w;
-
-                    float area = (v1Ndc.x - v0Ndc.x) * (v2Ndc.y - v0Ndc.y) - (v1Ndc.y - v0Ndc.y) * (v2Ndc.x - v0Ndc.x);
-
-                    // CCW가 앞면일 때, 오른손->왼손 투영 변환을 거치면 NDC에서는 CW가 되므로 area가 음수가 됩니다.
-                    // 따라서 area가 0 이상(CW가 아니거나 퇴화)이면 컬링합니다.
-                    if (area >= 0.f) {
-                        continue;
-                    }
-
-                    // 세 정점의 아웃코드를 각각 계산합니다.
-                    const auto outcode0 = ComputeOutcode(v0Clip);
-                    const auto outcode1 = ComputeOutcode(v1Clip);
-                    const auto outcode2 = ComputeOutcode(v2Clip);
-
-                    // Trival Rejection Test(순회 기각 테스트) (Outcode가 모두 INSIDEPLANE이면 클리핑 필요 없음)
-                    if ((outcode0 & outcode1 & outcode2) != 0)
-                    {
-                        // 세 아웃코드의 AND 연산 결과가 0이 아니라는 것은,
-                        // 세 정점 모두에게 켜져 있는 공통 비트가 있다는 의미입니다.
-                        // 즉, 세 정점 모두가 '같은 평면'의 바깥쪽에 있다는 뜻이므로,
-                        // 이 삼각형은 절대로 보일 수 없습니다.
-                        continue; // 즉시 다음 삼각형으로 넘어감
-                    }
-
-                    myThreadClippedVertices.clear(); // 이전에 저장된 정점들을 비웁니다
-
-                    if ((outcode0 | outcode1 | outcode2) == 0) {
-                        // Trivial Acceptance: 원본 셰이딩된 정점 3개를 그대로 사용
-                        myThreadClippedVertices.emplace_back(sv0);
-                        myThreadClippedVertices.emplace_back(sv1);
-                        myThreadClippedVertices.emplace_back(sv2);
-                    }
-                    else {
-                        // Clipping Path: 클리핑 수행. 결과는 verticesToBin에 저장됨
-                        clipTriangle(myThreadClippedVertices, sv0, sv1, sv2, myThreadClipBuffer1, myThreadClipBuffer2);
-                    }
-
-                    // 클리핑된 결과(폴리곤)를 삼각형 팬(Fan)으로 분할 후 Binning
-                    if (myThreadClippedVertices.size() < 3) continue;
-
-                    for (size_t j = 1; j < myThreadClippedVertices.size() - 1; ++j)
-                    {
-                        const auto& final_v0 = myThreadClippedVertices[0];
-                        const auto& final_v1 = myThreadClippedVertices[j];
-                        const auto& final_v2 = myThreadClippedVertices[j + 1];
-
-                        // --- '클리핑된 최종 삼각형'으로 NDC와 AABB를 계산 ---
-                        // 이제 이 정점들은 w>0 임이 보장되므로, NDC 계산이 안전합니다.
-                        SRMath::vec3 v0_ndc = SRMath::vec3(final_v0.posClip) / final_v0.posClip.w;
-                        SRMath::vec3 v1_ndc = SRMath::vec3(final_v1.posClip) / final_v1.posClip.w;
-                        SRMath::vec3 v2_ndc = SRMath::vec3(final_v2.posClip) / final_v2.posClip.w;
-
-                        float min_x = std::max(-1.0f, std::min({ v0_ndc.x, v1_ndc.x, v2_ndc.x }));
-                        float max_x = std::min(1.0f, std::max({ v0_ndc.x, v1_ndc.x, v2_ndc.x }));
-                        float min_y = std::max(-1.0f, std::min({ v0_ndc.y, v1_ndc.y, v2_ndc.y }));
-                        float max_y = std::min(1.0f, std::max({ v0_ndc.y, v1_ndc.y, v2_ndc.y }));
-
-                        if (max_x < min_x || max_y < min_y) continue;
-
-                        // X축 뒤집기 적용
-                        auto ndcToTileX = [&](float ndc_x) {
-                            return ((ndc_x * 0.5f + 0.5f) * numTilesX);
-                            };
-
-                        auto ndcToTileY = [&](float ndc_y) {
-                            // 화면 좌표계(Y=0 위쪽)로 변환하려면 NDC의 Y를 뒤집어야 함
-                            return (((1.0f - ndc_y) * 0.5f) * numTilesY);
-                            };
-
-                        // AABB를 이용해 영향을 받는 타일 범위를 계산합니다.
-                        int minTileX = static_cast<int>(std::floor(ndcToTileX(min_x))) - 1;
-                        int maxTileX = static_cast<int>(std::floor(ndcToTileX(max_x)));
-                        int minTileY = static_cast<int>(std::floor(ndcToTileY(max_y))) - 1;
-                        int maxTileY = static_cast<int>(std::floor(ndcToTileY(min_y)));
-
-                        minTileX = std::clamp(minTileX, 0, numTilesX - 1);
-                        minTileY = std::clamp(minTileY, 0, numTilesY - 1);
-                        maxTileX = std::clamp(maxTileX, 0, numTilesX - 1);
-                        maxTileY = std::clamp(maxTileY, 0, numTilesY - 1);
-
-                        // 풀에서 TriangleRef 객체의 포인터를 가져옵니다.
-                        auto it = myPool.emplace_back(TriangleRef{});
-                        TriangleRef* finalTri = &(*it);
-
-                        // 포인터를 통해 멤버에 접근하여 데이터를 채웁니다.
-                        finalTri->sourceCommand = &cmd;
-                        finalTri->sv0 = myThreadClippedVertices[0];
-                        finalTri->sv1 = myThreadClippedVertices[j];
-                        finalTri->sv2 = myThreadClippedVertices[j + 1];
-
-                        for (int ty = minTileY; ty <= maxTileY; ++ty) {
-                            int baseIdx = ty * numTilesX + minTileX;
-                            auto* binStart = &m_finalTriangleBins[baseIdx];
-                            for (int tx = minTileX; tx <= maxTileX; ++tx) {
-                                binStart[tx - minTileX].emplace_back(finalTri);
-                            }
-                        }
-                    }
-                }
-			}
-            }, tbb::simple_partitioner()
-        );
-
-
-    // --- 병렬 렌더링 단계 ---
-    tbb::parallel_for(tbb::blocked_range<int>(0, totalTiles),
-        [&](const tbb::blocked_range<int>& r) {
-            for (int tileIdx = r.begin(); tileIdx != r.end(); ++tileIdx)
-            {
-                int tx = tileIdx % numTilesX;
-                int ty = tileIdx / numTilesX;
-				const auto& triangleBin = m_finalTriangleBins[tileIdx];
-
-                renderTile(tx, ty, triangleBin, camera.GetCameraPos(), lights);
+                else
+                    for (const auto *triangle : bin)
+                        if (triangle->sourceCommand->rasterizeMode == ERasterizeMode::Fill)
+                            rasterizer.DrawTriangle(*triangle, RasterPass::Shaded);
             }
-        }, tbb::auto_partitioner()
-    );
-    
-    size_t queueSize = queue.GetDebugCommands().size();
-    tbb::parallel_for(tbb::blocked_range<int>(0, static_cast<int>(queueSize)),
-        [&](const tbb::blocked_range<int>& r) {
-            for (int i = r.begin(); i != r.end(); ++i)
-            {
-                const auto& cmd = queue.GetDebugCommands()[i];
-                drawDebugPrimitive(cmd, vp);
-            }
-        }, tbb::auto_partitioner()
-	);
-
-    switch (m_currentAAAlgorithm)
-    {
-    case EAAAlgorithm::None:
-        break;
-    case EAAAlgorithm::FXAA:
-        {
-		    // 필터의 입력 스냅샷과 출력 DIB를 span으로 묶어 크기 계약까지
-		    // 전달한다. FXAA 내부는 입력을 읽기 전용으로 유지한다.
-			const std::size_t pixelCount =
-				static_cast<std::size_t>(m_width) * static_cast<std::size_t>(m_height);
-			const std::span<const unsigned int> currentFrame{ m_pPixelData, pixelCount };
-            const std::vector<unsigned int> copyPixelData{ currentFrame.begin(), currentFrame.end() };
-		    sr::fxaa::Apply(copyPixelData,
-				std::span<unsigned int>{ m_pPixelData, pixelCount }, m_width, m_height);
-            break;
-        }
-    default:
-        break;
-    }
-}
-
-void Renderer::renderTile(int tx, int ty, const tbb::concurrent_vector<TriangleRef*>& triangleBin,
-    const SRMath::vec3& camPos, std::span<const DirectionalLight> lights)
-{
-    // 타일의 화면 경계 계산
-    int tileMinX = tx * tile_size;
-    int tileMinY = ty * tile_size;
-    int tileMaxX = std::min(tileMinX + tile_size, m_width);
-    int tileMaxY = std::min(tileMinY + tile_size, m_height);
-    
-    for (const auto& triRef : triangleBin)
-    {
-        const MeshRenderCommand* cmd = triRef->sourceCommand;
-
-        // 래스터라이제이션
-        resterizationForTile(triRef->sv0, triRef->sv1, triRef->sv2, cmd->material, lights, camPos,
-            *cmd, tileMinX, tileMinY, tileMaxX, tileMaxY);
-    }
-}
-
-void Renderer::resterizationForTile(const ShadedVertex& sv0, const ShadedVertex& sv1, const ShadedVertex& sv2, const Material* material,
-    std::span<const DirectionalLight> lights, const SRMath::vec3& camPos, const MeshRenderCommand& cmd, int tileMinX, int tileMinY, int tileMaxX, int tileMaxY)
-{
-    // 모든 클리핑된 정점에 대해 원근 분할 및 뷰포트 변환을 먼저 수행합니다.
-    RasterizerVertex rv0, rv1, rv2;
-   
-    // --- 정점 0 계산 ---
-    const float oneOverW0 = 1.0f / sv0.posClip.w;
-    const SRMath::vec3 posNdc0 = SRMath::vec3(sv0.posClip) * oneOverW0;
-    rv0.screenPos.x = (posNdc0.x + 1.0f) * 0.5f * m_width;
-    rv0.screenPos.y = (1.0f - posNdc0.y) * 0.5f * m_height;
-    rv0.oneOverW = oneOverW0;
-    rv0.normalWorldOverW = sv0.normalWorld * oneOverW0;
-    rv0.texcoordOverW = sv0.texcoord * oneOverW0;       
-    rv0.worldPosOverW = sv0.posWorld * oneOverW0;         
-
-    // --- 정점 1 계산 ---
-    const float oneOverW1 = 1.0f / sv1.posClip.w;
-    const SRMath::vec3 posNdc1 = SRMath::vec3(sv1.posClip) * oneOverW1;
-    rv1.screenPos.x = (posNdc1.x + 1.0f) * 0.5f * m_width;
-    rv1.screenPos.y = (1.0f - posNdc1.y) * 0.5f * m_height;
-    rv1.oneOverW = oneOverW1;
-    rv1.normalWorldOverW = sv1.normalWorld * oneOverW1;
-    rv1.texcoordOverW = sv1.texcoord * oneOverW1;
-    rv1.worldPosOverW = sv1.posWorld * oneOverW1;
-
-    // --- 정점 2 계산 ---
-    const float oneOverW2 = 1.0f / sv2.posClip.w;
-    const SRMath::vec3 posNdc2 = SRMath::vec3(sv2.posClip) * oneOverW2;
-    rv2.screenPos.x = (posNdc2.x + 1.0f) * 0.5f * m_width;
-    rv2.screenPos.y = (1.0f - posNdc2.y) * 0.5f * m_height;
-    rv2.oneOverW = oneOverW2;
-    rv2.normalWorldOverW = sv2.normalWorld * oneOverW2;
-    rv2.texcoordOverW = sv2.texcoord * oneOverW2;
-    rv2.worldPosOverW = sv2.posWorld * oneOverW2;
-    
-    // 래스터라이저는 이제 화면 좌표와 원근 보정된 속성들을 받습니다.
-    if (cmd.rasterizeMode == ERasterizeMode::Fill)
-        drawFilledTriangleForTile(rv0, rv1, rv2, material, lights, camPos, 
-            tileMinX, tileMinY, tileMaxX, tileMaxY);
-    else
-        drawTriangle(rv0.screenPos, rv1.screenPos, rv2.screenPos, RGB(255, 255, 255));
-}
-
-// drawFilledTriangle 함수 수정
-void Renderer::drawFilledTriangleForTile(const RasterizerVertex& v0, const RasterizerVertex& v1, const RasterizerVertex& v2,
-    const Material* material, std::span<const DirectionalLight> lights, const SRMath::vec3& camPos,
-    int tileMinX, int tileMinY, int tileMaxX, int tileMaxY)
-{
-    // 정점 좌표를 정수로 변환 (화면 픽셀 기준)
-    const SRMath::vec2 p0 = { v0.screenPos.x, v0.screenPos.y };
-    const SRMath::vec2 p1 = { v1.screenPos.x, v1.screenPos.y };
-    const SRMath::vec2 p2 = { v2.screenPos.x, v2.screenPos.y };
-
-    // 삼각형 자체의 스크린 공간 바운딩 박스를 계산합니다.
-    const __m128 min_xy = _mm_min_ps(v0.screenPos.m128, _mm_min_ps(v1.screenPos.m128, v2.screenPos.m128));
-    const __m128 max_xy = _mm_max_ps(v0.screenPos.m128, _mm_max_ps(v1.screenPos.m128, v2.screenPos.m128));
-
-	const __m128i min_xy_i = _mm_cvttps_epi32(min_xy);
-	const __m128i max_xy_i = _mm_cvttps_epi32(max_xy);
-
-	// std::array keeps the fixed extent in the type while alignas satisfies the
-	// aligned SSE store contract. The old C arrays carried no size information.
-	alignas(16) std::array<int, 4> min_xy_values{};
-	alignas(16) std::array<int, 4> max_xy_values{};
-
-	_mm_store_si128(reinterpret_cast<__m128i*>(min_xy_values.data()), min_xy_i);
-	_mm_store_si128(reinterpret_cast<__m128i*>(max_xy_values.data()), max_xy_i);
-
-    const int triMinX = min_xy_values[0];
-    const int triMinY = min_xy_values[1];
-	const int triMaxX = max_xy_values[0];
-    const int triMaxY = max_xy_values[1];
-
-    // 삼각형 AABB와 [tileMin, tileMax) 타일의 교집합만 순회한다.
-    // tileMax는 exclusive이므로 픽셀 좌표에서는 1을 뺀다.
-    const int finalMinX = std::max(triMinX, tileMinX);
-    const int finalMaxX = std::min(triMaxX, tileMaxX - 1);
-    const int finalMinY = std::max(triMinY, tileMinY);
-    const int finalMaxY = std::min(triMaxY, tileMaxY - 1);
-
-    // 교차 영역이 없으면 바로 종료
-    if (finalMinX > finalMaxX || finalMinY > finalMaxY) return;
-
-    // --- 사전 계산 단계 ---
-    // 각 변(edge)의 x, y 변화량을 미리 계산해 둡니다.
-    const float dx01 = p0.x - p1.x;
-    const float dy01 = p0.y - p1.y;
-    const float dx12 = p1.x - p2.x;
-    const float dy12 = p1.y - p2.y;
-    const float dx20 = p2.x - p0.x;
-    const float dy20 = p2.y - p0.y;
-
-    // 경계 상자의 시작점(minX, minY)에서의 바리센트릭 좌표 값을 계산합니다.
-    float w0Row = dy12 * (finalMinX + 0.5f - p1.x) - dx12 * (finalMinY + 0.5f - p1.y);
-    float w1Row = dy20 * (finalMinX + 0.5f - p2.x) - dx20 * (finalMinY + 0.5f - p2.y);
-    float w2Row = dy01 * (finalMinX + 0.5f - p0.x) - dx01 * (finalMinY + 0.5f - p0.y);
-
-	// 고정 소수점으로 변환
-    const SRMath::Fixed8 dx01_fixed = SRMath::Fixed8(dx01);
-    const SRMath::Fixed8 dy01_fixed = SRMath::Fixed8(dy01);
-    const SRMath::Fixed8 dx12_fixed = SRMath::Fixed8(dx12);
-    const SRMath::Fixed8 dy12_fixed = SRMath::Fixed8(dy12);
-    const SRMath::Fixed8 dx20_fixed = SRMath::Fixed8(dx20);
-    const SRMath::Fixed8 dy20_fixed = SRMath::Fixed8(dy20);
-
-	SRMath::Fixed8 w0Row_fixed = SRMath::Fixed8(w0Row);
-	SRMath::Fixed8 w1Row_fixed = SRMath::Fixed8(w1Row);
-	SRMath::Fixed8 w2Row_fixed = SRMath::Fixed8(w2Row);
-
-    // --- 래스터화 루프 ---
-    for (int y = finalMinY; y <= finalMaxY; ++y)
-    {
-        // 현재 행의 시작 값을 복사
-        SRMath::Fixed8 w0_fixed = w0Row_fixed;
-        SRMath::Fixed8 w1_fixed = w1Row_fixed;
-        SRMath::Fixed8 w2_fixed = w2Row_fixed;
-
-        for (int x = finalMinX; x <= finalMaxX; ++x)
-        {
-            // 바리센트릭 좌표가 모두 양수이면 삼각형 내부에 있는 것입니다.
-            if ((w0_fixed.value | w1_fixed.value | w2_fixed.value) >= 0)
-            {
-				float w0 = w0_fixed.toFloat();
-				float w1 = w1_fixed.toFloat();
-				float w2 = w2_fixed.toFloat();
-
-                float total_w = (w0 + w1 + w2);
-
-                if (std::abs(total_w) < 1e-5f) continue;
-
-				float one_over_total_w = 1.0f / total_w;
-                float wBary = w0 * one_over_total_w;
-                float uBary = w1 * one_over_total_w;
-                float vBary = w2 * one_over_total_w;
-
-                float interpolatedOneOverW = v0.oneOverW * wBary;
-                      interpolatedOneOverW += v1.oneOverW * uBary;
-                      interpolatedOneOverW += v2.oneOverW * vBary;
-
-                int idx = y * m_width + x;
-                if (interpolatedOneOverW > m_depthBuffer[idx])
-                {
-					float oneOverInterpolatedOneOverW = 1.0f / interpolatedOneOverW;
-
-                    SRMath::vec3 normalInterpolated = v0.normalWorldOverW * wBary;
-                                 normalInterpolated += v1.normalWorldOverW * uBary;
-                                 normalInterpolated += v2.normalWorldOverW * vBary;
-                                 normalInterpolated *= oneOverInterpolatedOneOverW;
-                    normalInterpolated = SRMath::normalize(normalInterpolated);
-
-                    SRMath::vec2 uvOverWInterpolated = v0.texcoordOverW * wBary;
-                                 uvOverWInterpolated += v1.texcoordOverW * uBary;
-                                 uvOverWInterpolated += v2.texcoordOverW * vBary;
-                    
-                    SRMath::vec2 uv_interpolated = uvOverWInterpolated * oneOverInterpolatedOneOverW;
-
-                    SRMath::vec3 base_color;
-
-                    if (material->diffuseTexture)
-                    {
-                        base_color = material->diffuseTexture->Sample(uv_interpolated.x, uv_interpolated.y);
-                        base_color *= material->diffuse;
-                    }
-                    else {
-                        base_color = material->diffuse;
-                    }
-
-                    // 주변광 조명 계산
-                    SRMath::vec3 ambient_color = material->ambient;
-
-                    // 여러 빛의 난반사/정반사 효과를 누적할 변수를 0으로 초기화합니다.
-                    SRMath::vec3 totalDiffuseColor = { 0.0f, 0.0f, 0.0f };
-                    SRMath::vec3 totalSpecularColor = { 0.0f, 0.0f, 0.0f };
-
-                    SRMath::vec3 interpolatedWorldPos = v0.worldPosOverW * wBary;
-                                 interpolatedWorldPos += v1.worldPosOverW * uBary;
-                                 interpolatedWorldPos += v2.worldPosOverW * vBary;
-                                 interpolatedWorldPos *= oneOverInterpolatedOneOverW;
-
-                    SRMath::vec3 viewDir = SRMath::normalize(camPos - interpolatedWorldPos);
-
-                    for (const auto& light : lights)
-                    {
-                        // DirectionalLight::rayDirection은 광선이 진행하는 방향이다.
-                        // Phong 식에는 표면에서 광원으로 향하는 벡터가 필요하다.
-                        const SRMath::vec3 lightDir = SRMath::normalize(-1.0f * light.rayDirection);
-
-                        // 난반사 조명 계산
-                        const float diffuse_intensity = std::max(0.0f, dot(normalInterpolated, lightDir));
-                        SRMath::vec3 diffuseTerm = base_color;
-                        diffuseTerm *= diffuse_intensity;
-						diffuseTerm *= light.color;
-
-                        totalDiffuseColor += diffuseTerm;
-
-                        // 정반사 조명 계산
-                        const SRMath::vec3 reflect_dir = SRMath::reflect(-1.0f * lightDir, normalInterpolated);
-						// 이전 반복 제곱은 지수가 32여도 실제로는 16승이었고 임의의
-						// MTL Ns 값을 표현하지 못했다. std::pow가 Phong 계약을 그대로
-						// 나타내며, 뒷면에서 정반사가 새지 않도록 N·L로 함께 제한한다.
-						const float spec_factor = diffuse_intensity > 0.0f
-							? std::pow(std::max(0.0f, SRMath::dot(viewDir, reflect_dir)),
-								std::max(1.0f, material->shininess))
-							: 0.0f;
-                        
-						SRMath::vec3 specularTerm = material->specular;
-						specularTerm *= spec_factor;
-						specularTerm *= light.color;
-
-                        totalSpecularColor += specularTerm;
-                    }
-
-                    SRMath::vec3 color = ambient_color;
-                    color += totalDiffuseColor;
-                    color += totalSpecularColor;
-
-                    // 최종 색상의 각 채널(R, G, B)을 0.0과 1.0 사이로 클램핑합니다.
-                    color.clamp(0.f, 1.0f);
-
-                    unsigned int final_color = RGB(
-                        color.x * 255.f,
-                        color.y * 255.f,
-                        color.z * 255.f
-                    );
-
-                    // 깊이 갱신 및 픽셀 쓰기
-                    m_depthBuffer[idx] = interpolatedOneOverW;
-                    drawPixel(x, y, final_color);
-                }
-            }
-
-            // x가 1 증가했으므로, y의 변화량만큼 더해줍니다. (점진적 계산)
-            w0_fixed += dy12_fixed;
-            w1_fixed += dy20_fixed;
-            w2_fixed += dy01_fixed;
-
-        }
-
-        // y가 1 증가했으므로, 다음 행의 시작 값을 x의 변화량만큼 더해서 갱신합니다.
-        w0Row_fixed -= dx12_fixed;
-        w1Row_fixed -= dx20_fixed;
-        w2Row_fixed -= dx01_fixed;
-    }
-}
-
-// 렌더러 재초기화 (윈도우 크기, 백버퍼/DIB 섹션 생성 등)
-bool Renderer::reInit(HWND hWnd)
-{
-    // 윈도우의 클라이언트 영역 크기를 얻어옵니다.
-    RECT clientRect{};
-    GetClientRect(hWnd, &clientRect);
-    m_width = clientRect.right - clientRect.left;
-    m_height = clientRect.bottom - clientRect.top;
-
-    // 화면 DC, 메모리 DC, DIB, 선택 객체 복원을 RAII 객체가 한 번에 처리한다.
-    if (!m_backBuffer.create(hWnd, m_width, m_height, m_pPixelData))
-        return false;
-
-    // 깊이 버퍼 크기 재할당 (width * height)
-    m_depthBuffer.resize(m_height * m_width);
-
-    // 이 예제에서는 백버퍼를 흰색으로 초기화합니다.
-    PatBlt(m_backBuffer.get(), 0, 0, m_width, m_height, WHITENESS);
-
-    // 타일 데이터 버퍼 초기화
-    const int numTilesX = (m_width + tile_size - 1) / tile_size;
-    const int numTilesY = (m_height + tile_size - 1) / tile_size;
-    const int totalTiles = numTilesX * numTilesY;
-
-    m_finalTriangleBins.resize(totalTiles);
-    for (auto& bin : m_finalTriangleBins)
-    {
-        bin.reserve(3000);
-    }
-
-    int maxThreads = tbb::this_task_arena::max_concurrency();
-    tbb::task_arena arena(maxThreads);
-    arena.execute([&] {
-        // 강제로 TLS 인스턴스들을 만들고 reserve 해준다
-        tbb::parallel_for(0, maxThreads, [&](int) {
-            auto& myPool = m_threadTrianglePools.local(); // 각 스레드의 삼각형 풀
-            auto& myThreadShadedVertex = m_threadShadedVertexBuffers.local();     // 각 스레드마다 타일에 클리프 공간 좌표를 저장
-            auto& myThreadStamp = m_threadStamps.local();                         // 각 스레드마다 타일에 스탬프를 저장
-            auto& myThreadNormalMatrixCache = m_threadNormalMatrixCache.local();  // 역행렬 캐시
-
-            myPool.reserve(max_triangles_per_thread_pool);
-            myThreadShadedVertex.resize(65535); // 충분히 큰 초기 크기 (튜닝 필요)
-            myThreadStamp.resize(65'535, std::numeric_limits<std::uint64_t>::max());
-
-            // ClipBuffer는 고정 용량이라 TLS 사전 생성이나 reserve가 필요 없다.
-            myThreadNormalMatrixCache.rehash(2000); // 충분히 큰 초기 크기 (튜닝 필요)
-            });
         });
-
-    return true;
 }
 
-// 생성의 역순으로 GDI 리소스 해제
-void Renderer::shutdownForResize() noexcept
+void Renderer::renderLines(RenderTarget &target, const RenderQueue &queue, const FrameContext &frame)
 {
-    m_backBuffer.reset();
-    m_pPixelData = nullptr;
+    Rasterizer rasterizer(target, frame, m_options.collectStats ? &m_stats : nullptr);
+    // 선은 완성된 면 깊이를 읽기만 한다. wire는 서로 다른 행을 맡겨
+    // 색상 쓰기 경합 없이 분산하고, debug 명령의 겹침 순서는 뒤에서 보존한다.
+    const bool hasWireframe =
+        std::ranges::any_of(queue.GetRenderCommands(), [](const auto &command)
+                            { return command.rasterizeMode == ERasterizeMode::Wireframe; });
+    if (hasWireframe)
+    {
+        std::array<RenderStats, maximumLineBands> bandStats{};
+        // 풀은 binCommands 완료 뒤 읽기 전용이다. 선의 기울기/오차는 원래
+        // 끝점 기준이며 band는 쓰기 영역만 제한해 경계 픽셀도 동일하다.
+        tbb::parallel_for(tbb::blocked_range<int>(0, m_lineBandCount, 1),
+                          [&](const tbb::blocked_range<int> &range)
+                          {
+                              for (int band = range.begin(); band != range.end(); ++band)
+                              {
+                                  const int minY = band * m_lineBandHeight;
+                                  const int maxY = minY + std::min(m_lineBandHeight, m_height - minY);
+                                  Rasterizer lines(target, frame,
+                                                   m_options.collectStats ? &bandStats[band] : nullptr);
+                                  lines.BeginLineRows(minY, maxY);
+                                  for (const auto &scratch : m_workerScratch)
+                                      for (const auto *triangle : scratch.wireBins[band])
+                                          lines.DrawWireTriangle(*triangle, m_currentLineAlgorithm,
+                                                                 m_options.hiddenWireframe);
+                              }
+                          });
+        if (m_options.collectStats)
+            for (int band = 0; band < m_lineBandCount; ++band)
+                m_stats.MergeCounters(bandStats[band]);
+    }
+    renderDepthTestedLines(target, queue, frame);
+    // 행 병렬 작업이 join된 뒤 overlay를 원래 명령 순서로 표시한다.
+    for (const auto &command : queue.GetDebugCommands())
+        if (command.depthPolicy == DebugDepthPolicy::Overlay)
+            rasterizer.DrawDebugPrimitive(command, m_currentLineAlgorithm);
+    if (m_options.collectStats)
+    {
+        m_stats.liveDebugLineBytes =
+            m_preparedDebugLines.size() * sizeof(decltype(m_preparedDebugLines)::value_type) +
+            m_debugLineCommands.size() * sizeof(DebugLineCommand) +
+            m_debugLineChunks.size() * sizeof(DebugLineChunk);
+        m_stats.retainedDebugLineBytes =
+            m_preparedDebugLines.capacity() * sizeof(decltype(m_preparedDebugLines)::value_type) +
+            m_debugLineCommands.capacity() * sizeof(DebugLineCommand) +
+            m_debugLineChunks.capacity() * sizeof(DebugLineChunk);
+    }
 }
 
-// 윈도우 리사이즈 대응 (리소스 재할당)
-void Renderer::OnResize(HWND hWnd)
+void Renderer::updateRetainedBinBytes()
 {
-    shutdownForResize();
-    reInit(hWnd);
+    // capacity 기반 저장소 계측이다. allocator의 내부 오버헤드/RSS는 포함하지
+    // 않지만 private 참조/최종 포인터, count/cursor/offset, 헤더/목록은 모두 센다.
+    std::uint64_t bytes = sizeof(m_tileReferences) + m_tileReferences.capacity() * sizeof(TriangleRef *) +
+                          sizeof(m_tileOffsets) + m_tileOffsets.capacity() * sizeof(std::size_t) +
+                          sizeof(m_activeTileWorkers) +
+                          m_activeTileWorkers.capacity() * sizeof(WorkerScratch *);
+    for (const auto &scratch : m_workerScratch)
+    {
+        // 쉬고 있는 과거 worker의 보유 용량도 실제 메모리이므로 빠뜨리지 않는다.
+        bytes += sizeof(scratch.tileReferences) + scratch.tileReferences.capacity() * sizeof(TileReference) +
+                 sizeof(scratch.tileScatter) + scratch.tileScatter.capacity() * sizeof(TileScatterState) +
+                 sizeof(scratch.touchedTileIds) + scratch.touchedTileIds.capacity() * sizeof(std::size_t) +
+                 sizeof(scratch.wireBins);
+        for (const auto &bin : scratch.wireBins)
+            bytes += bin.capacity() * sizeof(TriangleRef *);
+    }
+    bytes += sizeof(m_debugLineBins);
+    for (const auto &bin : m_debugLineBins)
+        bytes += bin.capacity() * sizeof(std::size_t);
+    m_stats.retainedBinBytes = bytes;
+}
+
+void Renderer::renderDepthTestedLines(RenderTarget &target, const RenderQueue &queue,
+                                      const FrameContext &frame)
+{
+    // 명령 포인터와 bin은 프레임마다 비운다. 준비 슬롯은 큰 프레임에서
+    // resize한 현재 범위 전체를 병렬 덮어쓰므로 중복된 전체 초기화는 하지 않는다.
+    m_debugLineCommands.clear();
+    m_debugLineChunks.clear();
+    for (auto &bin : m_debugLineBins)
+        bin.clear();
+
+    const auto commands = queue.GetDebugCommands();
+    std::size_t totalLines = 0;
+    for (const auto &command : commands)
+        if (command.depthPolicy == DebugDepthPolicy::DepthTested && command.type == DebugPrimitiveType::Line)
+        {
+            const auto lineCount = command.vertices.size() / 2;
+            if (lineCount > m_preparedDebugLines.max_size() - totalLines)
+                throw std::length_error("Debug line preparation capacity exceeded");
+            totalLines += lineCount;
+        }
+
+    // 256개 미만은 작업 분배/배열 준비 비용을 피하고 기존 순차 기준 경로를 쓴다.
+    if (totalLines < debugLineChunkSize)
+    {
+        // 작은/빈 프레임에는 준비 패스가 없다. 이전 슬롯이 남아 통계나 다음
+        // 처리에 재사용되지 않도록 이 경로에서만 논리 크기를 비운다.
+        m_preparedDebugLines.clear();
+        Rasterizer lines(target, frame, m_options.collectStats ? &m_stats : nullptr);
+        for (const auto &command : commands)
+            if (command.depthPolicy == DebugDepthPolicy::DepthTested)
+                lines.DrawDebugPrimitive(command, m_currentLineAlgorithm);
+        return;
+    }
+
+    // 현재 선 개수로 정확히 맞춘다. 줄어든 tail은 제거하고, 같은 크기면
+    // 재초기화를 생략한다. 아래 무조건 대입은 기각된 선도 nullopt로 덮어쓴다.
+    // 준비 중 예외가 나면 join 뒤 bin/그리기로 진행하지 않고 다음 프레임에 복구한다.
+    m_preparedDebugLines.resize(totalLines);
+    std::size_t firstLine = 0;
+    for (const auto &command : commands)
+    {
+        if (command.depthPolicy != DebugDepthPolicy::DepthTested || command.type != DebugPrimitiveType::Line)
+            continue;
+        const auto lineCount = command.vertices.size() / 2;
+        if (lineCount == 0)
+            continue;
+        const auto commandIndex = m_debugLineCommands.size();
+        m_debugLineCommands.push_back(
+            {&command, frame.viewProjection * command.worldTransform, firstLine, lineCount});
+        for (std::size_t line = 0; line < lineCount;)
+        {
+            const auto count = std::min(debugLineChunkSize, lineCount - line);
+            m_debugLineChunks.push_back({commandIndex, line, count});
+            line += count;
+        }
+        firstLine += lineCount;
+    }
+
+    // 큰 메시의 법선 명령 하나도 256개 선 단위로 분배한다. 각 chunk는
+    // 고유한 원본 순번 슬롯만 쓰며 명령 MVP와 입력 정점은 읽기 전용이다.
+    tbb::parallel_for(tbb::blocked_range<std::size_t>(0, m_debugLineChunks.size(), 1),
+                      [&](const tbb::blocked_range<std::size_t> &range)
+                      {
+                          for (auto chunkIndex = range.begin(); chunkIndex != range.end(); ++chunkIndex)
+                          {
+                              const auto &chunk = m_debugLineChunks[chunkIndex];
+                              const auto &command = m_debugLineCommands[chunk.commandIndex];
+                              const auto &vertices = command.command->vertices;
+                              const auto end = chunk.firstLine + chunk.lineCount;
+                              for (auto line = chunk.firstLine; line < end; ++line)
+                                  m_preparedDebugLines[command.firstLine + line] =
+                                      Rasterizer::PrepareDepthTestedLine(
+                                          vertices[line * 2], vertices[line * 2 + 1],
+                                          command.modelViewProjection, m_width, m_height);
+                          }
+                      });
+
+    // 완료 순서가 아니라 원래 queue/정점 순번으로 등록한다. 각 band가 동일한
+    // 순서의 부분열을 그려 서로 다른 색의 교차선도 순차 결과와 일치한다.
+    for (std::size_t index = 0; index < m_preparedDebugLines.size(); ++index)
+    {
+        if (!m_preparedDebugLines[index])
+            continue;
+        const auto &line = *m_preparedDebugLines[index];
+        const int startY = static_cast<int>(line.screenA.y), endY = static_cast<int>(line.screenB.y);
+        const int startX = static_cast<int>(line.screenA.x), endX = static_cast<int>(line.screenB.x);
+        const bool longDda = m_currentLineAlgorithm == ELineAlgorithm::DDA &&
+                             std::max(std::abs(endX - startX), std::abs(endY - startY)) > (1 << 20);
+        int firstBand = 0, lastBand = m_lineBandCount - 1;
+        if (m_width <= 524288 && m_height <= 524288 && !longDda)
+        {
+            const int minY = std::min(startY, endY), maxY = std::max(startY, endY);
+            if (maxY < 0 || minY >= m_height)
+                continue;
+            firstBand = std::clamp(minY, 0, m_height - 1) / m_lineBandHeight;
+            lastBand = std::clamp(maxY, 0, m_height - 1) / m_lineBandHeight;
+        }
+        // 과대한 viewport/긴 DDA는 누적 오차를 bbox로 단정하지 않고 모든
+        // band에 보낸다. 실제 쓰기는 원래 시작점으로 진행하며 행 범위로 제한한다.
+        for (int band = firstBand; band <= lastBand; ++band)
+            m_debugLineBins[band].push_back(index);
+    }
+
+    std::array<RenderStats, maximumLineBands> bandStats{};
+    tbb::parallel_for(
+        tbb::blocked_range<int>(0, m_lineBandCount, 1),
+        [&](const tbb::blocked_range<int> &range)
+        {
+            for (int band = range.begin(); band != range.end(); ++band)
+            {
+                if (m_debugLineBins[band].empty())
+                    continue;
+                const int minY = band * m_lineBandHeight;
+                const int maxY = minY + std::min(m_lineBandHeight, m_height - minY);
+                Rasterizer lines(target, frame, m_options.collectStats ? &bandStats[band] : nullptr);
+                lines.BeginLineRows(minY, maxY);
+                for (const auto index : m_debugLineBins[band])
+                    lines.DrawPreparedDebugLine(*m_preparedDebugLines[index], m_currentLineAlgorithm);
+            }
+        });
+    if (m_options.collectStats)
+        for (int band = 0; band < m_lineBandCount; ++band)
+            m_stats.MergeCounters(bandStats[band]);
+}
+
+void Renderer::applyPostProcessing(RenderTarget &target)
+{
+    if (m_currentAAAlgorithm != EAAAlgorithm::FXAA)
+        return;
+    const auto surface = target.Surface();
+    const auto width = static_cast<std::size_t>(surface.width);
+    m_fxaaSnapshot.resize(width * surface.height);
+    for (int y = 0; y < surface.height; ++y)
+        std::copy_n(surface.pixels.data() + static_cast<std::size_t>(y) * surface.stridePixels, width,
+                    m_fxaaSnapshot.data() + static_cast<std::size_t>(y) * width);
+    sr::fxaa::Apply(ConstPixelSurfaceView{m_fxaaSnapshot, surface.width, surface.height, width}, surface);
 }

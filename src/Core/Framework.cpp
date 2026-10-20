@@ -1,100 +1,72 @@
-﻿#include "Framework.h"
+#include "Framework.h"
 #include "resource.h"
 #include "Renderer/Renderer.h"
-#include "Math/Frustum.h"
-#include "Scene/GameObject.h"
-#include "Graphics/ModelLoader.h"
-#include "Graphics/Model.h"
 #include "Utils/Utils.h"
 
 #include <array>
 #include <numbers>
+#include <stdexcept>
 #include <utility>
 
 namespace
 {
-constexpr float kLightGizmoLength = 1.5f;
-constexpr float kArrowHeadLength = 0.3f;
-constexpr float kArrowHeadWidth = 0.18f;
-
 // GetDC/ReleaseDC is a paired Win32 resource API. A scoped owner makes future
 // early returns safe and keeps raw HDC lifetime out of the frame loop.
 class WindowDc final
 {
-public:
+  public:
     explicit WindowDc(HWND window) noexcept : m_window(window), m_dc(GetDC(window)) {}
-    ~WindowDc() { if (m_dc) ReleaseDC(m_window, m_dc); }
-    WindowDc(const WindowDc&) = delete;
-    WindowDc& operator=(const WindowDc&) = delete;
+    ~WindowDc()
+    {
+        if (m_dc)
+            ReleaseDC(m_window, m_dc);
+    }
+    WindowDc(const WindowDc &) = delete;
+    WindowDc &operator=(const WindowDc &) = delete;
 
-    [[nodiscard]] HDC get() const noexcept { return m_dc; }
+    [[nodiscard]] HDC Get() const noexcept { return m_dc; }
     [[nodiscard]] explicit operator bool() const noexcept { return m_dc != nullptr; }
 
-private:
+  private:
     HWND m_window = nullptr;
     HDC m_dc = nullptr;
 };
 
-[[nodiscard]] std::wstring Utf8ToWide(std::string_view text)
+[[nodiscard]] std::wstring utf8ToWide(std::string_view text)
 {
-    if (text.empty()) return {};
-    const int length = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
-        text.data(), static_cast<int>(text.size()), nullptr, 0);
-    if (length <= 0) return L"Asset loading failed";
+    if (text.empty())
+        return {};
+    const int length = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(),
+                                           static_cast<int>(text.size()), nullptr, 0);
+    if (length <= 0)
+        return L"Asset loading failed";
 
     std::wstring converted(static_cast<std::size_t>(length), L'\0');
-    MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(),
-        static_cast<int>(text.size()), converted.data(), length);
+    MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()),
+                        converted.data(), length);
     return converted;
 }
 
-void AddDebugLine(DebugPrimitiveCommand& command, const SRMath::vec3& from,
-    const SRMath::vec3& to, const SRMath::vec4& color)
-{
-    command.vertices.push_back({ from, color });
-    command.vertices.push_back({ to, color });
-}
-
-void SubmitDirectionalLightGizmos(RenderQueue& renderQueue, std::span<const DirectionalLight> lights)
-{
-    for (std::size_t index = 0; index < lights.size(); ++index)
-    {
-        const auto& light = lights[index];
-        const SRMath::vec3 rayDirection = SRMath::normalize(light.rayDirection);
-        const SRMath::vec3 anchor{ -3.0f + static_cast<float>(index) * 3.0f, 3.0f, 0.0f };
-        const SRMath::vec3 tip = anchor + rayDirection * kLightGizmoLength;
-        const SRMath::vec3 up = std::abs(rayDirection.y) > 0.9f
-            ? SRMath::vec3{ 1.0f, 0.0f, 0.0f }
-            : SRMath::vec3{ 0.0f, 1.0f, 0.0f };
-        const SRMath::vec3 side = SRMath::normalize(SRMath::cross(rayDirection, up));
-
-        DebugPrimitiveCommand command;
-        command.worldTransform = SRMath::mat4::identity();
-        command.type = DebugPrimitiveType::Line;
-
-        // 노란색: DirectionalLight가 정의한 실제 광선 진행 방향.
-        const SRMath::vec4 rayColor{ 1.0f, 0.85f, 0.0f, 1.0f };
-        AddDebugLine(command, anchor, tip, rayColor);
-        AddDebugLine(command, tip, tip - rayDirection * kArrowHeadLength + side * kArrowHeadWidth, rayColor);
-        AddDebugLine(command, tip, tip - rayDirection * kArrowHeadLength - side * kArrowHeadWidth, rayColor);
-
-        // 청록색: Phong 난반사 계산에 사용되는 surface-to-light 방향.
-        const SRMath::vec4 shadingColor{ 0.0f, 0.85f, 1.0f, 1.0f };
-        AddDebugLine(command, anchor, anchor - rayDirection * (kLightGizmoLength * 0.55f), shadingColor);
-
-        renderQueue.Submit(std::move(command));
-    }
-}
-}
+} // namespace
 
 Framework::Framework(HINSTANCE hInstance, int nCmdShow)
 {
-    // 전역 문자열을 초기화합니다.
-    LoadStringW(hInstance, IDS_APP_TITLE, m_szTitle.data(), static_cast<int>(m_szTitle.size()));
-    LoadStringW(hInstance, IDC_SOFTRENDERERPROJECT, m_szWindowClass.data(), static_cast<int>(m_szWindowClass.size()));
+    initializeWindow(hInstance, nCmdShow);
+    m_renderer = std::make_unique<Renderer>();
+    if (!resizeRenderTarget(m_hWnd))
+        throw std::runtime_error("Failed to initialize render target");
+    initializeScene();
+}
 
-    // Window Class Register
-    // 값 초기화로 모든 필드를 0/nullptr로 만든다. C의 ZeroMemory보다 타입 안전하다.
+void Framework::initializeWindow(HINSTANCE hInstance, int nCmdShow)
+{
+    m_hInstance = hInstance;
+    // 리소스 문자열과 창 클래스를 준비한다.
+    LoadStringW(hInstance, IDS_APP_TITLE, m_szTitle.data(), static_cast<int>(m_szTitle.size()));
+    LoadStringW(hInstance, IDC_SOFTRENDERERPROJECT, m_szWindowClass.data(),
+                static_cast<int>(m_szWindowClass.size()));
+
+    // 지정하지 않은 Win32 선택 필드도 0/nullptr여야 하므로 전체를 값 초기화한다.
     WNDCLASSEXW wcex{};
 
     wcex.cbSize = sizeof(WNDCLASSEX);
@@ -117,140 +89,132 @@ Framework::Framework(HINSTANCE hInstance, int nCmdShow)
     }
 
     // Init Class Instance
-    m_hWnd = CreateWindowW(m_szWindowClass.data(), m_szTitle.data(), WS_OVERLAPPEDWINDOW,
-        CW_USEDEFAULT, 0, CW_USEDEFAULT, 0, nullptr, nullptr, hInstance, this);
+    m_hWnd = CreateWindowW(m_szWindowClass.data(), m_szTitle.data(), WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, 0,
+                           CW_USEDEFAULT, 0, nullptr, nullptr, hInstance, this);
 
     if (!m_hWnd)
     {
         throw std::runtime_error("Failed to create window");
     }
 
+    // 정렬/Hi-Z와 숨은 와이어는 기본 비활성화다. 기본 와이어는 빠른 X-ray 표시다.
+    const HMENU algorithmsMenu = GetSubMenu(GetMenu(m_hWnd), 1);
+    if (!algorithmsMenu ||
+        !AppendMenuW(algorithmsMenu, MF_STRING | MF_UNCHECKED, ID_RENDER_FRONTTOBACK,
+                     L"Front-to-back sorting (experimental)") ||
+        !AppendMenuW(algorithmsMenu, MF_STRING | MF_UNCHECKED, ID_RENDER_HIZ,
+                     L"Hi-Z culling (experimental)") ||
+        !AppendMenuW(algorithmsMenu, MF_STRING | MF_UNCHECKED, ID_RENDER_HIDDEN_WIRE,
+                     L"Hidden-line wireframe (depth prepass)"))
+        throw std::runtime_error("Failed to initialize rendering options menu");
+
     ShowWindow(m_hWnd, nCmdShow);
     UpdateWindow(m_hWnd);
-
-    m_pRenderer = std::make_unique<Renderer>(m_hWnd);
-    m_perfAnalyzer = PerformanceAnalyzer();
-
-    if (!initializeGameobject(SRMath::vec3(0.f, 0.f, 0.f), SRMath::vec3(0.f, 0.f, 0.0f),
-        SRMath::vec3(0.04f, 0.04f, 0.04f), "IronMan"))
-        throw std::runtime_error("Failed to initialize IronMan GameObject");
-
-    if (!initializeGameobject(SRMath::vec3(-10.f, 0.f, 0.f), SRMath::vec3(0.f, 0.f, 0.0f),
-        SRMath::vec3(0.04f, 0.04f, 0.04f), "teapot"))
-        throw std::runtime_error("Failed to initialize teapot GameObject");
-
-    m_camera = Camera(SRMath::vec3(0.f, 0.f, -5.f));
-
-    m_lights.push_back(DirectionalLight());
-    //m_lights.push_back(DirectionalLight{ SRMath::vec3(1.f, 0.f, 0.f), SRMath::vec3(1.0f, 1.0f, 1.0f) });
-    //m_lights.push_back(DirectionalLight{ SRMath::vec3(0.f, 1.f, -1.f), SRMath::vec3(1.0f, 1.0f, 1.0f) });
 }
 
+void Framework::initializeScene()
+{
+    // 경로 오류는 여기서 사용자 메시지로 바꾼다.
+    if (const auto loaded = m_scene.Load(GetExecutableDirectory() / L"assets"); !loaded)
+    {
+        showAssetError(loaded.error());
+        throw std::runtime_error("Failed to initialize demo scene");
+    }
+}
 
 Framework::~Framework() = default;
 
-bool Framework::initializeGameobject(const SRMath::vec3& pos, const SRMath::vec3& rotation,
-    const SRMath::vec3& scale, std::string_view modelName)
+bool Framework::resizeRenderTarget(HWND window)
 {
-    const auto modelPath = MakeAssetPath(modelName);
-    auto model = ModelLoader::LoadOBJ(modelPath);
-    if (!model)
+    // 프레임 작업은 동기식이다. 이전 DIB가 해제되기 전에 빌린 뷰부터 무효화한다.
+    m_renderTarget.Detach();
+    RECT clientRect{};
+    if (!GetClientRect(window, &clientRect))
     {
-        // 로더는 예외나 UI 호출 대신 구조화 오류를 반환한다. Framework만이
-        // WinAPI 사용자 메시지로 변환하므로 로더 테스트와 재사용이 쉬워진다.
-        std::wstring message = Utf8ToWide(model.error().message);
-        if (!model.error().path.empty())
-            message += L"\nPath: " + model.error().path.wstring();
-        if (model.error().line != 0)
-            message += L"\nLine: " + std::to_wstring(model.error().line);
-        MessageBoxW(m_hWnd, message.c_str(), L"GameObject Creation Error", MB_OK | MB_ICONERROR);
+        m_presenter.Reset();
         return false;
     }
-
-    auto gameObject = std::make_shared<GameObject>(pos, rotation, scale, std::move(*model));
-    m_gameobjects.push_back(std::move(gameObject));
+    const auto resized = m_presenter.Resize(window, static_cast<int>(clientRect.right - clientRect.left),
+                                             static_cast<int>(clientRect.bottom - clientRect.top));
+    if (!resized)
+        return false;
+    if (!m_renderTarget.Attach(m_presenter.Surface()))
+    {
+        // 색상 DIB 생성 후 깊이/ID 할당만 실패해도 낡거나 부분적인 화면을 표시하지 않는다.
+        m_presenter.Reset();
+        return false;
+    }
     return true;
+}
+
+void Framework::showAssetError(const AssetLoadError &error) const
+{
+    // 로더는 예외나 UI 호출 대신 구조화 오류를 반환한다. Framework만이
+    // WinAPI 사용자 메시지로 변환하므로 로더 테스트와 재사용이 쉬워진다.
+    std::wstring message = utf8ToWide(error.message);
+    if (!error.path.empty())
+        message += L"\nPath: " + error.path.wstring();
+    if (error.line != 0)
+        message += L"\nLine: " + std::to_wstring(error.line);
+    MessageBoxW(m_hWnd, message.c_str(), L"GameObject Creation Error", MB_OK | MB_ICONERROR);
 }
 
 void Framework::Run()
 {
-    MSG msg{};
-
-    // 기본 메시지 루프입니다:
-    while (msg.message != WM_QUIT)
+    MSG message{};
+    while (message.message != WM_QUIT)
     {
-        if (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE))
+        if (PeekMessage(&message, nullptr, 0, 0, PM_REMOVE))
         {
-            TranslateMessage(&msg);
-            DispatchMessage(&msg);
+            TranslateMessage(&message);
+            DispatchMessage(&message);
         }
-
-        else {
-            int prevFPS = m_perfAnalyzer.GetAvgFPSForSecond();
-            // 메시지가 없는 이 시간에 렌더링 코드를 실행!
-            m_perfAnalyzer.Update();
-
-            if (m_perfAnalyzer.GetAvgFPSForSecond() != prevFPS) {
-                // 문자열 버퍼를 준비하고
-                std::array<wchar_t, max_load_string> buffer{};
-                // "SoftrendererProject - FPS: 60" 같은 형식으로 문자열을 만듭니다.
-                swprintf_s(buffer.data(), buffer.size(), L"%s - AvgFPS: %d",
-                    m_szTitle.data(), m_perfAnalyzer.GetAvgFPSForSecond());
-
-                // 창 제목을 설정합니다.
-                SetWindowText(m_hWnd, buffer.data());
-            }
-
-            Framework::Update(m_perfAnalyzer.GetDeltaTime());
-            Framework::Render();
-
-            const WindowDc screenDc{ m_hWnd };
-            if (m_pRenderer && screenDc)
-            {
-                m_pRenderer->Present(screenDc.get());
-            }
+        else
+        {
+            runFrame();
         }
     }
+}
+
+void Framework::runFrame()
+{
+    updateFrameTime();
+    Update(m_perfAnalyzer.GetDeltaTime());
+    Render();
+    const WindowDc screenDc{m_hWnd};
+    if (m_renderer && screenDc)
+        m_presenter.Present(screenDc.Get());
+}
+
+void Framework::updateFrameTime()
+{
+    const int previousFps = m_perfAnalyzer.GetAvgFPSForSecond();
+    m_perfAnalyzer.Update();
+    if (previousFps == m_perfAnalyzer.GetAvgFPSForSecond())
+        return;
+    std::array<wchar_t, maxLoadString> title{};
+    swprintf_s(title.data(), title.size(), L"%s - AvgFPS: %d", m_szTitle.data(),
+               m_perfAnalyzer.GetAvgFPSForSecond());
+    SetWindowText(m_hWnd, title.data());
 }
 
 // Framework Logic Update(For Game)
 void Framework::Update(const float deltaTime)
 {
-    const int width = m_pRenderer->GetWidth();
-    const int height = m_pRenderer->GetHeight();
-    if (width <= 0 || height <= 0) return; // minimized windows have no valid aspect ratio
-
-    const float aspectRatio = static_cast<float>(width) / static_cast<float>(height);
-    m_camera.Update(deltaTime, m_keys, aspectRatio);
-
-	m_renderQueue.Clear();
-
-    const Frustum& frustum = m_camera.GetFrustum();
-    for (const auto& gameObject : m_gameobjects)
-    {
-        if (gameObject)
-        {
-            gameObject->Update(deltaTime, m_isRotateMode);
-
-            if (frustum.IsAABBInFrustum(gameObject->GetWorldAABB()))
-            {
-                gameObject->SubmitToRenderQueue(m_renderQueue, frustum, m_debugFlags);
-            }
-        }
-    }
-
-    if (m_debugFlags.bShowLightDirection)
-        SubmitDirectionalLightGizmos(m_renderQueue, m_lights);
+    if (!m_renderer)
+        return;
+    m_scene.Update(deltaTime, m_renderTarget.Width(), m_renderTarget.Height(), m_keys);
 }
 
 void Framework::Render()
 {
-    if (!m_pRenderer) return;
+    if (!m_renderer)
+        return;
 
     // Buffer Clear
-    m_pRenderer->Clear();
+    m_renderTarget.Clear();
 
-    m_pRenderer->RenderScene(m_renderQueue, m_camera, m_lights);
+    m_renderer->RenderScene(m_renderTarget, m_scene.GetRenderQueue(), m_scene.GetCamera(), m_scene.GetLights());
 }
 
 LRESULT Framework::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
@@ -259,67 +223,13 @@ LRESULT Framework::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
     {
     case WM_COMMAND:
     {
-        int wmId = LOWORD(wParam);
-        // 메뉴 선택을 구문 분석합니다:
-        switch (wmId)
-        {
-
-        // Other variables
-        case ID_LINEALGORITHM_BRESENHAM:
-            m_pRenderer->SetLineAlgorithm(ELineAlgorithm::Bresenham);
-            CheckMenuBox(m_debugFlags.bShowNormal, ID_LINEALGORITHM_BRESENHAM);
-
-            break;
-        case ID_LINEALGORITHM_DDA:
-            m_pRenderer->SetLineAlgorithm(ELineAlgorithm::DDA);
-            CheckMenuBox(m_debugFlags.bShowNormal, ID_LINEALGORITHM_DDA);
-
-            break;
-        case ID_DEBUG_NORMALVECTOR:
-            m_debugFlags.bShowNormal = !m_debugFlags.bShowNormal;
-			CheckMenuBox(m_debugFlags.bShowNormal, ID_DEBUG_NORMALVECTOR);
-            break;
-
-        case ID_DEBUG_AABB:
-            m_debugFlags.bShowAABB = !m_debugFlags.bShowAABB;
-			CheckMenuBox(m_debugFlags.bShowAABB, ID_DEBUG_AABB);
-            break;
-
-        case ID_DEBUG_WIREFRAME:
-            m_debugFlags.bShowWireframe = !m_debugFlags.bShowWireframe;
-			CheckMenuBox(m_debugFlags.bShowWireframe, ID_DEBUG_WIREFRAME);
-            break;
-
-        case ID_DEBUG_LIGHTDIRECTION:
-            m_debugFlags.bShowLightDirection = !m_debugFlags.bShowLightDirection;
-            CheckMenuBox(m_debugFlags.bShowLightDirection, ID_DEBUG_LIGHTDIRECTION);
-            break;
-
-        case ID_ANTIALIASING_NONE:
-            m_pRenderer->SetAAAlgorithm(EAAAlgorithm::None);
-            CheckMenuBox(m_debugFlags.bShowWireframe, ID_DEBUG_WIREFRAME);
-            break;
-
-        case ID_ANTIALIASING_FXAA:
-			m_pRenderer->SetAAAlgorithm(EAAAlgorithm::FXAA);
-            CheckMenuBox(m_debugFlags.bShowWireframe, ID_DEBUG_WIREFRAME);
-            break;
-
-        case IDM_ABOUT:
-            DialogBox(m_hInstance, MAKEINTRESOURCE(IDD_ABOUTBOX), hWnd, Framework::About);
-            break;
-        case IDM_EXIT:
-            DestroyWindow(hWnd);
-            break;
-        default:
+        if (!handleMenuCommand(LOWORD(wParam)))
             return DefWindowProc(hWnd, message, wParam, lParam);
-        }
     }
     break;
     case WM_PAINT:
     {
-        // It is not used anymore
-        // 하지만 지우면 윈도우 에러 혹은 헬프 창이 안 뜨므로 남김.
+        // invalid region을 검증하여 WM_PAINT가 반복 발생하지 않게 한다.
         PAINTSTRUCT ps{};
         BeginPaint(hWnd, &ps);
         EndPaint(hWnd, &ps);
@@ -328,39 +238,28 @@ LRESULT Framework::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
 
     case WM_SIZE:
     {
-        if (m_pRenderer)
+        if (m_renderer)
         {
-            m_pRenderer->OnResize(hWnd);
+            if (!resizeRenderTarget(hWnd))
+                break;
 
+            Update(0.f);
             Render();
 
-            const WindowDc screenDc{ hWnd };
-            if (screenDc) m_pRenderer->Present(screenDc.get());
+            const WindowDc screenDc{hWnd};
+            if (screenDc)
+                m_presenter.Present(screenDc.Get());
         }
     }
     break;
 
     // Keyborad Input
     case WM_KEYDOWN:
-        // WPARAM은 배열 범위보다 클 수 있으므로 span 전환과 함께 경계를 검사한다.
-        if (wParam >= m_keys.size()) break;
-        m_keys[wParam] = true;
-        if (m_keys[VK_SPACE])
-        {
-            m_isRotateMode = !m_isRotateMode;
-        }
-        else if (m_keys[VK_F1])
-        {
-			m_pRenderer->SetAAAlgorithm(EAAAlgorithm::None);
-        }
-        else if (m_keys[VK_F2])
-        {
-            m_pRenderer->SetAAAlgorithm(EAAAlgorithm::FXAA);
-        }
-
+        handleKeyDown(wParam, (lParam & (1LL << 30)) != 0);
         break;
     case WM_KEYUP:
-        if (wParam < m_keys.size()) m_keys[wParam] = false;
+        if (wParam < m_keys.size())
+            m_keys[wParam] = false;
         break;
 
         // Mouse Input
@@ -373,26 +272,7 @@ LRESULT Framework::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
         m_isRightMouseDown = false;
         break;
     case WM_MOUSEMOVE:
-        if (m_isRightMouseDown)
-        {
-            POINT currentMousePos = { LOWORD(lParam), HIWORD(lParam) };
-            auto deltaX = currentMousePos.x - m_lastMousePos.x;
-            auto deltaY = currentMousePos.y - m_lastMousePos.y;
-
-            float newYaw = m_camera.GetCameraYaw() - deltaX * 0.005f;
-            float newPitch = m_camera.GetCameraPitch() - deltaY * 0.005f;
-
-            m_camera.SetCameraYaw(newYaw);
-            m_camera.SetCameraPitch(newPitch);
-
-
-            constexpr float pitchMargin = 0.01f;
-            constexpr float halfPi = std::numbers::pi_v<float> / 2.0f;
-            m_camera.SetCameraPitch(std::clamp(m_camera.GetCameraPitch(),
-                -halfPi + pitchMargin, halfPi - pitchMargin));
-
-            m_lastMousePos = currentMousePos;
-        }
+        handleMouseMove(lParam);
         break;
 
     case WM_DESTROY:
@@ -402,6 +282,142 @@ LRESULT Framework::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
         return DefWindowProc(hWnd, message, wParam, lParam);
     }
     return 0;
+}
+
+bool Framework::handleMenuCommand(int commandId)
+{
+    if (!m_renderer)
+        return false;
+    // 메뉴 선택을 구문 분석합니다:
+    switch (commandId)
+    {
+
+    // Other variables
+    case ID_LINEALGORITHM_BRESENHAM:
+        m_renderer->SetLineAlgorithm(ELineAlgorithm::Bresenham);
+        CheckMenuBox(true, ID_LINEALGORITHM_BRESENHAM);
+        CheckMenuBox(false, ID_LINEALGORITHM_DDA);
+
+        break;
+    case ID_LINEALGORITHM_DDA:
+        m_renderer->SetLineAlgorithm(ELineAlgorithm::DDA);
+        CheckMenuBox(false, ID_LINEALGORITHM_BRESENHAM);
+        CheckMenuBox(true, ID_LINEALGORITHM_DDA);
+
+        break;
+    case ID_DEBUG_NORMALVECTOR:
+    {
+        auto &flags = m_scene.GetDebugFlags();
+        flags.bShowNormal = !flags.bShowNormal;
+        CheckMenuBox(flags.bShowNormal, ID_DEBUG_NORMALVECTOR);
+        break;
+    }
+    case ID_DEBUG_AABB:
+    {
+        auto &flags = m_scene.GetDebugFlags();
+        flags.bShowAABB = !flags.bShowAABB;
+        CheckMenuBox(flags.bShowAABB, ID_DEBUG_AABB);
+        break;
+    }
+    case ID_DEBUG_WIREFRAME:
+    {
+        auto &flags = m_scene.GetDebugFlags();
+        flags.bShowWireframe = !flags.bShowWireframe;
+        CheckMenuBox(flags.bShowWireframe, ID_DEBUG_WIREFRAME);
+        break;
+    }
+    case ID_DEBUG_LIGHTDIRECTION:
+    {
+        auto &flags = m_scene.GetDebugFlags();
+        flags.bShowLightDirection = !flags.bShowLightDirection;
+        CheckMenuBox(flags.bShowLightDirection, ID_DEBUG_LIGHTDIRECTION);
+        break;
+    }
+
+    case ID_ANTIALIASING_NONE:
+        m_renderer->SetAAAlgorithm(EAAAlgorithm::None);
+        CheckMenuBox(true, ID_ANTIALIASING_NONE);
+        CheckMenuBox(false, ID_ANTIALIASING_FXAA);
+        break;
+
+    case ID_ANTIALIASING_FXAA:
+        m_renderer->SetAAAlgorithm(EAAAlgorithm::FXAA);
+        CheckMenuBox(false, ID_ANTIALIASING_NONE);
+        CheckMenuBox(true, ID_ANTIALIASING_FXAA);
+        break;
+
+    case ID_RENDER_FRONTTOBACK:
+    {
+        auto options = m_renderer->GetOptions();
+        options.frontToBack = !options.frontToBack;
+        m_renderer->SetOptions(options);
+        CheckMenuBox(options.frontToBack, ID_RENDER_FRONTTOBACK);
+        break;
+    }
+    case ID_RENDER_HIZ:
+    {
+        auto options = m_renderer->GetOptions();
+        options.hiZ = !options.hiZ;
+        m_renderer->SetOptions(options);
+        CheckMenuBox(options.hiZ, ID_RENDER_HIZ);
+        break;
+    }
+    case ID_RENDER_HIDDEN_WIRE:
+    {
+        auto options = m_renderer->GetOptions();
+        options.hiddenWireframe = !options.hiddenWireframe;
+        m_renderer->SetOptions(options);
+        CheckMenuBox(options.hiddenWireframe, ID_RENDER_HIDDEN_WIRE);
+        break;
+    }
+
+    case IDM_ABOUT:
+        DialogBox(m_hInstance, MAKEINTRESOURCE(IDD_ABOUTBOX), m_hWnd, Framework::About);
+        break;
+    case IDM_EXIT:
+        DestroyWindow(m_hWnd);
+        break;
+    default:
+        return false;
+    }
+    return true;
+}
+void Framework::handleMouseMove(LPARAM position)
+{
+    if (m_isRightMouseDown)
+    {
+        // 마우스 좌표는 음수일 수 있으므로 16-bit signed 좌표로 해석한다.
+        POINT currentMousePos = {static_cast<short>(LOWORD(position)), static_cast<short>(HIWORD(position))};
+        auto deltaX = currentMousePos.x - m_lastMousePos.x;
+        auto deltaY = currentMousePos.y - m_lastMousePos.y;
+
+        Camera &camera = m_scene.GetCamera();
+        float newYaw = camera.GetCameraYaw() - deltaX * 0.005f;
+        float newPitch = camera.GetCameraPitch() - deltaY * 0.005f;
+
+        camera.SetCameraYaw(newYaw);
+        camera.SetCameraPitch(newPitch);
+
+        constexpr float pitchMargin = 0.01f;
+        constexpr float halfPi = std::numbers::pi_v<float> / 2.0f;
+        camera.SetCameraPitch(std::clamp(camera.GetCameraPitch(), -halfPi + pitchMargin, halfPi - pitchMargin));
+
+        m_lastMousePos = currentMousePos;
+    }
+}
+void Framework::handleKeyDown(WPARAM key, bool repeated)
+{
+    if (key >= m_keys.size())
+        return;
+    m_keys[key] = true;
+    if (repeated)
+        return;
+    if (key == VK_SPACE)
+        m_scene.SetRotateMode(!m_scene.IsRotateMode());
+    else if (key == VK_F1)
+        handleMenuCommand(ID_ANTIALIASING_NONE);
+    else if (key == VK_F2)
+        handleMenuCommand(ID_ANTIALIASING_FXAA);
 }
 
 void Framework::CheckMenuBox(bool isOn, int menuID) const noexcept
@@ -419,23 +435,23 @@ void Framework::CheckMenuBox(bool isOn, int menuID) const noexcept
         // 상태가 false이면, MF_UNCHECKED 플래그로 체크 표시를 제거합니다.
         CheckMenuItem(hMenu, menuID, MF_BYCOMMAND | MF_UNCHECKED);
     }
-
 }
 
 // 메시지 처리기
 LRESULT Framework::WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
-    Framework* pFramework = nullptr;
+    Framework *pFramework = nullptr;
 
     if (message == WM_CREATE)
     {
-        CREATESTRUCT* pCreate = reinterpret_cast<CREATESTRUCT*>(lParam);
-        pFramework = reinterpret_cast<Framework*>(pCreate->lpCreateParams);
+        CREATESTRUCT *pCreate = reinterpret_cast<CREATESTRUCT *>(lParam);
+        pFramework = reinterpret_cast<Framework *>(pCreate->lpCreateParams);
 
         SetWindowLongPtr(hWnd, GWLP_USERDATA, (LONG_PTR)pFramework);
     }
-    else {
-        pFramework = reinterpret_cast<Framework*>(GetWindowLongPtr(hWnd, GWLP_USERDATA));
+    else
+    {
+        pFramework = reinterpret_cast<Framework *>(GetWindowLongPtr(hWnd, GWLP_USERDATA));
     }
 
     if (pFramework)
