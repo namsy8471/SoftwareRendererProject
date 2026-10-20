@@ -32,6 +32,9 @@ DirectX 11을 사용하며 부족하다고 느꼈던 렌더링 파이프라인�
 | 개발 형태 | 개발 기간 | 기술 환경 | 화면 출력 |
 |:---:|:---:|:---:|:---:|
 | **1인 개인 프로젝트** | 2025.07.07–2025.08.27 | C++26 Preview · MSVC v145 · Windows | WinAPI DIB · GDI |
+| **AI 기반 코딩 (Claude)** | 2026.10.20– | C++26 Preview · MSVC v145 · Windows / GCC (CI) | WinAPI DIB · GDI |
+
+2026.10.20부터는 AI(Claude)가 코드를 작성하고 최적화합니다. 변경은 측정된 fps/ms와 어셈블리 검토로 판단하고, 테스트·골든 이미지·CI로 검증합니다.
 
 ## Preview
 
