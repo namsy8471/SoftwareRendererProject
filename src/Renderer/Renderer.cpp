@@ -277,9 +277,7 @@ void Renderer::updateRetainedBinBytes()
         for (const auto &bin : scratch.wireBins)
             bytes += bin.capacity() * sizeof(TriangleRef *);
     }
-    bytes += sizeof(m_debugLineBins);
-    for (const auto &bin : m_debugLineBins)
-        bytes += bin.capacity() * sizeof(std::size_t);
+    bytes += sizeof(m_debugLineBands) + m_debugLineBands.capacity() * sizeof(DebugLineBands);
     m_stats.retainedBinBytes = bytes;
 }
 
@@ -290,8 +288,7 @@ void Renderer::renderDepthTestedLines(RenderTarget &target, const RenderQueue &q
     // resize한 현재 범위 전체를 병렬 덮어쓰므로 중복된 전체 초기화는 하지 않는다.
     m_debugLineCommands.clear();
     m_debugLineChunks.clear();
-    for (auto &bin : m_debugLineBins)
-        bin.clear();
+
 
     const auto commands = queue.GetDebugCommands();
     std::size_t totalLines = 0;
@@ -310,6 +307,7 @@ void Renderer::renderDepthTestedLines(RenderTarget &target, const RenderQueue &q
         // 작은/빈 프레임에는 준비 패스가 없다. 이전 슬롯이 남아 통계나 다음
         // 처리에 재사용되지 않도록 이 경로에서만 논리 크기를 비운다.
         m_preparedDebugLines.clear();
+        m_debugLineBands.clear();
         Rasterizer lines(target, frame, m_options.collectStats ? &m_stats : nullptr);
         for (const auto &command : commands)
             if (command.depthPolicy == DebugDepthPolicy::DepthTested)
@@ -321,6 +319,7 @@ void Renderer::renderDepthTestedLines(RenderTarget &target, const RenderQueue &q
     // 재초기화를 생략한다. 아래 무조건 대입은 기각된 선도 nullopt로 덮어쓴다.
     // 준비 중 예외가 나면 join 뒤 bin/그리기로 진행하지 않고 다음 프레임에 복구한다.
     m_preparedDebugLines.resize(totalLines);
+    m_debugLineBands.resize(totalLines);
     std::size_t firstLine = 0;
     for (const auto &command : commands)
     {
@@ -341,6 +340,28 @@ void Renderer::renderDepthTestedLines(RenderTarget &target, const RenderQueue &q
         firstLine += lineCount;
     }
 
+    // 선이 그려질 band 구간. 화면 밖/기각 선은 first > last인 빈 구간이다.
+    // 과대한 viewport/긴 DDA는 누적 오차를 bbox로 단정하지 않고 모든
+    // band에 보낸다. 실제 쓰기는 원래 시작점으로 진행하며 행 범위로 제한한다.
+    const auto bandRange = [&](const std::optional<Rasterizer::PreparedDebugLine> &prepared)
+    {
+        constexpr DebugLineBands none{1, 0};
+        if (!prepared)
+            return none;
+        const auto &line = *prepared;
+        const int startY = static_cast<int>(line.screenA.y), endY = static_cast<int>(line.screenB.y);
+        const int startX = static_cast<int>(line.screenA.x), endX = static_cast<int>(line.screenB.x);
+        const bool longDda = m_currentLineAlgorithm == ELineAlgorithm::DDA &&
+                             std::max(std::abs(endX - startX), std::abs(endY - startY)) > (1 << 20);
+        if (m_width > 524288 || m_height > 524288 || longDda)
+            return DebugLineBands{0, static_cast<std::uint8_t>(m_lineBandCount - 1)};
+        const int minY = std::min(startY, endY), maxY = std::max(startY, endY);
+        if (maxY < 0 || minY >= m_height)
+            return none;
+        return DebugLineBands{static_cast<std::uint8_t>(std::clamp(minY, 0, m_height - 1) / m_lineBandHeight),
+                              static_cast<std::uint8_t>(std::clamp(maxY, 0, m_height - 1) / m_lineBandHeight)};
+    };
+
     // 큰 메시의 법선 명령 하나도 256개 선 단위로 분배한다. 각 chunk는
     // 고유한 원본 순번 슬롯만 쓰며 명령 MVP와 입력 정점은 읽기 전용이다.
     tbb::parallel_for(tbb::blocked_range<std::size_t>(0, m_debugLineChunks.size(), 1),
@@ -353,39 +374,19 @@ void Renderer::renderDepthTestedLines(RenderTarget &target, const RenderQueue &q
                               const auto &vertices = command.command->vertices;
                               const auto end = chunk.firstLine + chunk.lineCount;
                               for (auto line = chunk.firstLine; line < end; ++line)
-                                  m_preparedDebugLines[command.firstLine + line] =
-                                      Rasterizer::PrepareDepthTestedLine(
-                                          vertices[line * 2], vertices[line * 2 + 1],
-                                          command.modelViewProjection, m_width, m_height);
+                              {
+                                  const auto index = command.firstLine + line;
+                                  m_preparedDebugLines[index] = Rasterizer::PrepareDepthTestedLine(
+                                      vertices[line * 2], vertices[line * 2 + 1], command.modelViewProjection,
+                                      m_width, m_height);
+                                  m_debugLineBands[index] = bandRange(m_preparedDebugLines[index]);
+                              }
                           }
                       });
 
-    // 완료 순서가 아니라 원래 queue/정점 순번으로 등록한다. 각 band가 동일한
-    // 순서의 부분열을 그려 서로 다른 색의 교차선도 순차 결과와 일치한다.
-    for (std::size_t index = 0; index < m_preparedDebugLines.size(); ++index)
-    {
-        if (!m_preparedDebugLines[index])
-            continue;
-        const auto &line = *m_preparedDebugLines[index];
-        const int startY = static_cast<int>(line.screenA.y), endY = static_cast<int>(line.screenB.y);
-        const int startX = static_cast<int>(line.screenA.x), endX = static_cast<int>(line.screenB.x);
-        const bool longDda = m_currentLineAlgorithm == ELineAlgorithm::DDA &&
-                             std::max(std::abs(endX - startX), std::abs(endY - startY)) > (1 << 20);
-        int firstBand = 0, lastBand = m_lineBandCount - 1;
-        if (m_width <= 524288 && m_height <= 524288 && !longDda)
-        {
-            const int minY = std::min(startY, endY), maxY = std::max(startY, endY);
-            if (maxY < 0 || minY >= m_height)
-                continue;
-            firstBand = std::clamp(minY, 0, m_height - 1) / m_lineBandHeight;
-            lastBand = std::clamp(maxY, 0, m_height - 1) / m_lineBandHeight;
-        }
-        // 과대한 viewport/긴 DDA는 누적 오차를 bbox로 단정하지 않고 모든
-        // band에 보낸다. 실제 쓰기는 원래 시작점으로 진행하며 행 범위로 제한한다.
-        for (int band = firstBand; band <= lastBand; ++band)
-            m_debugLineBins[band].push_back(index);
-    }
-
+    // 이전에는 main thread가 모든 선을 band별 index 목록에 push_back했다(VTune 직렬 구간).
+    // band 범위는 위 병렬 준비에서 구하고, 각 band가 원래 queue/정점 순번으로 범위를
+    // 훑어 자기 band에 걸친 선만 그린다. 그리는 부분열과 순서는 기존 bin과 같다.
     std::array<RenderStats, maximumLineBands> bandStats{};
     tbb::parallel_for(
         tbb::blocked_range<int>(0, m_lineBandCount, 1),
@@ -393,14 +394,16 @@ void Renderer::renderDepthTestedLines(RenderTarget &target, const RenderQueue &q
         {
             for (int band = range.begin(); band != range.end(); ++band)
             {
-                if (m_debugLineBins[band].empty())
-                    continue;
                 const int minY = band * m_lineBandHeight;
                 const int maxY = minY + std::min(m_lineBandHeight, m_height - minY);
                 Rasterizer lines(target, frame, m_options.collectStats ? &bandStats[band] : nullptr);
                 lines.BeginLineRows(minY, maxY);
-                for (const auto index : m_debugLineBins[band])
-                    lines.DrawPreparedDebugLine(*m_preparedDebugLines[index], m_currentLineAlgorithm);
+                for (std::size_t index = 0; index < m_debugLineBands.size(); ++index)
+                {
+                    const auto bands = m_debugLineBands[index];
+                    if (band >= bands.first && band <= bands.last)
+                        lines.DrawPreparedDebugLine(*m_preparedDebugLines[index], m_currentLineAlgorithm);
+                }
             }
         });
     if (m_options.collectStats)

@@ -90,9 +90,11 @@ template <bool DepthTest, bool Sloped, bool VaryingDepth, bool Instrumented> str
     PixelSurfaceView surface;
     std::span<float> depth;
     RenderStats *stats;
-    SRMath::vec2 a;
+    // 원래 식의 float→double 승격 결과를 미리 보관한다. 값과 연산 순서는 같다.
+    double ax, ay;
     double vx, vy, lengthSquared, deltaQ;
-    float qa, slopeX, slopeY;
+    double qa;
+    float slopeX, slopeY;
     std::size_t depthStride;
     std::uint32_t color;
     int minY, maxY;
@@ -114,17 +116,21 @@ template <bool DepthTest, bool Sloped, bool VaryingDepth, bool Instrumented> str
         {
             double amount = 0.;
             if constexpr (Sloped || VaryingDepth)
-                amount =
-                    lengthSquared > 0.
-                        ? std::clamp(((px + 0.5 - a.x) * vx + (py + 0.5 - a.y) * vy) / lengthSquared, 0., 1.)
-                        : 0.;
+                if (lengthSquared > 0.)
+                {
+                    // std::clamp는 const&를 반환해 MSVC가 픽셀마다 세 값을 스택에 쓰고 주소를
+                    // cmov로 골라 다시 읽었다(/FAs). MSVC clamp와 같은 비교 순서의 값 선택이며
+                    // NaN은 그대로 통과한다.
+                    const double t = ((px + 0.5 - ax) * vx + (py + 0.5 - ay) * vy) / lengthSquared;
+                    amount = 1. < t ? 1. : (t < 0. ? 0. : t);
+                }
             double q = qa;
             if constexpr (VaryingDepth)
                 q = qa + deltaQ * amount;
             double slopeBias = 0.;
             if constexpr (Sloped)
             {
-                const double lineX = a.x + vx * amount, lineY = a.y + vy * amount;
+                const double lineX = ax + vx * amount, lineY = ay + vy * amount;
                 slopeBias = std::abs(slopeX * (px + 0.5 - lineX)) + std::abs(slopeY * (py + 0.5 - lineY));
             }
             const double bias =
@@ -484,7 +490,8 @@ void Rasterizer::DrawScreenLine(SRMath::vec2 a, SRMath::vec2 b, float qa, float 
         const LinePixelWriter<DepthTest, Sloped, VaryingDepth, Instrumented> plot{.surface = surface,
                                                                                   .depth = depth,
                                                                                   .stats = m_stats,
-                                                                                  .a = a,
+                                                                                  .ax = a.x,
+                                                                                  .ay = a.y,
                                                                                   .vx = vx,
                                                                                   .vy = vy,
                                                                                   .lengthSquared =

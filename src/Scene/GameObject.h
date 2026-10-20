@@ -37,13 +37,15 @@ class GameObject : public std::enable_shared_from_this<GameObject>
     {
         std::vector<MeshRenderCommand> commands;
         std::vector<DebugPrimitiveCommand> debugCommands;
+        std::vector<DebugVertex> normalLines; // RenderQueue에서 받은 재사용 저장소
     };
     std::vector<MeshCommandBatch> m_meshCommandBatches;
 
     void submitOwnMeshes(RenderQueue &queue, const Frustum &frustum, const DebugFlags &flags);
     void collectMeshCommands(const Mesh &mesh, const Frustum &frustum, const DebugFlags &flags,
                              std::vector<MeshRenderCommand> &commands,
-                             std::vector<DebugPrimitiveCommand> &debugCommands);
+                             std::vector<DebugPrimitiveCommand> &debugCommands,
+                             std::vector<DebugVertex> &normalLines);
     void mergeCommands(RenderQueue &queue);
 
   public:

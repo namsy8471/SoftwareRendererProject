@@ -66,12 +66,17 @@ class Renderer
     {
         std::size_t commandIndex, firstLine, lineCount;
     };
-    // 입력 line 순번이 슬롯 번호다. 병렬 준비가 끝난 뒤 이 순서로 band에
-    // 넣어 색이 다른 법선/디버그 선이 겹쳐도 기존 제출 순서를 유지한다.
+    // 입력 line 순번이 슬롯 번호다. 각 band가 이 순서로 자기 band 선을 그려
+    // 색이 다른 법선/디버그 선이 겹쳐도 기존 제출 순서를 유지한다.
+    struct DebugLineBands
+    {
+        std::uint8_t first, last; // 포함 구간. first > last면 그리지 않는다.
+    };
+    static_assert(maximumLineBands <= 256);
     std::vector<DebugLineCommand> m_debugLineCommands;
     std::vector<DebugLineChunk> m_debugLineChunks;
     std::vector<std::optional<Rasterizer::PreparedDebugLine>> m_preparedDebugLines;
-    std::array<std::vector<std::size_t>, maximumLineBands> m_debugLineBins;
+    std::vector<DebugLineBands> m_debugLineBands;
 
     struct CommandCacheKey
     {

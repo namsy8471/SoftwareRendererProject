@@ -95,6 +95,8 @@ void GameObject::submitOwnMeshes(RenderQueue &renderQueue, const Frustum &frustu
     {
         batch.commands.clear();
         batch.debugCommands.clear();
+        if (debugFlags.bShowNormal)
+            batch.normalLines = renderQueue.AcquireDebugVertices();
     }
 
     tbb::parallel_for(tbb::blocked_range<std::size_t>{0, meshes.size()},
@@ -105,7 +107,7 @@ void GameObject::submitOwnMeshes(RenderQueue &renderQueue, const Frustum &frustu
                               const Mesh &mesh = meshes[i];
                               auto &batch = m_meshCommandBatches[i];
                               collectMeshCommands(mesh, frustum, debugFlags, batch.commands,
-                                                  batch.debugCommands);
+                                                  batch.debugCommands, batch.normalLines);
                           }
                       });
     mergeCommands(renderQueue);
@@ -113,7 +115,8 @@ void GameObject::submitOwnMeshes(RenderQueue &renderQueue, const Frustum &frustu
 
 void GameObject::collectMeshCommands(const Mesh &mesh, const Frustum &frustum, const DebugFlags &debugFlags,
                                      std::vector<MeshRenderCommand> &localCmd,
-                                     std::vector<DebugPrimitiveCommand> &localDebugCmd)
+                                     std::vector<DebugPrimitiveCommand> &localDebugCmd,
+                                     std::vector<DebugVertex> &normalLines)
 {
     if (mesh.octree)
     {
@@ -131,7 +134,7 @@ void GameObject::collectMeshCommands(const Mesh &mesh, const Frustum &frustum, c
 
     if (debugFlags.bShowNormal)
     {
-        std::vector<DebugVertex> normalLines;
+        normalLines.clear();
         normalLines.reserve(mesh.vertices.size() * 2); // 각 정점마다 시작점과 끝점이 있으므로 2배 크기
 
         constexpr float normalLength = 0.1f;

@@ -71,6 +71,8 @@ class RenderTarget
     [[nodiscard]] bool Empty() const noexcept { return m_surface.pixels.empty(); }
 
   private:
+    void clearRows(int firstRow, int lastRow) noexcept;
+
     PixelSurfaceView m_surface;
     std::vector<float> m_depth;
     std::vector<std::uint64_t> m_primitiveIds;
