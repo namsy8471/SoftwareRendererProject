@@ -69,6 +69,13 @@
     <RunCodeAnalysis>false</RunCodeAnalysis>
     <EnableClangTidyCodeAnalysis>false</EnableClangTidyCodeAnalysis>
   </PropertyGroup>
+  <!-- CI 정적 분석: msbuild /p:SrAnalyze=true 로 /analyze를 켠다(기본은 꺼짐).
+       /WX가 켜져 있어 분석 경고(C6xxx 등)도 빌드 오류가 된다. -->
+  <ItemDefinitionGroup Condition="'$(SrAnalyze)'=='true'">
+    <ClCompile>
+      <EnablePREfast>true</EnablePREfast>
+    </ClCompile>
+  </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
       <WarningLevel>Level4</WarningLevel>

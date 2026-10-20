@@ -6,6 +6,7 @@
 ./tests/RunTests.ps1 -Quick -Filter golden        # 이름에 golden이 들어간 테스트만
 ./tests/RunTests.ps1 -Quick -UpdateGolden         # 의도한 화면 변경 후 골든 PNG 갱신
 ./tests/RunTests.ps1 -Rebuild                     # 네 구성 전체 재빌드(커밋 전 확인)
+./tests/RunTests.ps1 -Quick -MSBuildArgs '/p:SrAnalyze=true'   # MSVC /analyze 정적 분석을 켜고 빌드
 .NOTES
 출력은 구성마다 BUILD/PASS/FAIL 줄과 테스트 SUMMARY 줄이다. 빌드 실패 시 첫 오류 줄만 보여 주고
 전체 로그 경로를 알려 준다(tests/bin/logs).
@@ -16,7 +17,9 @@ param(
     [switch]$Rebuild,
     [switch]$Quick,
     [string]$Filter = '',
-    [switch]$UpdateGolden
+    [switch]$UpdateGolden,
+    # CI 품질 검사용 추가 MSBuild 인수. 예: '/p:SrAnalyze=true'(/analyze), '/p:EnableASAN=true'
+    [string[]]$MSBuildArgs = @()
 )
 if ($Quick) {
     $Configurations = @('Release')
@@ -41,7 +44,7 @@ try {
             $env:PATH = (Join-Path $visualStudio "VC/Tools/MSVC/$toolsVersion/bin/Hostx64/$runtimeArch") + ";$originalPath"
             # 프로파일 수집 전 빌드 worker가 불필요하게 상주하지 않도록 한다.
             $buildLog = "$logs/$platform-$configuration-build.log"
-            $null = & $buildTool (Join-Path $projectRoot 'SoftrendererProject.sln') /m /nr:false /nologo /v:quiet "/t:$target" "/p:Configuration=$configuration" "/p:Platform=$solutionPlatform" "/flp:logfile=$buildLog;verbosity=normal"
+            $null = & $buildTool (Join-Path $projectRoot 'SoftrendererProject.sln') /m /nr:false /nologo /v:quiet "/t:$target" "/p:Configuration=$configuration" "/p:Platform=$solutionPlatform" "/flp:logfile=$buildLog;verbosity=normal" @MSBuildArgs
             if ($LASTEXITCODE -ne 0) {
                 Select-String -Path $buildLog -Pattern ': (fatal )?error ' | Select-Object -First 10 | ForEach-Object { Write-Output $_.Line.Trim() }
                 throw "Build failed: $platform $configuration (log: $buildLog)"

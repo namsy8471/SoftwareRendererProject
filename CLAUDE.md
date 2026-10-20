@@ -113,8 +113,8 @@ tools/dev.sh render wire out.png
 
 - 경로: `..\SR-worktrees\<브랜치 이름의 / 를 - 로 바꾼 것>`. 모든 스크립트(`RunTests.ps1`, `Bench.ps1`, srcli 자산 탐색)는
   worktree 기준 상대 경로로 동작하고, 빌드 산출물(`tests/bin`, `tools/bin`, `x64/`)도 worktree마다 따로 생긴다.
-- oneTBB `.lib/.dll/.pdb`는 `.gitignore` 때문에 저장소에 없다. `git worktree add`만 하면 링크 오류가 나므로
-  반드시 스크립트로 만들거나 `deps`를 실행한다(메인 체크아웃에서 빠진 파일만 복사).
+- oneTBB의 링크·실행에 필요한 `tbb12[_debug].lib/.dll`은 저장소에 들어 있다(새 clone·CI에서 바로 빌드).
+  그 밖의 `.lib/.dll/.pdb`는 `.gitignore` 때문에 없으므로, 필요하면 스크립트로 만들거나 `deps`를 실행한다.
 - 브랜치 이름: `perf/<주제>`(최적화), `fix/<주제>`, `ci/<주제>`, `refactor/<주제>`, `docs/<주제>`, `tooling/<주제>`.
 - 흐름: worktree에서 커밋 → `git push -u origin <브랜치>` → main 대상 PR(초안) → CI 녹색 → 병합 → `remove`.
 - 벤치·프로파일은 PC 전체 CPU를 쓰므로, 다른 worktree에서 빌드가 도는 동안 잰 수치는 판정에 쓰지 않는다.
@@ -123,3 +123,17 @@ tools/dev.sh render wire out.png
 
 - 앱·MSBuild 빌드는 Windows + Visual Studio(v145 도구체인)가 필요하다. 클라우드 세션은 CMake/GCC로 코어·srcli·테스트만 빌드할 수 있다.
 - Release의 LTCG(`/GL`)는 MSVC 내부 오류 때문에 꺼져 있다(BuildSettings.props 주석). 다시 켤 때는 4개 구성 테스트와 벤치를 함께 확인한다.
+
+## CI와 PC 러너
+
+- 빌드·테스트·`/analyze`·ASan은 GitHub 클라우드(Linux, Windows)에서 돈다. PC(self-hosted runner, 라벨 `renderer-pc`)는
+  `windows.yml`의 `bench` job만 맡는다. 구성 설명과 등록 방법은 `tools/ci/README.md`.
+- PC 벤치 job이 필요하거나 대기 중인데 러너가 꺼져 있으면, 사용자에게 묻지 말고 러너를 켠다.
+  끄는 것은 사용자가 요청할 때만 한다.
+  ```powershell
+  gh api repos/namsy8471/SoftwareRendererProject/actions/runners --jq '.runners[] | .name+" "+.status'  # online/offline
+  Get-Process Runner.Listener -ErrorAction SilentlyContinue                                              # 실행 중이면 프로세스가 보인다
+  Start-Process C:\actions-runner\run.cmd -WorkingDirectory C:\actions-runner                            # 켜기(별도 창)
+  Stop-Process -Name Runner.Listener                                                                     # 끄기(요청 시에만)
+  ```
+- 다른 작업이 PC에서 A/B 벤치를 재는 동안에는 러너 벤치와 겹치지 않게 한다(push가 벤치 job을 띄운다).

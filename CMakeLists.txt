@@ -58,6 +58,19 @@ else()
   endif()
 endif()
 
+# --- 런타임 검사(CI의 sanitize 프리셋). 예: -DSR_SANITIZE=address,undefined ---
+set(SR_SANITIZE "" CACHE STRING "Comma-separated sanitizers (GCC/Clang: address,undefined; MSVC: address)")
+if(SR_SANITIZE)
+  if(MSVC)
+    target_compile_options(sr_options INTERFACE /fsanitize=${SR_SANITIZE})
+  else()
+    # UB를 경고만 하고 넘어가지 않도록 첫 위반에서 프로세스를 끝낸다.
+    target_compile_options(sr_options INTERFACE -fsanitize=${SR_SANITIZE} -fno-sanitize-recover=all
+                                                -fno-omit-frame-pointer)
+    target_link_options(sr_options INTERFACE -fsanitize=${SR_SANITIZE})
+  endif()
+endif()
+
 # --- 렌더러 코어: 창/GDI(src/App, src/Platform)를 뺀 전부 ---
 file(GLOB_RECURSE SR_CORE_SOURCES CONFIGURE_DEPENDS
      "${CMAKE_SOURCE_DIR}/src/Core/*.cpp" "${CMAKE_SOURCE_DIR}/src/Graphics/*.cpp"

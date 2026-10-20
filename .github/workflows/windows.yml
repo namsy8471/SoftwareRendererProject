@@ -1,0 +1,115 @@
+# Windows CI.
+# - 빌드·테스트·/analyze·ASan: GitHub 클라우드 Windows(windows-2025, VS 2026 = v145)에서 job마다 동시에 돈다.
+# - 벤치: 사용자 PC(self-hosted runner, 라벨 renderer-pc)에서 srcli만 빌드해 1080p로 잰다.
+#   성능 판정 기준(CLAUDE.md)은 이 PC의 Release x64 수치라서, 벤치만은 클라우드로 옮길 수 없다.
+#
+# 보안: 공개 저장소라 남의 fork에서 온 PR이 PC에서 코드를 실행하면 안 된다.
+# 그래서 PC job은 같은 저장소 브랜치에서 온 PR만 받는다(if 조건). 클라우드 job은 제한이 없다.
+name: Windows
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  actions: read # main의 이전 벤치 결과(artifact)를 내려받아 비교하는 데 필요
+
+defaults:
+  run:
+    shell: pwsh
+
+jobs:
+  cloud:
+    name: MSVC ${{ matrix.name }} (cloud)
+    runs-on: windows-2025
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Release x64 tests
+            key: release
+            args: -Quick
+          # /analyze 경고도 /WX로 오류가 된다. 외부 헤더(src/ThirdParty)는 /analyze:external-로 뺀다.
+          - name: /analyze
+            key: analyze
+            args: -Quick -MSBuildArgs '/p:SrAnalyze=true'
+          # Debug|x64는 BuildSettings.props에서 이미 EnableASAN(/fsanitize=address)이다. 명시적으로 한 번 더 켠다.
+          - name: AddressSanitizer (Debug x64)
+            key: asan
+            args: -Configurations Debug -Platforms x64 -MSBuildArgs '/p:EnableASAN=true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe" -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          Write-Output "Visual Studio: $vs"
+          Get-Content (Join-Path $vs 'VC/Auxiliary/Build/Microsoft.VCToolsVersion.default.txt')
+
+      - name: Build + test
+        run: ./tests/RunTests.ps1 ${{ matrix.args }}
+
+      - name: Upload golden diffs and logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-${{ matrix.key }}-failure
+          path: |
+            tests/out/golden/
+            tests/bin/logs/
+          if-no-files-found: ignore
+
+  bench:
+    name: Bench 1920x1080 (PC)
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Windows, X64, renderer-pc]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      # PC 부하를 줄이려고 벤치에 필요한 srcli만 Release x64로 빌드한다(앱·테스트는 클라우드 job에서 확인).
+      - name: Build srcli (Release x64)
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe" -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          $msbuild = Join-Path $vs 'MSBuild/Current/Bin/MSBuild.exe'
+          & $msbuild SrCli.vcxproj /m /nologo /v:minimal /p:Configuration=Release /p:Platform=x64 "/p:SolutionDir=$PWD\"
+          if ($LASTEXITCODE -ne 0) { throw 'srcli build failed' }
+
+      # CLAUDE.md 판정 조건 그대로: fill/wire/normal, 1920x1080, 모드마다 3회 중앙값.
+      - name: Benchmark (3 runs)
+        run: |
+          ./tests/Bench.ps1 -Runs 3 -Label ci
+          $file = Get-ChildItem tests/out/bench/*-ci.jsonl | Sort-Object LastWriteTime | Select-Object -Last 1
+          New-Item -ItemType Directory -Force bench | Out-Null
+          Copy-Item $file.FullName bench/bench.jsonl
+
+      # main이 아니면 main의 마지막 성공한 실행에서 벤치 결과를 가져와 비교 기준으로 쓴다. 없으면 이번 수치만 보여 준다.
+      - name: Fetch main baseline
+        if: github.ref != 'refs/heads/main'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $runId = gh run list --repo $env:GITHUB_REPOSITORY --workflow windows.yml --branch main --status success --limit 1 --json databaseId --jq '.[0].databaseId'
+          if ($runId) { gh run download $runId --repo $env:GITHUB_REPOSITORY --name bench-windows --dir baseline }
+          else { Write-Output 'main baseline 없음' }
+
+      # 지금은 보고만 한다. normal 모드가 아직 p95 9ms를 못 넘어서 절대 기준으로는 실패시키지 않는다.
+      # 수치가 안정되면 -FailOnRegressionPct 5 같은 값을 넣어 main 대비 회귀만 실패로 만든다.
+      - name: Report benchmark
+        run: ./tools/ci/Compare-Bench.ps1 -Current bench/bench.jsonl -Baseline baseline/bench.jsonl -SummaryPath $env:GITHUB_STEP_SUMMARY
+
+      - name: Upload benchmark
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-windows
+          path: bench/bench.jsonl
+          retention-days: 90
