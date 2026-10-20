@@ -77,9 +77,11 @@ SRMath::vec3 Rasterizer::ShadeSurface(const SurfaceSample &surface, const Materi
 
         // 정반사 조명 계산
         const SRMath::vec3 reflectDirection = SRMath::reflect(-1.0f * lightDir, surface.normalWorld);
-        const float specularFactor = diffuseIntensity > 0.0f
-                                         ? std::pow(std::max(0.0f, SRMath::dot(viewDir, reflectDirection)),
-                                                    std::max(1.0f, material.shininess))
+        // 반사광이 시선 반대쪽이면 밑이 +0이다. 지수는 max(1, shininess)로 1 이상(또는 +inf)이므로
+        // pow(+0, y)는 정확히 +0이다. 그 경우 ucrtbase powf 호출(VTune 2위 핫스팟)을 건너뛴다.
+        const float specularBase = std::max(0.0f, SRMath::dot(viewDir, reflectDirection));
+        const float specularFactor = diffuseIntensity > 0.0f && specularBase != 0.0f
+                                         ? std::pow(specularBase, std::max(1.0f, material.shininess))
                                          : 0.0f;
 
         SRMath::vec3 specularTerm = material.specular;

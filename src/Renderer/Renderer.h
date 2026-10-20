@@ -28,7 +28,9 @@ class Renderer
   private:
     using ClipBuffer = sr::FixedCapacityVector<ShadedVertex, 12>;
     using FrameContext = RenderFrameContext;
-    static constexpr int maximumLineBands = 32;
+    static constexpr int maximumLineBands = 64;
+    // 법선 선 band 수. 경계를 선 밀도로 정하므로 더 늘리면 band마다 전체 선을 훑는 비용만 는다.
+    static constexpr int debugLineBandCount = 32;
     int m_width = 0, m_height = 0;
     int m_lineBandCount = 0, m_lineBandHeight = 0;
     ELineAlgorithm m_currentLineAlgorithm = ELineAlgorithm::Bresenham;
@@ -68,15 +70,18 @@ class Renderer
     };
     // 입력 line 순번이 슬롯 번호다. 각 band가 이 순서로 자기 band 선을 그려
     // 색이 다른 법선/디버그 선이 겹쳐도 기존 제출 순서를 유지한다.
-    struct DebugLineBands
+    // 선이 걸친 화면 행의 포함 구간. 그리지 않을 선은 first > last다.
+    struct DebugLineRows
     {
-        std::uint8_t first, last; // 포함 구간. first > last면 그리지 않는다.
+        int first, last;
     };
-    static_assert(maximumLineBands <= 256);
     std::vector<DebugLineCommand> m_debugLineCommands;
     std::vector<DebugLineChunk> m_debugLineChunks;
     std::vector<std::optional<Rasterizer::PreparedDebugLine>> m_preparedDebugLines;
-    std::vector<DebugLineBands> m_debugLineBands;
+    std::vector<DebugLineRows> m_debugLineRows;
+    // 법선 선은 화면 중앙 몇 행에 몰린다. 행별 선 수로 band 경계를 정해 band 작업량을 맞춘다.
+    tbb::enumerable_thread_specific<std::vector<std::uint32_t>> m_debugLineRowCounts;
+    std::vector<std::uint64_t> m_debugLineRowWeights;
 
     struct CommandCacheKey
     {
