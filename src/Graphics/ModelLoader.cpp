@@ -424,7 +424,7 @@ AABB buildSpatialData(std::span<Mesh> meshes)
                           {
                               auto &mesh = meshes[index];
                               generateMissingNormals(mesh);
-                              mesh.localAABB = AABB::CreateFromMesh(mesh);
+                              mesh.localAABB = ComputeLocalAABB(mesh);
                               localBounds.local().Encapsulate(mesh.localAABB);
                               mesh.octree = std::make_unique<Octree>();
                               mesh.octree->Build(mesh);

@@ -5,13 +5,8 @@
 #include <span>
 #include "Math/AABB.h"
 #include "Math/SRMath.h"
-#include "Renderer/RenderQueue.h"
 
 class Model;
-class RenderQueue;
-class Frustum;
-struct DebugFlags;
-struct Mesh;
 
 class GameObject : public std::enable_shared_from_this<GameObject>
 {
@@ -31,24 +26,8 @@ class GameObject : public std::enable_shared_from_this<GameObject>
     std::weak_ptr<GameObject> m_parent;
     std::vector<std::shared_ptr<GameObject>> m_children;
 
-    // worker 등록 순서가 아닌 모델의 메시 순서로 병합한다. 각 작업은 자기
-    // batch만 쓰고, 프레임 사이에는 벡터 용량을 유지해 할당을 재사용한다.
-    struct MeshCommandBatch
-    {
-        std::vector<MeshRenderCommand> commands;
-        std::vector<DebugPrimitiveCommand> debugCommands;
-        std::vector<DebugVertex> normalLines; // RenderQueue에서 받은 재사용 저장소
-    };
-    std::vector<MeshCommandBatch> m_meshCommandBatches;
-
-    void submitOwnMeshes(RenderQueue &queue, const Frustum &frustum, const DebugFlags &flags);
-    void collectMeshCommands(const Mesh &mesh, const Frustum &frustum, const DebugFlags &flags,
-                             std::vector<MeshRenderCommand> &commands,
-                             std::vector<DebugPrimitiveCommand> &debugCommands,
-                             std::vector<DebugVertex> &normalLines);
-    void mergeCommands(RenderQueue &queue);
-
   public:
+    // model이 null이면 그리지 않는 변환 노드다(프로젝트 파일의 그룹 엔티티 등).
     GameObject(const SRMath::vec3 &position, const SRMath::vec3 &rotation, const SRMath::vec3 &scale,
                std::unique_ptr<Model> model);
     ~GameObject();
@@ -65,8 +44,15 @@ class GameObject : public std::enable_shared_from_this<GameObject>
     [[nodiscard]] SRMath::vec3 GetPosition() const noexcept { return m_position; }
     [[nodiscard]] SRMath::vec3 GetRotation() const noexcept { return m_rotation; }
     [[nodiscard]] SRMath::vec3 GetScale() const noexcept { return m_scale; }
+    // 로컬 값만 바꾼다. 행렬과 AABB는 다음 Update(Scene::Update)에서 다시 계산된다.
+    void SetPosition(const SRMath::vec3 &position) noexcept { m_position = position; }
+    void SetRotation(const SRMath::vec3 &rotation) noexcept { m_rotation = rotation; }
+    void SetScale(const SRMath::vec3 &scale) noexcept { m_scale = scale; }
     [[nodiscard]] const Model *GetModel() const noexcept { return m_model.get(); }
     [[nodiscard]] const AABB &GetWorldAABB() const noexcept { return m_worldAABB; }
+    // 열벡터 규약의 world = parentWorld * T * R * S. normal은 그 역전치(특이하면 단위 행렬)다.
+    [[nodiscard]] const SRMath::mat4 &GetWorldMatrix() const noexcept { return m_worldMatrix; }
+    [[nodiscard]] const SRMath::mat4 &GetNormalMatrix() const noexcept { return m_normalMatrix; }
     [[nodiscard]] std::weak_ptr<GameObject> GetParent() const noexcept { return m_parent; }
     [[nodiscard]] std::span<const std::shared_ptr<GameObject>> GetChildren() const noexcept
     {
@@ -75,7 +61,4 @@ class GameObject : public std::enable_shared_from_this<GameObject>
 
     // shared_ptr로 관리되는 부모만 연결할 수 있다. null/중복/순환/기존 부모는 거부한다.
     [[nodiscard]] bool AddChild(std::shared_ptr<GameObject> child);
-
-    // Rendering
-    void SubmitToRenderQueue(RenderQueue &renderQueue, const Frustum &frustum, const DebugFlags &debugFlags);
 };

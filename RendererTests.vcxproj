@@ -45,10 +45,10 @@
     <ClCompile Include="tests\VisibilityTests.cpp" />
     <ClCompile Include="tests\RenderTargetTests.cpp" />
     <ClCompile Include="tests\GoldenTests.cpp" />
-    <ClCompile Include="tests\FrameworkTests.cpp" />
+    <ClCompile Include="tests\Win32AppTests.cpp" />
     <ClInclude Include="tests\TestHarness.h" />
     <ClInclude Include="tests\TestSupport.h" />
-    <ClCompile Include="src\Core\Framework.cpp" />
+    <ClCompile Include="src\App\Win32App.cpp" />
     <ResourceCompile Include="SoftrendererProject.rc" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

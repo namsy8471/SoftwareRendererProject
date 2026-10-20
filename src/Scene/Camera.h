@@ -3,6 +3,7 @@
 #include <span>
 #include "Math/SRMath.h"
 #include "Math/Frustum.h"
+#include "Graphics/ViewParams.h"
 
 class Camera
 {
@@ -47,6 +48,7 @@ class Camera
     [[nodiscard]] const Frustum &GetFrustum() const noexcept { return m_frustum; }
     [[nodiscard]] const SRMath::mat4 &GetViewMatrix() const noexcept { return m_viewMatrix; }
     [[nodiscard]] const SRMath::mat4 &GetProjectionMatrix() const noexcept { return m_projectionMatrix; }
+    [[nodiscard]] ViewParams GetViewParams() const noexcept { return {m_viewMatrix, m_projectionMatrix, m_cameraPos}; }
 
     void SetCameraPos(const SRMath::vec3 &pos) noexcept { m_cameraPos = pos; }
     void SetCameraYaw(float yaw) noexcept { m_cameraYaw = yaw; }

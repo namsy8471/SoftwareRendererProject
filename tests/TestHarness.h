@@ -6,7 +6,7 @@
 #include <utility>
 #include <vector>
 
-// Win32 창이 필요한 테스트(Framework, GdiPresenter)는 MSBuild 테스트에서만 실행한다.
+// Win32 창이 필요한 테스트(Win32App, GdiPresenter)는 MSBuild 테스트에서만 실행한다.
 // CMake 빌드는 SR_HEADLESS_ONLY를 정의하므로 Linux/클라우드에서도 나머지 전부를 돌린다.
 #if defined(_WIN32) && !defined(SR_HEADLESS_ONLY)
 #define SR_TEST_WIN32_APP 1
@@ -59,6 +59,6 @@ void RegisterRenderTargetTests(TestRegistry &);
 void RegisterVisibilityTests(TestRegistry &);
 void RegisterGoldenTests(TestRegistry &);
 #if SR_TEST_WIN32_APP
-void RegisterFrameworkTests(TestRegistry &);
+void RegisterWin32AppTests(TestRegistry &);
 #endif
 } // namespace sr::test

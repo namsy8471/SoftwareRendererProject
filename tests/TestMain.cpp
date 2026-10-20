@@ -1,6 +1,6 @@
 // RendererTests 실행기.
 //   RendererTests [root] [--filter TEXT] [--list] [--update-golden] [--out DIR]
-//   RendererTests [root] --benchmark ...            (Windows: 숨긴 Framework/GDI 경로)
+//   RendererTests [root] --benchmark ...            (Windows: 숨긴 Win32App/GDI 경로)
 //   RendererTests [root] --visibility-benchmark ... (합성 가림 장면)
 // root 기본값은 현재 폴더다. 출력은 테스트마다 PASS/FAIL 한 줄과 마지막 SUMMARY 한 줄이다.
 #include "Graphics/AssetParsing.h"
@@ -18,7 +18,7 @@
 
 void RunVisibilityBenchmark(int argc, char **argv);
 #if SR_TEST_WIN32_APP
-void RunFrameworkBenchmark(int frames, int width, int height, std::string_view mode, std::string_view optimization,
+void RunWin32AppBenchmark(int frames, int width, int height, std::string_view mode, std::string_view optimization,
                            bool stats, bool hiddenWireframe);
 #endif
 
@@ -28,7 +28,7 @@ using namespace sr::test;
 
 #if SR_TEST_WIN32_APP
 // 기존 위치 인자 형식을 유지한다: --benchmark frames width height mode opt [stats|nostats] [hidden]
-int runFrameworkBenchmark(int argc, char **argv)
+int runWin32AppBenchmark(int argc, char **argv)
 {
     const auto integer = [&](int index, int fallback)
     {
@@ -52,7 +52,7 @@ int runFrameworkBenchmark(int argc, char **argv)
     }
     if (argc > optional)
         throw std::runtime_error("unexpected benchmark trailing argument");
-    RunFrameworkBenchmark(integer(3, 600), integer(4, 1280), integer(5, 720), argc > 6 ? argv[6] : "fill",
+    RunWin32AppBenchmark(integer(3, 600), integer(4, 1280), integer(5, 720), argc > 6 ? argv[6] : "fill",
                           argc > 7 ? argv[7] : "none", stats, hiddenWireframe);
     return 0;
 }
@@ -79,9 +79,9 @@ int main(int argc, char **argv)
         if (argc > first && std::string_view(argv[first]) == "--benchmark")
         {
 #if SR_TEST_WIN32_APP
-            return runFrameworkBenchmark(argc, argv);
+            return runWin32AppBenchmark(argc, argv);
 #else
-            std::cerr << "--benchmark needs the Win32 Framework build; use srcli bench instead.\n";
+            std::cerr << "--benchmark needs the Win32App build; use srcli bench instead.\n";
             return 2;
 #endif
         }
@@ -116,7 +116,7 @@ int main(int argc, char **argv)
         RegisterRendererTests(registry);
         RegisterGoldenTests(registry);
 #if SR_TEST_WIN32_APP
-        RegisterFrameworkTests(registry);
+        RegisterWin32AppTests(registry);
 #endif
 
         int passed = 0, failed = 0;

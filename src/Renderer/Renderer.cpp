@@ -2,7 +2,6 @@
 #include "Renderer/RenderQueue.h"
 #include "Renderer/FXAA.h"
 #include "Graphics/Light.h"
-#include "Scene/Camera.h"
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -54,7 +53,7 @@ std::span<const PreparedDirectionalLight> Renderer::prepareLights(std::span<cons
     return m_preparedLights;
 }
 
-void Renderer::RenderScene(RenderTarget &target, const RenderQueue &queue, const Camera &camera,
+void Renderer::RenderScene(RenderTarget &target, const RenderQueue &queue, const ViewParams &view,
                            std::span<const DirectionalLight> lights)
 {
     m_stats = {};
@@ -62,7 +61,7 @@ void Renderer::RenderScene(RenderTarget &target, const RenderQueue &queue, const
         return;
     const auto started = FrameClock::now();
     ensureViewport(target.Width(), target.Height());
-    const FrameContext frame{camera.GetProjectionMatrix() * camera.GetViewMatrix(), camera.GetCameraPos(),
+    const FrameContext frame{view.projection * view.view, view.position,
                              prepareLights(lights), (m_width + tileSize - 1) / tileSize,
                              (m_height + tileSize - 1) / tileSize};
     prepareFrame();

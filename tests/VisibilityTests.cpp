@@ -439,7 +439,7 @@ void determinismTests()
         {
             renderer.SetOptions({(iteration & 1) != 0, (iteration & 2) != 0, iteration == 99});
             image.target.Clear();
-            renderer.RenderScene(image.target, scene.queue, scene.camera, scene.lights);
+            renderer.RenderScene(image.target, scene.queue, scene.camera.GetViewParams(), scene.lights);
             const auto result = snapshot(image.target);
             if (expected.colors.empty())
                 expected = result;
@@ -457,12 +457,12 @@ void determinismTests()
         mixed.Submit(cmd);
     renderer.SetOptions({false, false, false, true});
     image.target.Clear();
-    renderer.RenderScene(image.target, mixed, scene.camera, scene.lights);
+    renderer.RenderScene(image.target, mixed, scene.camera.GetViewParams(), scene.lights);
     require(std::ranges::all_of(image.storage, [](auto pixel) { return pixel == 0 || pixel == 0xFFFFFF; }),
             "mixed wire occludes filled colors");
     renderer.SetOptions({});
     image.target.Clear();
-    renderer.RenderScene(image.target, mixed, scene.camera, scene.lights);
+    renderer.RenderScene(image.target, mixed, scene.camera.GetViewParams(), scene.lights);
     require(std::ranges::any_of(image.storage, [](auto pixel) { return pixel != 0 && pixel != 0xFFFFFF; }),
             "default mixed X-ray wire does not occlude filled colors");
 }
@@ -525,9 +525,9 @@ void tileMergeSubmissionTests()
                     tbb::global_control single(tbb::global_control::max_allowed_parallelism, 1);
                     Renderer reference;
                     reference.SetOptions({false, false, false, hidden});
-                    reference.RenderScene(image.target, queue, camera, {});
+                    reference.RenderScene(image.target, queue, camera.GetViewParams(), {});
                     expected = snapshot(image.target);
-                    reference.RenderScene(other.target, alternate, camera, {});
+                    reference.RenderScene(other.target, alternate, camera.GetViewParams(), {});
                     otherExpected = snapshot(other.target);
                 }
                 const auto center = static_cast<std::size_t>((height / 2) * width + width / 2);
@@ -552,8 +552,8 @@ void tileMergeSubmissionTests()
                         other.target.Clear();
                         // 서로 다른 renderer/target의 프레임은 같은 arena에서도 독립이어야 한다.
                         tbb::parallel_invoke(
-                            [&] { reused.RenderScene(image.target, queue, camera, {}); },
-                            [&] { independent.RenderScene(other.target, alternate, camera, {}); });
+                            [&] { reused.RenderScene(image.target, queue, camera.GetViewParams(), {}); },
+                            [&] { independent.RenderScene(other.target, alternate, camera.GetViewParams(), {}); });
                         require(
                             snapshot(image.target) == expected && snapshot(other.target) == otherExpected,
                             "private tile merge preserves pixels depth owners across workers and options");
@@ -567,7 +567,7 @@ void tileMergeSubmissionTests()
                     image.target.Clear();
                     const auto cleared = snapshot(image.target);
                     reused.SetOptions({true, true, true, hidden});
-                    reused.RenderScene(image.target, empty, camera, {});
+                    reused.RenderScene(image.target, empty, camera.GetViewParams(), {});
                     require(snapshot(image.target) == cleared && reused.GetStats().preparedTriangles == 0 &&
                                 reused.GetStats().binReferences == 0,
                             "empty queue clears worker and merged tile submissions");
@@ -582,7 +582,7 @@ void tileMergeSubmissionTests()
                     }
                     image.target.Clear();
                     reused.SetOptions({false, false, true, false});
-                    reused.RenderScene(image.target, xrayOnly, camera, {});
+                    reused.RenderScene(image.target, xrayOnly, camera.GetViewParams(), {});
                     require(reused.GetStats().binReferences == 0 && reused.GetStats().coveragePassed == 0 &&
                                 std::ranges::all_of(image.target.PrimitiveIds(),
                                                     [](auto id) { return id == RenderTarget::emptyOwner; }),
@@ -591,7 +591,7 @@ void tileMergeSubmissionTests()
                             "X-ray transition fixture draws actual wire pixels");
                     image.target.Clear();
                     reused.SetOptions({true, true, true, hidden});
-                    reused.RenderScene(image.target, queue, camera, {});
+                    reused.RenderScene(image.target, queue, camera.GetViewParams(), {});
                     require(snapshot(image.target) == expected,
                             "filled tile counts recover after an X-ray-only frame");
                 }
@@ -615,10 +615,10 @@ void wireOptionTests()
         const auto index = static_cast<std::size_t>(hidden);
         renderer.SetOptions({false, false, true, hidden});
         image.target.Clear();
-        renderer.RenderScene(image.target, frontOnly, scene.camera, scene.lights);
+        renderer.RenderScene(image.target, frontOnly, scene.camera.GetViewParams(), scene.lights);
         const auto front = snapshot(image.target);
         image.target.Clear();
-        renderer.RenderScene(image.target, scene.queue, scene.camera, scene.lights);
+        renderer.RenderScene(image.target, scene.queue, scene.camera.GetViewParams(), scene.lights);
         expected[index] = snapshot(image.target);
         if (hidden)
         {
@@ -645,7 +645,7 @@ void wireOptionTests()
             {
                 renderer.SetOptions({(iteration & 1) != 0, (iteration & 2) != 0, iteration == 99, hidden});
                 image.target.Clear();
-                renderer.RenderScene(image.target, scene.queue, scene.camera, scene.lights);
+                renderer.RenderScene(image.target, scene.queue, scene.camera.GetViewParams(), scene.lights);
                 require(snapshot(image.target) == expected[index],
                         "wire option 100-run worker/sort/Hi-Z determinism");
             }
@@ -663,17 +663,17 @@ void wireOptionTests()
         mixed.Submit(command);
     renderer.SetOptions({});
     image.target.Clear();
-    renderer.RenderScene(image.target, filledFront, scene.camera, scene.lights);
+    renderer.RenderScene(image.target, filledFront, scene.camera.GetViewParams(), scene.lights);
     const auto fillReference = snapshot(image.target);
     image.target.Clear();
-    renderer.RenderScene(image.target, mixed, scene.camera, scene.lights);
+    renderer.RenderScene(image.target, mixed, scene.camera.GetViewParams(), scene.lights);
     const auto xrayMixed = snapshot(image.target);
     require(xrayMixed.colors != fillReference.colors && xrayMixed.depths == fillReference.depths &&
                 xrayMixed.owners == fillReference.owners,
             "mixed X-ray rear wires overlay filled face without altering depth");
     renderer.SetOptions({false, false, false, true});
     image.target.Clear();
-    renderer.RenderScene(image.target, mixed, scene.camera, scene.lights);
+    renderer.RenderScene(image.target, mixed, scene.camera.GetViewParams(), scene.lights);
     require(snapshot(image.target) == fillReference, "mixed hidden rear wires stay behind filled face");
 }
 
@@ -752,7 +752,7 @@ void parallelDebugSubmissionTests()
                     Renderer serialGeometry;
                     serialGeometry.SetLineAlgorithm(algorithm);
                     serialGeometry.SetOptions({false, false, false, lineCount == 769});
-                    serialGeometry.RenderScene(reference.target, geometry, scene.camera, scene.lights);
+                    serialGeometry.RenderScene(reference.target, geometry, scene.camera.GetViewParams(), scene.lights);
                     RenderStats expectedStats;
                     Rasterizer serialLines(reference.target, frame, &expectedStats);
                     for (const auto policy : {DebugDepthPolicy::DepthTested, DebugDepthPolicy::Overlay})
@@ -768,7 +768,7 @@ void parallelDebugSubmissionTests()
                         reused.SetLineAlgorithm(algorithm);
                         reused.SetOptions({false, false, stats, lineCount == 769});
                         tested.target.Clear();
-                        reused.RenderScene(tested.target, queue, scene.camera, scene.lights);
+                        reused.RenderScene(tested.target, queue, scene.camera.GetViewParams(), scene.lights);
                         require(snapshot(tested.target) == expected,
                                 "prepared debug bands preserve queue/color order, resize and empty frames");
                         if (stats)
@@ -784,9 +784,9 @@ void parallelDebugSubmissionTests()
                 MemoryTarget emptyReference(width, height), emptyTested(width, height);
                 Renderer geometryOnly;
                 geometryOnly.SetLineAlgorithm(algorithm);
-                geometryOnly.RenderScene(emptyReference.target, geometry, scene.camera, scene.lights);
+                geometryOnly.RenderScene(emptyReference.target, geometry, scene.camera.GetViewParams(), scene.lights);
                 reused.SetOptions({false, false, true, false});
-                reused.RenderScene(emptyTested.target, geometry, scene.camera, scene.lights);
+                reused.RenderScene(emptyTested.target, geometry, scene.camera.GetViewParams(), scene.lights);
                 require(snapshot(emptyTested.target) == snapshot(emptyReference.target) &&
                             reused.GetStats().liveDebugLineBytes == 0,
                         "empty debug queue clears prepared line state after a large frame");
@@ -868,7 +868,7 @@ void preparedDebugSlotFreshnessTests()
                         // 준비 API를 쓰지 않는 기존 순차 DrawDebugPrimitive가 매 프레임 기준이다.
                         MemoryTarget reference(width, height);
                         Renderer geometryOnly;
-                        geometryOnly.RenderScene(reference.target, geometry, scene.camera, scene.lights);
+                        geometryOnly.RenderScene(reference.target, geometry, scene.camera.GetViewParams(), scene.lights);
                         RenderStats expectedStats;
                         Rasterizer original(reference.target, frame, &expectedStats);
                         for (const auto policy : {DebugDepthPolicy::DepthTested, DebugDepthPolicy::Overlay})
@@ -881,7 +881,7 @@ void preparedDebugSlotFreshnessTests()
                                         expected.colors.end(),
                                     "freshness valid frame contains its new primary line color");
                         tested.target.Clear();
-                        reused.RenderScene(tested.target, queue, scene.camera, scene.lights);
+                        reused.RenderScene(tested.target, queue, scene.camera.GetViewParams(), scene.lights);
                         require(snapshot(tested.target) == expected,
                                 "reused optional debug slots overwrite invalid results and never read shrunk "
                                 "tails");
@@ -899,7 +899,7 @@ void preparedDebugSlotFreshnessTests()
                 const RenderQueue empty;
                 tested.target.Clear();
                 const auto cleared = snapshot(tested.target);
-                reused.RenderScene(tested.target, empty, scene.camera, scene.lights);
+                reused.RenderScene(tested.target, empty, scene.camera.GetViewParams(), scene.lights);
                 require(snapshot(tested.target) == cleared && reused.GetStats().liveDebugLineBytes == 0,
                         "completely empty frame releases live slots after a reused large frame");
             }
@@ -1156,7 +1156,7 @@ void nearPlaneTests()
         RenderQueue queue;
         queue.Submit(MeshRenderCommand{&mesh, mesh.indices, SRMath::mat4::identity(), &mesh.material});
         image.target.Clear();
-        renderer.RenderScene(image.target, queue, camera, {});
+        renderer.RenderScene(image.target, queue, camera.GetViewParams(), {});
         require(std::ranges::any_of(image.storage, [](auto pixel) { return pixel != 0; }),
                 "triangle crossing camera/near plane survives clipping");
         require(std::ranges::all_of(image.target.Depth(), [](float q) { return std::isfinite(q); }),
@@ -1223,7 +1223,7 @@ void RunVisibilityBenchmark(int argc, char **argv)
     {
         const auto start = std::chrono::steady_clock::now();
         image.target.Clear();
-        renderer.RenderScene(image.target, scene.queue, scene.camera, scene.lights);
+        renderer.RenderScene(image.target, scene.queue, scene.camera.GetViewParams(), scene.lights);
         if (i >= 0)
             times.push_back(
                 std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count());

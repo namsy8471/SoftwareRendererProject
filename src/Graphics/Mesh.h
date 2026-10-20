@@ -30,3 +30,6 @@ struct Mesh
 
     [[nodiscard]] const AABB &GetLocalAABB() const noexcept { return localAABB; }
 };
+
+// 정점 위치 전체를 감싸는 로컬 AABB. 정점이 없으면 원점 한 점짜리 상자다.
+[[nodiscard]] AABB ComputeLocalAABB(const Mesh &mesh) noexcept;
