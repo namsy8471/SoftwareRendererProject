@@ -38,4 +38,6 @@
 ### 잠시 멈추기 / 지우기
 - 멈추기: `services.msc`에서 `GitHub Actions Runner (...)` 서비스를 중지(관리자 PowerShell: `Stop-Service "actions.runner.*"`).
 - 지우기: `C:\actions-runner\config.cmd remove --token <Settings에서 받은 제거 토큰>`.
-- 벤치 job이 도는 동안 PC에서 다른 무거운 작업을 하면 수치가 흔들린다.
+- 벤치 job이 도는 동안 PC에서 다른 무거운 작업(다른 작업 폴더의 빌드나 `Bench.ps1` A/B 측정 포함)을 하면
+  양쪽 수치가 모두 흔들린다. 직접 측정하는 동안에는 서비스를 잠시 멈추거나, CI 벤치 결과를 다시 돌려 확인한다.
+- 걸리는 시간(이 PC 기준): Release 빌드+테스트 수 분, `/analyze` 빌드 약 2.5분, ASan Debug 빌드+테스트 약 8분.
