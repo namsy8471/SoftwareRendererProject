@@ -32,6 +32,9 @@ This CPU-based software renderer began as a way to verify the rendering-pipeline
 | Development | Period | Environment | Presentation |
 |:---:|:---:|:---:|:---:|
 | **Solo project** | 2025-07-07–2025-08-27 | C++26 Preview · MSVC v145 · Windows | WinAPI DIB · GDI |
+| **AI-driven coding (Claude)** | 2026-10-20– | C++26 Preview · MSVC v145 · Windows / GCC (CI) | WinAPI DIB · GDI |
+
+Since 2026-10-20, an AI (Claude) writes and optimizes the code. Changes are judged by measured fps/ms and assembly review, and verified by tests, golden images, and CI.
 
 ## Preview
 
