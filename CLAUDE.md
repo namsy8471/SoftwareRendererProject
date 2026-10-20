@@ -95,6 +95,28 @@ tools/dev.sh render wire out.png
 - 새 성능 결과는 `tests/Bench.ps1`의 jsonl을 근거로, 변경 전후 mean/p95/pixel_hash를 짧게 남긴다.
 - 프로파일러 스크립트: `tests/CaptureCpuProfiles.ps1`(VS CPU Usage, VTune). 산출물은 `tests/bin/profiles`(git 제외).
 
+## 작업 공간 (git worktree)
+
+여러 작업(스레드)이 한 PC에서 동시에 진행되므로 **작업마다 worktree 하나, 브랜치 하나**를 쓴다.
+메인 체크아웃(`...\GitHub\SoftwareRendererProject`)에서 브랜치를 바꾸거나 남의 미커밋 변경을 건드리지 않는다.
+
+```powershell
+./tools/Worktree.ps1 new perf/normal-shading        # origin/main에서 브랜치 생성 → ..\SR-worktrees\perf-normal-shading
+./tools/Worktree.ps1 new fix/x -Base <브랜치>       # main이 아닌 브랜치에서 시작
+./tools/Worktree.ps1 new <기존 브랜치>              # 이미 있는 브랜치를 연다
+./tools/Worktree.ps1 deps                           # 현재 worktree에 oneTBB 바이너리 다시 채우기
+./tools/Worktree.ps1 list
+./tools/Worktree.ps1 remove perf/normal-shading     # PR 병합 뒤 정리. 미커밋 변경이 있으면 실패(-Force)
+```
+
+- 경로: `..\SR-worktrees\<브랜치 이름의 / 를 - 로 바꾼 것>`. 모든 스크립트(`RunTests.ps1`, `Bench.ps1`, srcli 자산 탐색)는
+  worktree 기준 상대 경로로 동작하고, 빌드 산출물(`tests/bin`, `tools/bin`, `x64/`)도 worktree마다 따로 생긴다.
+- oneTBB `.lib/.dll/.pdb`는 `.gitignore` 때문에 저장소에 없다. `git worktree add`만 하면 링크 오류가 나므로
+  반드시 스크립트로 만들거나 `deps`를 실행한다(메인 체크아웃에서 빠진 파일만 복사).
+- 브랜치 이름: `perf/<주제>`(최적화), `fix/<주제>`, `ci/<주제>`, `refactor/<주제>`, `docs/<주제>`, `tooling/<주제>`.
+- 흐름: worktree에서 커밋 → `git push -u origin <브랜치>` → main 대상 PR(초안) → CI 녹색 → 병합 → `remove`.
+- 벤치·프로파일은 PC 전체 CPU를 쓰므로, 다른 worktree에서 빌드가 도는 동안 잰 수치는 판정에 쓰지 않는다.
+
 ## 환경 메모
 
 - 앱·MSBuild 빌드는 Windows + Visual Studio(v145 도구체인)가 필요하다. 클라우드 세션은 CMake/GCC로 코어·srcli·테스트만 빌드할 수 있다.
