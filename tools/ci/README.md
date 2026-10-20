@@ -4,9 +4,11 @@
 | --- | --- | --- |
 | `.github/workflows/ci.yml` `linux` | GitHub 공용 Ubuntu | CMake+GCC 빌드, 단위·골든 테스트, 참고용 벤치 |
 | `.github/workflows/ci.yml` `linux-sanitize` | GitHub 공용 Ubuntu | ASan+UBSan 빌드로 같은 테스트 + srcli 모드별 짧은 실행 |
-| `.github/workflows/windows.yml` `build-test-bench` | 사용자 PC (self-hosted) | MSVC Release x64 빌드, `RunTests.ps1 -Quick`, 1080p `Bench.ps1 -Runs 3`, main 대비 비교표 |
-| `.github/workflows/windows.yml` `analyze` | 사용자 PC | `/analyze` 정적 분석 빌드(`/p:SrAnalyze=true`) + 테스트 |
-| `.github/workflows/windows.yml` `asan` | 사용자 PC | Debug x64 `/fsanitize=address` 빌드 + 테스트 |
+| `.github/workflows/windows.yml` `cloud` (3개 동시) | GitHub 공용 Windows (windows-2025, VS 2026) | Release x64 `RunTests.ps1 -Quick`, `/analyze` 빌드(`/p:SrAnalyze=true`)+테스트, Debug x64 ASan 빌드+테스트 |
+| `.github/workflows/windows.yml` `bench` | 사용자 PC (self-hosted) | `srcli`만 Release x64로 빌드, 1080p `Bench.ps1 -Runs 3`, main 대비 비교표 |
+
+PC는 벤치만 맡는다. 100fps 판정 기준이 이 PC 수치라서 벤치는 클라우드로 옮길 수 없고, 나머지는 PC 부하를 줄이려고 클라우드에서 돈다.
+클라우드 Windows는 4코어라 이 PC(24코어)보다 빌드가 몇 배 느리지만 PC가 꺼져 있어도 돈다.
 
 벤치는 지금 보고만 한다(절대 기준 p95 <= 9ms 미달로 실패시키지 않음). 수치가 안정되면 `windows.yml`의
 `Compare-Bench.ps1`에 `-FailOnRegressionPct 5`처럼 값을 넣어 main 대비 회귀만 실패로 만든다.
@@ -40,4 +42,4 @@
 - 지우기: `C:\actions-runner\config.cmd remove --token <Settings에서 받은 제거 토큰>`.
 - 벤치 job이 도는 동안 PC에서 다른 무거운 작업(다른 작업 폴더의 빌드나 `Bench.ps1` A/B 측정 포함)을 하면
   양쪽 수치가 모두 흔들린다. 직접 측정하는 동안에는 서비스를 잠시 멈추거나, CI 벤치 결과를 다시 돌려 확인한다.
-- 걸리는 시간(이 PC 기준): Release 빌드+테스트 수 분, `/analyze` 빌드 약 2.5분, ASan Debug 빌드+테스트 약 8분.
+- PC에서 걸리는 시간: srcli 빌드 1~2분 + 벤치(3모드 × 3회) 수 분.
