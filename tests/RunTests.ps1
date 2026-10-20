@@ -6,7 +6,7 @@
 ./tests/RunTests.ps1 -Quick -Filter golden        # 이름에 golden이 들어간 테스트만
 ./tests/RunTests.ps1 -Quick -UpdateGolden         # 의도한 화면 변경 후 골든 PNG 갱신
 ./tests/RunTests.ps1 -Rebuild                     # 네 구성 전체 재빌드(커밋 전 확인)
-./tests/RunTests.ps1 -Quick -MSBuildArgs '/p:EnablePREfast=true'   # MSVC /analyze 정적 분석을 켜고 빌드
+./tests/RunTests.ps1 -Quick -MSBuildArgs '/p:SrAnalyze=true'   # MSVC /analyze 정적 분석을 켜고 빌드
 .NOTES
 출력은 구성마다 BUILD/PASS/FAIL 줄과 테스트 SUMMARY 줄이다. 빌드 실패 시 첫 오류 줄만 보여 주고
 전체 로그 경로를 알려 준다(tests/bin/logs).
@@ -18,7 +18,7 @@ param(
     [switch]$Quick,
     [string]$Filter = '',
     [switch]$UpdateGolden,
-    # CI 품질 검사용 추가 MSBuild 인수. 예: '/p:EnablePREfast=true'(/analyze), '/p:EnableASAN=true'
+    # CI 품질 검사용 추가 MSBuild 인수. 예: '/p:SrAnalyze=true'(/analyze), '/p:EnableASAN=true'
     [string[]]$MSBuildArgs = @()
 )
 if ($Quick) {
