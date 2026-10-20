@@ -9,6 +9,8 @@
 #include "Graphics/Light.h"
 #include "Graphics/AssetParsing.h"
 #include "Scene/GameObject.h"
+#include "Core/DebugFlags.h"
+#include "Core/SceneRenderCollector.h"
 #include "Scene/Camera.h"
 #include "Math/SIMD.h"
 #include "Math/Frustum.h"
@@ -885,14 +887,14 @@ struct RendererTestAccess
             if (iteration == 4)
             {
                 RenderTarget empty;
-                reused.RenderScene(empty, queue, camera, input);
+                reused.RenderScene(empty, queue, camera.GetViewParams(), input);
                 check(empty.Empty(), "empty target light preparation remains a no-op render");
             }
             actual.target.Clear();
             expected.target.Clear();
-            reused.RenderScene(actual.target, queue, camera, input);
+            reused.RenderScene(actual.target, queue, camera.GetViewParams(), input);
             Renderer fresh;
-            fresh.RenderScene(expected.target, queue, camera, input);
+            fresh.RenderScene(expected.target, queue, camera.GetViewParams(), input);
             check(actual.pixels == expected.pixels &&
                       std::ranges::equal(actual.target.Depth(), expected.target.Depth()) &&
                       std::ranges::equal(actual.target.PrimitiveIds(), expected.target.PrimitiveIds()),
@@ -956,11 +958,11 @@ void renderSmoke(const TestContext &context)
         [&](const std::shared_ptr<GameObject> &object, const DebugFlags &flags, bool gizmos = true)
     {
         RenderQueue queue;
-        object->SubmitToRenderQueue(queue, camera.GetFrustum(), flags);
+        SceneRenderCollector().Collect(*object, camera.GetFrustum(), flags, queue);
         if (gizmos)
             sr::debug::SubmitDirectionalLightGizmos(queue, lights);
         memory.target.Clear();
-        renderer.RenderScene(memory.target, queue, camera, lights);
+        renderer.RenderScene(memory.target, queue, camera.GetViewParams(), lights);
         return memory.pixels;
     };
     for (bool wireframe : {false, true})
@@ -985,7 +987,7 @@ void renderSmoke(const TestContext &context)
         const auto collect = [&]
         {
             RenderQueue queue;
-            object->SubmitToRenderQueue(queue, camera.GetFrustum(), DebugFlags{});
+            SceneRenderCollector().Collect(*object, camera.GetFrustum(), DebugFlags{}, queue);
             return std::vector<MeshRenderCommand>{queue.GetRenderCommands().begin(),
                                                   queue.GetRenderCommands().end()};
         };
@@ -1030,7 +1032,7 @@ void renderSmoke(const TestContext &context)
     {
         memory.Resize(size, size);
         memory.target.Clear();
-        renderer.RenderScene(memory.target, RenderQueue{}, camera, lights);
+        renderer.RenderScene(memory.target, RenderQueue{}, camera.GetViewParams(), lights);
         check(memory.target.Width() == size, "resize dimensions");
     }
 }

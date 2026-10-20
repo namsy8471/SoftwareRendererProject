@@ -1,5 +1,5 @@
 # Headless build: renderer core + srcli + RendererTests (Win32 앱 제외).
-# Win32 앱과 Framework/GDI 테스트는 SoftrendererProject.sln(MSBuild)로 빌드한다.
+# Win32 앱(Win32App)과 GDI 테스트는 SoftrendererProject.sln(MSBuild)로 빌드한다.
 #   cmake --preset release && cmake --build --preset release && ctest --preset release
 cmake_minimum_required(VERSION 3.25)
 project(SoftwareRenderer LANGUAGES CXX)
@@ -58,12 +58,11 @@ else()
   endif()
 endif()
 
-# --- 렌더러 코어: 창/GDI/Framework를 뺀 전부 ---
+# --- 렌더러 코어: 창/GDI(src/App, src/Platform)를 뺀 전부 ---
 file(GLOB_RECURSE SR_CORE_SOURCES CONFIGURE_DEPENDS
      "${CMAKE_SOURCE_DIR}/src/Core/*.cpp" "${CMAKE_SOURCE_DIR}/src/Graphics/*.cpp"
      "${CMAKE_SOURCE_DIR}/src/Math/*.cpp" "${CMAKE_SOURCE_DIR}/src/Renderer/*.cpp"
      "${CMAKE_SOURCE_DIR}/src/Scene/*.cpp" "${CMAKE_SOURCE_DIR}/src/Utils/*.cpp")
-list(FILTER SR_CORE_SOURCES EXCLUDE REGEX "/src/Core/Framework\\.cpp$")
 add_library(sr_core STATIC ${SR_CORE_SOURCES})
 target_link_libraries(sr_core PUBLIC sr_options ${SR_TBB_TARGET})
 # AVX 구현만 AVX로 컴파일한다(런타임 CPUID로 선택). 다른 파일에 AVX가 섞이지 않게 한다.

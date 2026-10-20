@@ -3,8 +3,6 @@
 #include <array>
 #include <limits>
 
-struct Mesh;
-
 struct AABB
 {
     SRMath::vec3 min{std::numeric_limits<float>::max(), std::numeric_limits<float>::max(),
@@ -24,6 +22,5 @@ struct AABB
     [[nodiscard]] std::array<SRMath::vec3, 8> Corners() const noexcept;
     [[nodiscard]] bool IsValid() const noexcept;
 
-    [[nodiscard]] static AABB CreateFromMesh(const Mesh &mesh);
     [[nodiscard]] AABB Transform(const SRMath::mat4 &transform) const noexcept;
 };

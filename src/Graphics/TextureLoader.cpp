@@ -3,6 +3,8 @@
 #include <charconv>
 #include <concepts>
 #include <fstream>
+#include <memory>
+#include <vector>
 #include <string_view>
 
 #include "Material.h"
@@ -45,20 +47,16 @@ template <class Number> [[nodiscard]] auto takeNumber(std::string_view &input) n
 }
 } // namespace
 
-void StbiImageDeleter::operator()(unsigned char *pixels) const noexcept
-{
-    stbi_image_free(pixels);
-}
-
 std::expected<std::shared_ptr<Texture>, AssetLoadError> TextureLoader::LoadImageFile(
     const std::filesystem::path &filepath)
 {
-    auto texture = std::make_shared<Texture>();
-
+    int width = 0;
+    int height = 0;
     int channels = 0;
     const auto nativePath = filepath.string();
-    unsigned char *pixels =
-        stbi_load(nativePath.c_str(), &texture->m_width, &texture->m_height, &channels, 4);
+    // stb 버퍼는 이 함수 안에서만 산다. Texture는 디코더를 모르도록 값으로 복사해 받는다.
+    const std::unique_ptr<unsigned char, decltype(&stbi_image_free)> pixels{
+        stbi_load(nativePath.c_str(), &width, &height, &channels, 4), &stbi_image_free};
 
     if (!pixels)
     {
@@ -68,8 +66,9 @@ std::expected<std::shared_ptr<Texture>, AssetLoadError> TextureLoader::LoadImage
                                               filepath});
     }
 
-    texture->SetPixels(StbiImagePtr{pixels});
-    return texture;
+    const std::size_t byteCount = static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4;
+    return std::make_shared<Texture>(width, height,
+                                     std::vector<unsigned char>(pixels.get(), pixels.get() + byteCount));
 }
 
 std::expected<std::unordered_map<std::string, Material>, AssetLoadError> TextureLoader::LoadMTLFile(

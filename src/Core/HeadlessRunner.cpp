@@ -1,5 +1,6 @@
 #include "Core/HeadlessRunner.h"
 #include "Core/DemoScene.h"
+#include "Core/FrameRunner.h"
 #include "Renderer/Renderer.h"
 #include "Renderer/RenderTarget.h"
 
@@ -57,24 +58,27 @@ std::expected<RunResult, std::string> Run(const RunConfig &config)
         threadLimit.emplace(tbb::global_control::max_allowed_parallelism,
                             static_cast<std::size_t>(config.threads));
 
-    DemoScene scene;
-    if (auto loaded = scene.Load(config.assetDirectory); !loaded)
+    auto loaded = sr::demo::LoadScene(config.assetDirectory);
+    if (!loaded)
     {
         std::string message = loaded.error().message;
         if (!loaded.error().path.empty())
             message += " (" + loaded.error().path.string() + ")";
         return std::unexpected(message);
     }
-    auto &flags = scene.GetDebugFlags();
+    sr::demo::FitCameraToScene(*loaded, static_cast<float>(config.width) / static_cast<float>(config.height));
+
+    FrameRunner runner;
+    runner.SetScene(std::move(*loaded));
+    auto &flags = runner.GetDebugFlags();
     flags.bShowWireframe = config.mode == ViewMode::Wire;
     flags.bShowNormal = config.mode == ViewMode::Normal;
     flags.bShowAABB = config.mode == ViewMode::AABB;
-    scene.FitCameraToScene(static_cast<float>(config.width) / static_cast<float>(config.height));
 
-    auto renderer = std::make_unique<Renderer>();
-    renderer->SetOptions(config.options);
-    renderer->SetLineAlgorithm(config.lineAlgorithm);
-    renderer->SetAAAlgorithm(config.mode == ViewMode::FXAA ? EAAAlgorithm::FXAA : EAAAlgorithm::None);
+    Renderer &renderer = runner.GetRenderer();
+    renderer.SetOptions(config.options);
+    renderer.SetLineAlgorithm(config.lineAlgorithm);
+    renderer.SetAAAlgorithm(config.mode == ViewMode::FXAA ? EAAAlgorithm::FXAA : EAAAlgorithm::None);
 
     std::vector<unsigned int> pixels(static_cast<std::size_t>(config.width) * config.height);
     RenderTarget target;
@@ -91,10 +95,9 @@ std::expected<RunResult, std::string> Run(const RunConfig &config)
     for (int frame = -config.warmupFrames; frame < config.measuredFrames; ++frame)
     {
         const auto begin = Clock::now();
-        scene.Update(config.deltaTime, config.width, config.height);
+        runner.Update(config.deltaTime, config.width, config.height);
         const auto updated = Clock::now();
-        target.Clear();
-        renderer->RenderScene(target, scene.GetRenderQueue(), scene.GetCamera(), scene.GetLights());
+        runner.Render(target);
         const auto end = Clock::now();
         if (frame < 0)
             continue;
@@ -116,7 +119,7 @@ std::expected<RunResult, std::string> Run(const RunConfig &config)
     result.timings.maxMs = frameTimes.back();
     result.timings.updateMeanMs = updateTotal / count;
     result.timings.renderMeanMs = renderTotal / count;
-    result.stats = renderer->GetStats();
+    result.stats = renderer.GetStats();
     result.lastFrame = sr::image::CopySurface(std::as_const(target).Surface());
     result.pixelHash = sr::image::HashPixels(result.lastFrame);
     result.threads = static_cast<int>(

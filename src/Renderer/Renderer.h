@@ -8,6 +8,7 @@
 #include <tbb/enumerable_thread_specific.h>
 #include "Math/SRMath.h"
 #include "Graphics/Mesh.h"
+#include "Graphics/ViewParams.h"
 #include "Renderer/RenderCommand.h"
 #include "Renderer/Tile.h"
 #include "Renderer/RenderTypes.h"
@@ -16,7 +17,6 @@
 #include "Utils/FixedCapacityVector.h"
 
 class RenderQueue;
-class Camera;
 struct DirectionalLight;
 struct MeshRenderCommand;
 struct DebugPrimitiveCommand;
@@ -158,6 +158,6 @@ class Renderer
 
     // target.Clear → RenderScene → presenter.Present. 참조는 동기 호출 동안만 빌린다.
     // 같은 Renderer/target을 동시에 호출하지 않는다. 빈 target은 안전한 no-op이다.
-    void RenderScene(RenderTarget &target, const RenderQueue &queue, const Camera &camera,
+    void RenderScene(RenderTarget &target, const RenderQueue &queue, const ViewParams &view,
                      std::span<const DirectionalLight> lights);
 };

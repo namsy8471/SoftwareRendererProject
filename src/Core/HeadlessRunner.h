@@ -9,7 +9,7 @@
 #include "Renderer/RenderTypes.h"
 #include "Utils/ImageFile.h"
 
-// 창 없이 DemoScene을 메모리 타깃에 렌더링한다. srcli(벤치마크·PNG 덤프)와
+// 창 없이 DemoScene을 FrameRunner로 메모리 타깃에 렌더링한다. srcli(벤치마크·PNG 덤프)와
 // 골든 이미지 테스트가 같은 경로를 쓰므로 측정 조건과 화면 기준이 일치한다.
 namespace sr::headless
 {

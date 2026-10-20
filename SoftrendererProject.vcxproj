@@ -39,7 +39,8 @@
   <Import Project="build\RuntimeSources.props" />
   <ItemGroup>
     <ClCompile Include="SoftrendererProject.cpp" />
-    <ClCompile Include="src\Core\Framework.cpp" />
+    <ClCompile Include="src\App\Win32App.cpp" />
+    <ClInclude Include="src\App\Win32App.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

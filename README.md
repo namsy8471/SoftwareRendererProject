@@ -99,7 +99,7 @@ DirectX 11을 사용하며 부족하다고 느꼈던 렌더링 파이프라인�
 
 ```mermaid
 flowchart LR
-    App["WinMain / Framework<br/>Win32 message loop · input · timing"]
+    App["WinMain / Win32App + FrameRunner<br/>Win32 message loop · input · timing"]
     Assets["Asset Pipeline<br/>OBJ · MTL · texture · normal generation"]
     Scene["Scene<br/>Camera · GameObject · transforms"]
     Submit["Scene Submission<br/>AABB / Frustum / Octree · RenderQueue"]
@@ -259,7 +259,7 @@ flowchart LR
 
 | 관심사 | 주요 코드와 역할 |
 |---|---|
-| 프레임 조정 | `Framework::runFrame` → `GameObject::Update/SubmitToRenderQueue` → `Renderer::RenderScene` |
+| 프레임 조정 | `Win32App::runFrame` → `FrameRunner::Update` (`Scene::Update`, `SceneRenderCollector::Collect`) → `FrameRunner::Render` → `Renderer::RenderScene` |
 | 렌더링 단계 | `prepareFrame` → `binCommands` → `renderTiles` → `renderLines` → `applyPostProcessing` |
 | 렌더러 구현 | `RendererFrontend.cpp`, `RendererClipping.cpp`, `Rasterizer.cpp`, `RendererShading.cpp` |
 | 상태와 수명 | renderer별 `WorkerScratch`, 비소유 `RenderQueue`, `RenderTarget`의 깊이·ID, `GdiPresenter`의 DIB |
@@ -383,7 +383,8 @@ SoftwareRendererProject/
 ├─ tests/                  # 회귀 테스트, 골든 이미지, fixture, 실행 스크립트
 ├─ tools/srcli/            # headless 벤치마크·PNG 덤프 CLI
 ├─ src/
-│  ├─ Core/               # WinAPI Framework, 데모 장면, headless 실행기
+│  ├─ App/                # Win32App (창·메뉴·입력)
+│  ├─ Core/               # FrameRunner, SceneRenderCollector, 데모 장면, headless 실행기
 │  ├─ Graphics/           # Model, Mesh, Material, Texture, Octree
 │  ├─ Math/               # SRMath, AABB, Frustum, SSE/AVX dispatch
 │  ├─ Modules/            # sr.math C++ module interface
@@ -414,7 +415,7 @@ SoftwareRendererProject/
 - 공개 FPS는 서로 다른 개발 단계의 기록이며 동일 조건의 정식 benchmark가 아닙니다.
 - 현재 구조는 CPU rendering pipeline 학습과 최적화에 집중하며 GPU API backend나 범용 scene editor는 범위에 포함하지 않습니다.
 - `sr.math`는 부분적으로 도입한 module입니다. 전체 소스를 named module이나 `import std;`로 전환한 상태는 아닙니다.
-- 렌더 코어와 headless 도구(`srcli`, 테스트)는 CMake로 GCC에서도 빌드되지만, 창 앱과 Framework/GDI 테스트는 Windows/MSVC 전용입니다. 새로운 Job System은 추가하지 않았습니다.
+- 렌더 코어와 headless 도구(`srcli`, 테스트)는 CMake로 GCC에서도 빌드되지만, 창 앱과 Win32App/GDI 테스트는 Windows/MSVC 전용입니다. 새로운 Job System은 추가하지 않았습니다.
 - MTL은 색상·광택 값을 해석하며 `map_Kd`를 자동 연결하지 않습니다. 이미지 디코딩은 별도의 `LoadImageFile` API입니다.
 
 ## 외부 라이브러리

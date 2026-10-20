@@ -8,9 +8,9 @@
 
 | 관심사 | 진입점과 책임 |
 | --- | --- |
-| 프레임 실행 | `src/Core/Framework.cpp`: 창·입력 처리, 시간 측정, Update/Render/Present 조정 |
-| 데모 장면·headless | `src/Core/DemoScene.cpp`: 모델 표·카메라·광원·갱신 순서(창 무관) / `HeadlessRunner.cpp`: 창 없는 프레임 실행·측정 / `tools/srcli`: 벤치마크·PNG CLI |
-| 장면 | `src/Scene/GameObject.cpp`: 부모부터 transform 갱신 → 가시성 검사 → mesh별 병렬 batch 생성 → mesh 순서 병합 |
+| 프레임 실행 | `src/App/Win32App.cpp`: 창·메뉴·입력, 시간 측정, Present / `src/Core/FrameRunner.cpp`: 프레임 시작 훅 → `Scene::Update` → 수집 → Clear → `RenderScene` |
+| 데모 장면·headless | `src/Core/DemoScene.cpp`: 벤치·골든용 모델 표·카메라·광원으로 `Scene`을 채움 / `HeadlessRunner.cpp`: 창 없는 프레임 실행·측정 / `tools/srcli`: 벤치마크·PNG CLI |
+| 장면 | `src/Scene/Scene.cpp`·`GameObject.cpp`: 부모부터 transform 갱신 / `src/Core/SceneRenderCollector.cpp`: 가시성 검사 → mesh별 병렬 batch 생성 → mesh 순서 병합 |
 | 렌더 순서 | `src/Renderer/Renderer.cpp`: `prepareLights` → `prepareFrame` → `binCommands` → `renderTiles` → `renderLines` → `applyPostProcessing` |
 | 정점과 타일 분배 | `RendererFrontend.cpp`: 프레임 한정 단일 키 정점·변환 행렬 캐시, world/clip 변환, 타일 참조 구성 |
 | 클리핑 | `RendererClipping.cpp`: 동차 clip 공간의 평면 검사·다각형 자르기·속성 보간 |
@@ -68,7 +68,7 @@ tools/dev.sh test
 
 `RendererTests`는 외부 테스트 프레임워크 없이 실행되며 Release에서도 실패 시 종료 코드 1을 반환한다. 스크립트는 Visual Studio 설치를 찾고, 네 구성을 빌드하고, oneTBB DLL 배포와 실행 결과를 확인한다. 결과는 무시되는 `tests/bin/logs`에 남는다. 테스트는 `tests/TestMain.cpp`의 실행기가 등록 순서대로 돌리고, 테스트마다 `PASS`/`FAIL` 한 줄과 마지막 `SUMMARY`를 출력한다. 새 테스트는 해당 영역 파일의 `Register...Tests`에 한 줄 추가하고, 새 테스트 파일은 `RendererTests.vcxproj`에도 등록한다(CMake는 자동). 골든 이미지(`tests/golden/*.png`)는 headless 경로로 320×180 데모 장면을 그려 비교하며, 실패하면 `tests/out/golden/`에 actual/diff PNG를 남긴다.
 
-행렬/법선, AABB/Frustum, 클리핑, viewport, 고정 용량, 자산 오류, worker 분리, Phong/FXAA, 키·메뉴, resize를 검사한다. `RenderTargetTests.cpp`는 메모리 stride/padding·overflow·실패 후 빈 상태·최종 행·depth/ID·FXAA와 숨은 창의 presenter 수명을 검사한다. `VisibilityTests.cpp`는 가림·구멍·같은 깊이·숨은 선·단일/다중 worker 반복 결과를 비교한다. IronMan/teapot 통합 검사는 숨겨진 Win32 창을 사용한다. Framework/GDI 테스트는 MSBuild 빌드에서만 돌고, CMake 빌드(`SR_HEADLESS_ONLY`)는 나머지 전부를 돌린다. 골든 비교는 사람의 화면 확인을 줄여 주지만 대체하지는 않는다.
+행렬/법선, AABB/Frustum, 클리핑, viewport, 고정 용량, 자산 오류, worker 분리, Phong/FXAA, 키·메뉴, resize를 검사한다. `RenderTargetTests.cpp`는 메모리 stride/padding·overflow·실패 후 빈 상태·최종 행·depth/ID·FXAA와 숨은 창의 presenter 수명을 검사한다. `VisibilityTests.cpp`는 가림·구멍·같은 깊이·숨은 선·단일/다중 worker 반복 결과를 비교한다. IronMan/teapot 통합 검사는 숨겨진 Win32 창을 사용한다. Win32App/GDI 테스트는 MSBuild 빌드에서만 돌고, CMake 빌드(`SR_HEADLESS_ONLY`)는 나머지 전부를 돌린다. 골든 비교는 사람의 화면 확인을 줄여 주지만 대체하지는 않는다.
 
 FXAA의 기존 red/blue 휘도 가중치 불일치는 유지한다. BGRX native red/blue와 낮은 명도의 red/blue 경계 회귀를 고정했으므로, 이 동작을 고칠 때는 구조 변경이나 성능 실험에 섞지 말고 별도 기준 이미지를 갱신한다.
 
@@ -80,7 +80,7 @@ FXAA의 기존 red/blue 휘도 가중치 불일치는 유지한다. BGRX native 
 
 ### Reading and changing the code
 
-Start with `Framework::runFrame`, then `GameObject::Update`/`SubmitToRenderQueue`, and `Renderer::RenderScene(target, ...)`. Renderer coordinates preparation, binning, tiles, parallel wire/large-normal bands, sequential small-normal batches/overlays, and post-processing. `Rasterizer.cpp` replaces `RendererRasterizer.cpp`; `RenderTarget` owns depth/IDs and borrows strided pixels. `GdiPresenter` owns `GdiBackBuffer` and presentation. Memory rendering can be tested without a window, but the application/build remain Windows/MSVC, not a general headless product CLI.
+Start with `FrameRunner::Update`/`Render` (called by `Win32App::runFrame` and `HeadlessRunner`), then `Scene::Update`, `SceneRenderCollector::Collect`, and `Renderer::RenderScene(target, ...)`. Renderer coordinates preparation, binning, tiles, parallel wire/large-normal bands, sequential small-normal batches/overlays, and post-processing. `Rasterizer.cpp` replaces `RendererRasterizer.cpp`; `RenderTarget` owns depth/IDs and borrows strided pixels. `GdiPresenter` owns `GdiBackBuffer` and presentation. Memory rendering can be tested without a window, but the application/build remain Windows/MSVC, not a general headless product CLI.
 
 `ModelLoader` separates statements, index validation/mesh assembly, missing normals, and spatial data. `AssetParsing.h` shares only token/numeric parsing with the MTL loader. MTL still handles colors/shininess, not automatic `map_Kd` loading. `SRMath.h` remains the include entry point over fixed-point/vector/matrix headers. Shared MSBuild settings and runtime sources live under `build/`.
 
@@ -118,7 +118,7 @@ All four pre-change application builds passed. See the shared validation record 
 
 ### コードの読み方と変更時の契約
 
-`Framework::runFrame` → `GameObject::Update` / `SubmitToRenderQueue` → `Renderer::RenderScene(target, ...)` の順に読みます。Rendererは準備・binning・tile・wire/多数のnormalの並列band・少数のnormal/overlayの逐次処理・後処理を調整します。`Rasterizer.cpp`が`RendererRasterizer.cpp`に代わり、`RenderTarget`はstride付きpixelを借用してdepth/IDを所有します。`GdiPresenter`が`GdiBackBuffer`と表示を所有します。Memory描画をwindowなしで検査できますが、アプリ/ビルドはWindows/MSVC対象で、汎用headless製品CLIではありません。
+`FrameRunner::Update`/`Render`（`Win32App::runFrame`と`HeadlessRunner`から呼ばれる）→ `Scene::Update` → `SceneRenderCollector::Collect` → `Renderer::RenderScene(target, ...)` の順に読みます。Rendererは準備・binning・tile・wire/多数のnormalの並列band・少数のnormal/overlayの逐次処理・後処理を調整します。`Rasterizer.cpp`が`RendererRasterizer.cpp`に代わり、`RenderTarget`はstride付きpixelを借用してdepth/IDを所有します。`GdiPresenter`が`GdiBackBuffer`と表示を所有します。Memory描画をwindowなしで検査できますが、アプリ/ビルドはWindows/MSVC対象で、汎用headless製品CLIではありません。
 
 OBJ は文の解釈、インデックス検証とメッシュ構築、欠落法線生成、空間構造生成に分離しました。`AssetParsing.h` は MTL とトークン・数値解析だけを共有します。MTL は従来の色・光沢属性を扱い、`map_Kd` の自動読み込みは追加していません。`SRMath.h` は固定小数点・ベクトル・行列ヘッダーへの入口として残しています。共通ビルド設定とソース一覧は `build/` にあります。
 
@@ -179,7 +179,7 @@ Current buffer/hidden-line/sort/Hi-Z validation and timings: [renderer-visibilit
 Run from the repository root after a Release x64 build. / Release x64 빌드 후 저장소 루트에서 실행한다. / Release x64ビルド後、リポジトリルートで実行します。
 
 ```powershell
-# IronMan/teapot: hidden Framework/GDI path
+# IronMan/teapot: hidden Win32App/GDI path
 .\tests\bin\x64\Release\RendererTests.exe . --benchmark 600 1280 720 fill none
 .\tests\bin\x64\Release\RendererTests.exe . --benchmark 600 1280 720 normal both stats
 .\tests\bin\x64\Release\RendererTests.exe . --benchmark 600 1280 720 wire none nostats hidden
@@ -190,7 +190,7 @@ Run from the repository root after a Release x64 build. / Release x64 빌드 후
 .\tests\bin\x64\Release\RendererTests.exe . --visibility-benchmark 120 1280 720 wire none occluded nostats hidden
 ```
 
-- Modes / 모드 / モード: `fill | normal | wire | fxaa`; Framework/GDI additionally accepts `aabb`.
+- Modes / 모드 / モード: `fill | normal | wire | fxaa`; Win32App/GDI additionally accepts `aabb`.
 - Options / 옵션 / オプション: `none | sort | hiz | both`; visibility scenarios / 장면 / シーン: `occluded | open`.
 - The diagnostics slot accepts `stats`; use `nostats` when appending the final `hidden` token without instrumentation. No `hidden` token means default X-ray wire. / 진단 자리는 `stats`이며, 계측 없이 마지막 `hidden`을 붙일 때는 `nostats` 자리를 명시한다. `hidden`이 없으면 기본 X-ray 와이어다. / 診断位置は`stats`です。計測なしで末尾の`hidden`を付ける場合は`nostats`を明記します。`hidden`なしは標準X-ray wireです。
 - Both paths warm up 60 frames. Compare mean/p95 and pixel hashes with identical behavior; keep diagnostics off for final timing. Synthetic results exclude presentation and scene update. / 두 경로는 60프레임 준비 후 같은 동작의 평균·p95·픽셀 해시를 비교한다. 합성 장면은 화면 표시와 장면 갱신 비용을 포함하지 않는다. / 両経路は60フレーム準備後に同一動作の平均・p95・pixel hashを比較し、最終計測では詳細診断を切ります。合成シーンは表示・scene更新を含みません。
