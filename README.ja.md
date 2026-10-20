@@ -99,7 +99,7 @@ DirectX 11を使用する中で抽象的に感じていたレンダリングパ�
 
 ```mermaid
 flowchart LR
-    App["WinMain / Framework<br/>Win32 message loop · input · timing"]
+    App["WinMain / Win32App + FrameRunner<br/>Win32 message loop · input · timing"]
     Assets["Asset Pipeline<br/>OBJ · MTL · texture · normal generation"]
     Scene["Scene<br/>Camera · GameObject · transforms"]
     Submit["Scene Submission<br/>AABB / Frustum / Octree · RenderQueue"]
@@ -259,7 +259,7 @@ Wire線はoneTBBの重ならないY行bandで並列処理します。約64行を
 
 | 関心事 | 主なコードと役割 |
 |---|---|
-| フレーム調整 | `Framework::runFrame` → `GameObject::Update/SubmitToRenderQueue` → `Renderer::RenderScene` |
+| フレーム調整 | `Win32App::runFrame` → `FrameRunner::Update` (`Scene::Update`, `SceneRenderCollector::Collect`) → `FrameRunner::Render` → `Renderer::RenderScene` |
 | 描画段階 | `prepareFrame` → `binCommands` → `renderTiles` → `renderLines` → `applyPostProcessing` |
 | レンダラー実装 | `RendererFrontend.cpp`、`RendererClipping.cpp`、`Rasterizer.cpp`、`RendererShading.cpp` |
 | 状態と寿命 | rendererごとの`WorkerScratch`、非所有`RenderQueue`、`RenderTarget`のdepth/ID、`GdiPresenter`のDIB |
@@ -383,7 +383,8 @@ SoftwareRendererProject/
 ├─ tests/                  # 回帰テスト、golden image、fixture、実行script
 ├─ tools/srcli/            # headless benchmark・PNG dump CLI
 ├─ src/
-│  ├─ Core/               # WinAPI Framework、デモシーン、headless runner
+│  ├─ App/                # Win32App（window・menu・入力）
+│  ├─ Core/               # FrameRunner、SceneRenderCollector、デモシーン、headless runner
 │  ├─ Graphics/           # Model、Mesh、Material、Texture、Octree
 │  ├─ Math/               # SRMath、AABB、Frustum、SSE/AVX dispatch
 │  ├─ Modules/            # sr.math C++ module interface

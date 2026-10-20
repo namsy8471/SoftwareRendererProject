@@ -99,7 +99,7 @@ The performance images were captured on 2025-08-27. Results vary with the CPU, r
 
 ```mermaid
 flowchart LR
-    App["WinMain / Framework<br/>Win32 message loop · input · timing"]
+    App["WinMain / Win32App + FrameRunner<br/>Win32 message loop · input · timing"]
     Assets["Asset Pipeline<br/>OBJ · MTL · texture · normal generation"]
     Scene["Scene<br/>Camera · GameObject · transforms"]
     Submit["Scene Submission<br/>AABB / Frustum / Octree · RenderQueue"]
@@ -259,7 +259,7 @@ The project uses `/std:c++latest`. C++26 library facilities that are not yet ava
 
 | Concern | Main code and responsibility |
 |---|---|
-| Frame coordination | `Framework::runFrame` → `GameObject::Update/SubmitToRenderQueue` → `Renderer::RenderScene` |
+| Frame coordination | `Win32App::runFrame` → `FrameRunner::Update` (`Scene::Update`, `SceneRenderCollector::Collect`) → `FrameRunner::Render` → `Renderer::RenderScene` |
 | Rendering stages | `prepareFrame` → `binCommands` → `renderTiles` → `renderLines` → `applyPostProcessing` |
 | Renderer implementation | `RendererFrontend.cpp`, `RendererClipping.cpp`, `Rasterizer.cpp`, `RendererShading.cpp` |
 | State and lifetime | Per-renderer `WorkerScratch`, borrowed `RenderQueue`, depth/IDs in `RenderTarget`, DIB in `GdiPresenter` |
@@ -383,7 +383,8 @@ SoftwareRendererProject/
 ├─ tests/                  # Regression tests, golden images, fixtures, and runners
 ├─ tools/srcli/            # Headless benchmark and PNG dump CLI
 ├─ src/
-│  ├─ Core/               # WinAPI Framework, demo scene, headless runner
+│  ├─ App/                # Win32App (window, menus, input)
+│  ├─ Core/               # FrameRunner, SceneRenderCollector, demo scene, headless runner
 │  ├─ Graphics/           # Model, Mesh, Material, Texture, Octree
 │  ├─ Math/               # SRMath, AABB, Frustum, SSE/AVX dispatch
 │  ├─ Modules/            # sr.math C++ module interface
@@ -414,7 +415,7 @@ SoftwareRendererProject/
 - Published FPS figures come from different development stages and are not controlled, same-condition benchmarks.
 - The scope is CPU rendering-pipeline study and optimization; a GPU API backend and a general-purpose scene editor are intentionally outside it.
 - `sr.math` is a partial module adoption, not a full migration of the codebase to named modules or `import std;`.
-- The renderer core and headless tools (`srcli`, tests) also build with GCC through CMake, but the windowed app and Framework/GDI tests remain Windows/MSVC only. No new Job System is added.
+- The renderer core and headless tools (`srcli`, tests) also build with GCC through CMake, but the windowed app and Win32App/GDI tests remain Windows/MSVC only. No new Job System is added.
 - MTL parses colors and shininess, but does not automatically connect `map_Kd`. Image decoding is exposed separately through `LoadImageFile`.
 
 ## Third-party libraries

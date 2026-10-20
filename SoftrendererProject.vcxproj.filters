@@ -46,7 +46,7 @@
     <ClCompile Include="src\Modules\sr.math.ixx">
       <Filter>소스 파일</Filter>
     </ClCompile>
-    <ClCompile Include="src\Core\Framework.cpp">
+    <ClCompile Include="src\App\Win32App.cpp">
       <Filter>소스 파일</Filter>
     </ClCompile>
     <ClCompile Include="src\Graphics\Mesh.cpp">
@@ -99,7 +99,7 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="src\Core\Framework.h">
+    <ClInclude Include="src\App\Win32App.h">
       <Filter>헤더 파일</Filter>
     </ClInclude>
     <ClInclude Include="src\Platform\Win32Headers.h">
@@ -148,9 +148,6 @@
       <Filter>헤더 파일</Filter>
     </ClInclude>
     <ClInclude Include="src\Scene\GameObject.h">
-      <Filter>헤더 파일</Filter>
-    </ClInclude>
-    <ClInclude Include="src\Utils\DebugUtils.h">
       <Filter>헤더 파일</Filter>
     </ClInclude>
     <ClInclude Include="src\Utils\AssetLoadError.h">

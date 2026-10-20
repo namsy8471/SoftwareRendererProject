@@ -3,7 +3,7 @@
 
 #include "Platform/Win32Headers.h"
 #include "SoftrendererProject.h"
-#include "Core/Framework.h"
+#include "App/Win32App.h"
 
 int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
                      _In_opt_ HINSTANCE hPrevInstance,
@@ -13,7 +13,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     UNREFERENCED_PARAMETER(hPrevInstance);
     UNREFERENCED_PARAMETER(lpCmdLine);
 
-    Framework app(hInstance, nCmdShow);
+    Win32App app(hInstance, nCmdShow);
     app.Run();
 
     return 0;

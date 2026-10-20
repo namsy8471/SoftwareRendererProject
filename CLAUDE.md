@@ -8,7 +8,7 @@ CPU 소프트웨어 렌더러(C++23/26, oneTBB, SSE/AVX). 목표는 **기본 데
 - 측정 도구: `srcli bench` (창 없음, 고정 dt 1/60, 60프레임 warmup 뒤 600프레임).
 - 역할 구분: `srcli bench`는 합격/불합격을 가르는 **판정용 숫자**, VTune·VS CPU Usage(`tests/CaptureCpuProfiles.ps1`)는 **어디가 느린지 찾는 진단용**이다.
   프로파일러는 측정 자체에 오버헤드가 있어 그 수치(ms)로 판정하지 않는다. 사용 순서는 아래 "최적화 작업 흐름" 2단계.
-- 한 프레임 = `DemoScene::Update` + `RenderTarget::Clear` + `Renderer::RenderScene`. GDI 표시는 제외.
+- 한 프레임 = `FrameRunner::Update`(Scene 갱신 + 가시성 수집) + `FrameRunner::Render`(`RenderTarget::Clear` + `Renderer::RenderScene`). GDI 표시는 제외.
 - 판정: Windows PC의 MSVC **Release x64** 빌드에서 `fill`, `wire`, `normal` 세 모드 모두 **`p95_ms <= 9`**.
   10ms(100fps)에서 GDI 표시 비용 여유 1ms를 뺀 값이다. `mean_ms`는 참고용이다.
 - 잡음: 모드마다 3회 실행해 p95의 중앙값으로 판정한다(`./tests/Bench.ps1 -Runs 3`). 개선은 같은 조건에서 2% 이상 줄었을 때만 인정한다.
@@ -70,10 +70,12 @@ tools/dev.sh render wire out.png
 | `src/Renderer/RendererFrontend.cpp` | 정점 변환·캐시, 클리핑 호출, 16×16 타일 참조 |
 | `src/Renderer/Rasterizer.cpp`, `RendererShading.cpp` | 삼각형 coverage·깊이·Hi-Z·선, Phong |
 | `src/Renderer/RendererClipping.cpp` | 동차 클리핑 |
-| `src/Scene/GameObject.cpp`, `src/Graphics/Octree.cpp` | transform, 가시성, RenderQueue 제출 |
-| `src/Core/DemoScene.*` | 데모 장면(모델 표·카메라·광원). Framework·srcli·골든이 공유 |
+| `src/Core/FrameRunner.*` | 플랫폼 무관 프레임 순서(프레임 시작 훅 → Scene::Update → 수집 → Clear → RenderScene). Win32App·srcli·골든이 공유 |
+| `src/Core/SceneRenderCollector.*` | 장면 → RenderQueue 변환(메시별 병렬 batch, 옥트리 질의, 법선/AABB 디버그 선). DebugFlags는 여기서만 읽는다 |
+| `src/Scene/Scene.*`, `GameObject.cpp`, `src/Graphics/Octree.h` | 장면 데이터(루트 물체·광원·카메라), transform 계층, 보이는 옥트리 노드 질의. 렌더 명령을 모른다 |
+| `src/Core/DemoScene.*` | 벤치·골든 전용 고정 장면(`sr::demo::LoadScene` 모델 표, `FitCameraToScene`) |
 | `src/Core/HeadlessRunner.*`, `tools/srcli/` | 창 없는 실행·측정·PNG |
-| `src/Core/Framework.*`, `src/Platform/` | Win32 창·입력·GDI 표시 (Windows 전용) |
+| `src/App/Win32App.*`, `src/Platform/` | Win32 창·메뉴·입력·GDI 표시 (Windows 전용, CMake 빌드에서 빠짐) |
 | `src/Math/` | SRMath(SSE), `SIMD_AVX.cpp`만 AVX로 컴파일 |
 | `tests/` | `TestMain.cpp` 실행기, 영역별 `*Tests.cpp`, `golden/`, `fixtures/` |
 

@@ -1,7 +1,8 @@
-// Win32 Framework(창·메뉴·입력)와 숨긴 창 GDI 벤치마크 테스트. MSBuild 테스트 빌드에서만 컴파일된다.
+// Win32App(창·메뉴·입력)과 숨긴 창 GDI 벤치마크 테스트. MSBuild 테스트 빌드에서만 컴파일된다.
 #include "TestHarness.h"
 #if SR_TEST_WIN32_APP
-#include "Core/Framework.h"
+#include "App/Win32App.h"
+#include "Core/DemoScene.h"
 #include "Renderer/Renderer.h"
 #include "resource.h"
 #include <algorithm>
@@ -13,20 +14,20 @@
 
 using namespace sr::test;
 
-struct FrameworkTestAccess
+struct Win32AppTestAccess
 {
     static void benchmark(int frames, int width, int height, std::string_view mode,
                           std::string_view optimization, bool stats, bool hiddenWireframe);
     static void inputAndMenus()
     {
-        Framework app(GetModuleHandleW(nullptr), SW_HIDE);
-        const bool initialRotation = app.m_scene.IsRotateMode();
+        Win32App app(GetModuleHandleW(nullptr), SW_HIDE);
+        const bool initialRotation = app.m_runner.GetScene().IsRotateMode();
         app.HandleMessage(app.m_hWnd, WM_KEYDOWN, VK_SPACE, 0);
-        check(app.m_scene.IsRotateMode() != initialRotation, "space toggles rotation");
+        check(app.m_runner.GetScene().IsRotateMode() != initialRotation, "space toggles rotation");
         app.HandleMessage(app.m_hWnd, WM_KEYDOWN, 'W', 0);
-        check(app.m_scene.IsRotateMode() != initialRotation, "held space does not toggle on another key");
+        check(app.m_runner.GetScene().IsRotateMode() != initialRotation, "held space does not toggle on another key");
         app.HandleMessage(app.m_hWnd, WM_KEYDOWN, VK_SPACE, static_cast<LPARAM>(1u << 30));
-        check(app.m_scene.IsRotateMode() != initialRotation, "autorepeat does not toggle");
+        check(app.m_runner.GetScene().IsRotateMode() != initialRotation, "autorepeat does not toggle");
         app.HandleMessage(app.m_hWnd, WM_KEYUP, VK_SPACE, 0);
         app.HandleMessage(app.m_hWnd, WM_KEYUP, 'W', 0);
         app.HandleMessage(app.m_hWnd, WM_KEYDOWN, VK_F2, 0);
@@ -36,28 +37,28 @@ struct FrameworkTestAccess
         check((GetMenuState(GetMenu(app.m_hWnd), ID_LINEALGORITHM_DDA, MF_BYCOMMAND) & MF_CHECKED) != 0,
               "DDA menu state");
         app.HandleMessage(app.m_hWnd, WM_COMMAND, ID_RENDER_FRONTTOBACK, 0);
-        check(app.m_renderer->GetOptions().frontToBack, "front-to-back menu toggle");
+        check(app.m_runner.GetRenderer().GetOptions().frontToBack, "front-to-back menu toggle");
         app.HandleMessage(app.m_hWnd, WM_COMMAND, ID_RENDER_HIZ, 0);
-        check(app.m_renderer->GetOptions().hiZ, "Hi-Z menu toggle");
-        check(!app.m_renderer->GetOptions().hiddenWireframe, "wire defaults to X-ray");
+        check(app.m_runner.GetRenderer().GetOptions().hiZ, "Hi-Z menu toggle");
+        check(!app.m_runner.GetRenderer().GetOptions().hiddenWireframe, "wire defaults to X-ray");
         app.HandleMessage(app.m_hWnd, WM_COMMAND, ID_RENDER_HIDDEN_WIRE, 0);
-        check(app.m_renderer->GetOptions().hiddenWireframe, "hidden-wire menu toggle on");
+        check(app.m_runner.GetRenderer().GetOptions().hiddenWireframe, "hidden-wire menu toggle on");
         check((GetMenuState(GetMenu(app.m_hWnd), ID_RENDER_HIDDEN_WIRE, MF_BYCOMMAND) & MF_CHECKED) != 0,
               "hidden-wire checked menu state");
         app.HandleMessage(app.m_hWnd, WM_COMMAND, ID_RENDER_HIDDEN_WIRE, 0);
-        check(!app.m_renderer->GetOptions().hiddenWireframe, "hidden-wire menu toggle off");
+        check(!app.m_runner.GetRenderer().GetOptions().hiddenWireframe, "hidden-wire menu toggle off");
         check((GetMenuState(GetMenu(app.m_hWnd), ID_RENDER_HIDDEN_WIRE, MF_BYCOMMAND) & MF_CHECKED) == 0,
               "hidden-wire unchecked menu state");
-        app.Update(0.f);
-        app.Render();
+        app.updateFrame(0.f);
+        app.renderFrame();
         app.HandleMessage(app.m_hWnd, WM_COMMAND, ID_DEBUG_NORMALVECTOR, 0);
-        check(app.m_scene.GetDebugFlags().bShowNormal, "debug menu state");
+        check(app.m_runner.GetDebugFlags().bShowNormal, "debug menu state");
         DestroyWindow(app.m_hWnd);
     }
 };
 
-// 고정 입력으로 실제 Framework/GDI 경로를 측정한다. 숨겨진 창이므로 DWM 표시 지연은 대표하지 않는다.
-void FrameworkTestAccess::benchmark(int frames, int width, int height, std::string_view mode,
+// 고정 입력으로 실제 Win32App/GDI 경로를 측정한다. 숨겨진 창이므로 DWM 표시 지연은 대표하지 않는다.
+void Win32AppTestAccess::benchmark(int frames, int width, int height, std::string_view mode,
                                     std::string_view optimization, bool stats, bool hiddenWireframe)
 {
     check(frames > 0 && frames <= 100'000 && width > 0 && height > 0 && width <= 4096 && height <= 2160,
@@ -66,7 +67,7 @@ void FrameworkTestAccess::benchmark(int frames, int width, int height, std::stri
           "unknown benchmark mode");
     check(optimization == "none" || optimization == "sort" || optimization == "hiz" || optimization == "both",
           "unknown benchmark optimization");
-    Framework app(GetModuleHandleW(nullptr), SW_HIDE);
+    Win32App app(GetModuleHandleW(nullptr), SW_HIDE);
     RECT rectangle{0, 0, width, height};
     check(AdjustWindowRectEx(&rectangle, WS_OVERLAPPEDWINDOW, TRUE, 0) != 0, "benchmark window bounds");
     check(SetWindowPos(app.m_hWnd, nullptr, 0, 0, rectangle.right - rectangle.left,
@@ -74,21 +75,21 @@ void FrameworkTestAccess::benchmark(int frames, int width, int height, std::stri
           "benchmark window resize");
     check(app.m_renderTarget.Width() == width && app.m_renderTarget.Height() == height,
           "benchmark surface size");
-    auto &flags = app.m_scene.GetDebugFlags();
+    auto &flags = app.m_runner.GetDebugFlags();
     flags = {};
     flags.bShowWireframe = mode == "wire";
     flags.bShowNormal = mode == "normal";
     flags.bShowAABB = mode == "aabb";
-    app.m_renderer->SetAAAlgorithm(mode == "fxaa" ? EAAAlgorithm::FXAA : EAAAlgorithm::None);
-    app.m_renderer->SetOptions({optimization == "sort" || optimization == "both",
+    app.m_runner.GetRenderer().SetAAAlgorithm(mode == "fxaa" ? EAAAlgorithm::FXAA : EAAAlgorithm::None);
+    app.m_runner.GetRenderer().SetOptions({optimization == "sort" || optimization == "both",
                                 optimization == "hiz" || optimization == "both", stats, hiddenWireframe});
     // 두 모델의 초기 경계를 60도 수직 FOV에 맞춘다. 모든 실행에서 카메라는 동일하다(srcli와 같은 시점).
-    app.m_scene.FitCameraToScene(static_cast<float>(width) / height);
+    sr::demo::FitCameraToScene(app.m_runner.GetScene(), static_cast<float>(width) / height);
     constexpr float deltaTime = 1.f / 60.f;
     for (int frame = 0; frame < 60; ++frame)
     {
-        app.Update(deltaTime);
-        app.Render();
+        app.updateFrame(deltaTime);
+        app.renderFrame();
     }
     using Clock = std::chrono::steady_clock;
     const auto milliseconds = [](auto duration)
@@ -99,9 +100,9 @@ void FrameworkTestAccess::benchmark(int frames, int width, int height, std::stri
     for (int frame = 0; frame < frames; ++frame)
     {
         const auto begin = Clock::now();
-        app.Update(deltaTime);
+        app.updateFrame(deltaTime);
         const auto updated = Clock::now();
-        app.Render();
+        app.renderFrame();
         const auto rendered = Clock::now();
         const HDC dc = GetDC(app.m_hWnd);
         check(dc != nullptr, "benchmark screen DC");
@@ -127,7 +128,7 @@ void FrameworkTestAccess::benchmark(int frames, int width, int height, std::stri
               << " max_ms=" << frameTimes.back() << " pixel_hash=" << pixelHash << '\n';
     if (stats)
     {
-        const auto &counters = app.m_renderer->GetStats();
+        const auto &counters = app.m_runner.GetRenderer().GetStats();
         std::cout << "STATS prepared=" << counters.preparedTriangles << " refs=" << counters.binReferences
                   << " coverage=" << counters.coveragePassed << " depth_rejected=" << counters.depthRejected
                   << " shaded=" << counters.shadedPixels << " filled=" << counters.finalFilledPixels
@@ -145,14 +146,14 @@ void FrameworkTestAccess::benchmark(int frames, int width, int height, std::stri
     DestroyWindow(app.m_hWnd);
 }
 
-void sr::test::RegisterFrameworkTests(TestRegistry &registry)
+void sr::test::RegisterWin32AppTests(TestRegistry &registry)
 {
-    registry.Add("framework.inputAndMenus", FrameworkTestAccess::inputAndMenus);
+    registry.Add("win32app.inputAndMenus", Win32AppTestAccess::inputAndMenus);
 }
 
-void RunFrameworkBenchmark(int frames, int width, int height, std::string_view mode, std::string_view optimization,
+void RunWin32AppBenchmark(int frames, int width, int height, std::string_view mode, std::string_view optimization,
                            bool stats, bool hiddenWireframe)
 {
-    FrameworkTestAccess::benchmark(frames, width, height, mode, optimization, stats, hiddenWireframe);
+    Win32AppTestAccess::benchmark(frames, width, height, mode, optimization, stats, hiddenWireframe);
 }
 #endif

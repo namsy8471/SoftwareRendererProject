@@ -7,7 +7,10 @@
 #include "Math/Frustum.h"
 #include "Renderer/RenderQueue.h"
 #include "Scene/GameObject.h"
-#include "Utils/DebugUtils.h"
+#include "Core/DebugFlags.h"
+#include "Core/FrameRunner.h"
+#include "Core/SceneRenderCollector.h"
+#include "Scene/Scene.h"
 
 #include "TestHarness.h"
 #include "TestSupport.h"
@@ -72,8 +75,43 @@ void hierarchyTests(const TestContext &context)
     Frustum frustum;
     frustum.Update(SRMath::mat4::identity());
     RenderQueue queue;
-    parent->SubmitToRenderQueue(queue, frustum, DebugFlags{});
+    SceneRenderCollector collector;
+    collector.Collect(*parent, frustum, DebugFlags{}, queue);
     check(!queue.GetRenderCommands().empty(), "visible child of culled parent");
+
+    // 모델 없는 그룹 노드는 그리지 않지만 자식 변환은 전달한다.
+    auto group = std::make_shared<GameObject>(SRMath::vec3{10.f, 0.f, 0.f}, SRMath::vec3{0.f, 0.f, 0.f},
+                                              SRMath::vec3{1.f, 1.f, 1.f}, nullptr);
+    auto grouped = loadObject(fixture, {-10.f, 0.f, 0.f});
+    Scene scene;
+    check(scene.AddObject(group), "add root");
+    check(!scene.AddObject(group), "duplicate root rejected");
+    check(scene.AddObject(grouped, group), "add child through scene");
+    check(!scene.AddObject(grouped), "parented object cannot become root");
+    check(scene.GetRootObjects().size() == 1, "one root");
+    scene.Update(0.f, 1.f, Scene::KeyState{});
+    check(!group->GetWorldAABB().IsValid(), "model-less node has empty bounds");
+    check(approximatelyEqual(grouped->GetWorldAABB().Center().x, 0.f), "group transform reaches child");
+    RenderQueue groupQueue;
+    collector.Collect(scene.GetRootObjects(), frustum, DebugFlags{}, groupQueue);
+    check(groupQueue.GetRenderCommands().size() == queue.GetRenderCommands().size(),
+          "group submits only its child meshes");
+}
+void frameRunnerTests(const TestContext &context)
+{
+    const auto fixture = context.root / "tests/fixtures/triangle.obj";
+    Scene scene;
+    check(scene.AddObject(loadObject(fixture, {0.f, 0.f, 0.f})), "add fixture");
+    scene.SetCamera(Camera({0.f, 0.f, -5.f}));
+    FrameRunner runner;
+    runner.SetScene(std::move(scene));
+    int hookCalls = 0;
+    runner.SetFrameStartHook([&](FrameRunner &) { ++hookCalls; });
+    runner.Update(0.f, 64, 64);
+    check(hookCalls == 1, "frame start hook once per update");
+    check(!runner.GetRenderQueue().GetRenderCommands().empty(), "runner collects visible mesh");
+    runner.Update(0.f, 0, 64);
+    check(hookCalls == 2 && runner.GetRenderQueue().GetRenderCommands().empty(), "minimized frame clears queue");
 }
 } // namespace
 
@@ -82,4 +120,5 @@ void sr::test::RegisterAssetTests(TestRegistry &registry)
     registry.Add("assets.loader", loaderTests);
     registry.Add("assets.crlfMaterial", crlfMaterialTests);
     registry.Add("scene.hierarchy", hierarchyTests);
+    registry.Add("scene.frameRunner", frameRunnerTests);
 }

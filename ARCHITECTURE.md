@@ -13,7 +13,7 @@ flowchart TB
     Entry["SoftrendererProject.cpp<br/>WinMain"]
 
     subgraph Application["Application / Platform"]
-        Framework["Core / Framework<br/>window · input · frame loop · errors"]
+        Framework["App / Win32App + Core / FrameRunner<br/>window · input · frame loop · errors"]
         GDI["sr::platform::GdiPresenter<br/>GdiBackBuffer · Win32 DIB · BitBlt"]
     end
 
@@ -68,8 +68,8 @@ flowchart TB
 ```mermaid
 sequenceDiagram
     participant OS as Win32
-    participant F as Framework
-    participant S as Camera / GameObject
+    participant F as Win32App + FrameRunner
+    participant S as Scene / SceneRenderCollector
     participant Q as RenderQueue
     participant R as Renderer
     participant T as oneTBB workers
@@ -80,7 +80,7 @@ sequenceDiagram
     F->>S: Update(deltaTime)
     S->>Q: frustum/octree culling and command submission
     F->>B: Clear color / depth / primitive IDs
-    F->>R: RenderScene(target, queue, camera, lights)
+    F->>R: RenderScene(target, queue, viewParams, lights)
     R->>T: transform, clip, prepare once, append worker-flat references / counts
     T-->>R: join; freeze pools, references, and active-worker list
     R->>R: count prefix / tile offsets / disjoint worker ranges
@@ -114,16 +114,17 @@ sequenceDiagram
 
 ### 구조의 목적
 
-이 프로젝트는 GPU API에 래스터화를 맡기지 않고, OBJ 자산을 읽어 장면을 구성한 뒤 정점 처리부터 픽셀 출력까지 CPU에서 수행합니다. `Framework`가 Win32 애플리케이션과 프레임을 조정하고, 장면은 한 프레임 동안 유효한 렌더 명령을 만들며, `Renderer`가 명령을 타일 단위 작업으로 바꿔 병렬 실행합니다.
+이 프로젝트는 GPU API에 래스터화를 맡기지 않고, OBJ 자산을 읽어 장면을 구성한 뒤 정점 처리부터 픽셀 출력까지 CPU에서 수행합니다. `Win32App`이 창과 입력을, 플랫폼 무관한 `FrameRunner`가 프레임 순서를 맡고, `SceneRenderCollector`가 장면에서 한 프레임 동안 유효한 렌더 명령을 만들며, `Renderer`가 명령을 타일 단위 작업으로 바꿔 병렬 실행합니다.
 
 ### 계층별 책임
 
 | 계층 | 주요 코드 | 책임 |
 |---|---|---|
-| 진입점·코어 | `SoftrendererProject.cpp`, `src/Core/Framework.*` | 창 생성, 메시지 루프, 입력, 프레임 시간, 오류 메시지, Update/Render/Present 순서 조정 |
-| 장면·headless | `src/Core/DemoScene.*`, `src/Core/HeadlessRunner.*`, `tools/srcli` | 데모 장면 정의·갱신(창과 무관), 창 없는 렌더링·벤치마크·PNG 저장. Framework와 srcli·골든 테스트가 같은 장면을 쓴다 |
+| 진입점·앱 | `SoftrendererProject.cpp`, `src/App/Win32App.*` | 창 생성, 메시지 루프, 메뉴·입력, 프레임 시간, 오류 메시지, Present |
+| 프레임 코어 | `src/Core/FrameRunner.*`, `src/Core/SceneRenderCollector.*` | 프레임 시작 훅 → Scene 갱신 → 가시성 수집(RenderQueue) → Clear → RenderScene. 창 앱·srcli·골든 테스트가 같은 경로를 쓴다 |
+| 데모·headless | `src/Core/DemoScene.*`, `src/Core/HeadlessRunner.*`, `tools/srcli` | 벤치·골든용 고정 장면 구성, 창 없는 렌더링·벤치마크·PNG 저장 |
 | 자산·그래픽스 | `src/Graphics` | OBJ/MTL/이미지 로드, 누락 법선 생성, `Model`·`Mesh`·`Material`·`Texture` 구성, AABB와 octree 생성 |
-| 장면 | `src/Scene` | 카메라와 frustum 갱신, 게임 오브젝트 계층과 월드/법선 행렬 갱신, 가시 객체의 렌더 명령 제출 |
+| 장면 | `src/Scene` | `Scene`(루트 물체·광원·카메라), 카메라와 frustum 갱신, 게임 오브젝트 계층과 월드/법선 행렬 갱신. 렌더 명령은 모른다 |
 | 제출 경계 | `RenderCommand.h`, `RenderQueue.h` | 장면 데이터와 렌더러 사이의 한 프레임짜리 명령 버퍼 제공 |
 | CPU 렌더러 | `src/Renderer` | 정점 변환, back-face culling, clipping, 타일 binning, 래스터화, 깊이 검사, Phong 조명, 디버그 선, FXAA |
 | 수학·공통 기반 | `src/Math`, `src/Utils` | 벡터/행렬, AABB/Frustum, SSE/AVX 선택, 고정 용량 버퍼, 구조화 오류, 성능 측정 |
@@ -131,17 +132,17 @@ sequenceDiagram
 
 ### 시작 시 자산이 장면이 되는 과정
 
-1. `Framework::initializeScene`이 실행 파일 기준 `assets` 경로로 `DemoScene::Load`를 호출하고, 장면 표의 모델마다 `ModelLoader::LoadOBJ`를 호출합니다.
+1. `Win32App::initializeScene`이 실행 파일 기준 `assets` 경로로 `sr::demo::LoadScene`을 호출하고, 장면 표의 모델마다 `ModelLoader::LoadOBJ`를 호출합니다.
 2. `ModelLoader`는 `std::filesystem::path`로 OBJ를 열고, `std::string_view`와 `std::from_chars` 중심으로 정점·텍스처 좌표·법선·면·material 사용 정보를 읽습니다.
 3. MTL이 참조되면 `TextureLoader`가 material의 색상·광택 값을 읽습니다. 이미지는 별도의 `LoadImageFile` API로 디코딩하며, 현재 MTL의 `map_Kd`를 자동 연결하지는 않습니다.
 4. 누락된 법선을 생성하고 mesh별 AABB와 octree를 구성합니다. 독립적인 mesh 후처리는 oneTBB로 병렬화됩니다.
-5. 성공하면 `std::unique_ptr<Model>`이 `GameObject`로 이동합니다. 실패하면 `AssetLoadError`가 `std::expected`를 통해 `Framework`로 전달되고, UI 계층에서만 `MessageBoxW`로 바뀝니다.
+5. 성공하면 `std::unique_ptr<Model>`이 `GameObject`로 이동합니다. 실패하면 `AssetLoadError`가 `std::expected`를 통해 `Win32App`으로 전달되고, UI 계층에서만 `MessageBoxW`로 바뀝니다.
 
 ### 한 프레임이 그려지는 과정
 
-1. `Framework::Run`이 Win32 메시지를 처리하고 `steady_clock` 기반 성능 측정값을 갱신합니다.
-2. `Framework::Update`가 `DemoScene::Update`를 호출해 `RenderQueue`를 비우고 카메라와 게임 오브젝트 transform을 갱신합니다.
-3. `GameObject`와 `Octree`가 AABB/Frustum 검사를 통과한 mesh 또는 node만 `MeshRenderCommand`로 제출합니다. 와이어프레임은 명령의 rasterize mode로 지정하고, 선택된 법선·AABB·광원 방향 정보는 debug command로 제출합니다.
+1. `Win32App::Run`이 Win32 메시지를 처리하고 `steady_clock` 기반 성능 측정값을 갱신합니다.
+2. `FrameRunner::Update`가 프레임 시작 훅을 부르고 `RenderQueue`를 비운 뒤 `Scene::Update`로 카메라와 게임 오브젝트 transform을 갱신합니다.
+3. `SceneRenderCollector`가 `GameObject` AABB와 `Octree::ForEachVisibleNode` 질의를 통과한 mesh 또는 node만 `MeshRenderCommand`로 제출합니다. 와이어프레임은 명령의 rasterize mode로 지정하고, 선택된 법선·AABB·광원 방향 정보는 debug command로 제출합니다.
 4. `RenderTarget::Clear` 후 `Renderer::RenderScene(target, ...)`이 정점 변환, back-face culling, 6개 frustum plane clipping을 수행합니다. 각 결과의 화면 좌표·역깊이·보간 속성·경계·edge 계산을 `PreparedTriangle`로 한 번 준비해 16×16 tile bin에서 공유합니다.
 5. `Rasterizer`가 서로 다른 tile에 reciprocal-depth test, 원근 보정, texture sampling과 Phong 조명을 적용합니다. 큰 `1/w`가 가깝고 정확히 같은 깊이는 작은 primitive ID가 이깁니다. 기본 `hiddenWireframe=false`에서는 채움 명령만 면을 래스터화하므로 와이어 면은 깊이를 만들거나 채움 면을 가리지 않습니다. 옵션 ON이면서 와이어 명령이 있을 때만 모든 면의 depth-only 패스를 선행하고 보이는 채움 픽셀을 셰이딩합니다.
 6. 기본 와이어는 빠른 X-ray 선이며 깊이를 무시합니다. 숨은 와이어 옵션 ON일 때만 면 깊이를 읽어 숨은 선을 제거합니다. 와이어를 서로 다른 Y행 band에서 병렬 처리하고 join한 뒤 법선, 오버레이 순서로 실행합니다. 큰 법선 묶음은 준비·행 쓰기를 병렬화하고 작은 묶음과 오버레이는 순차 처리합니다. 법선은 독립적인 DepthTested 정책으로 기존 면 깊이를 검사합니다. 옵션 OFF에서는 채움 면 깊이만 존재하므로 순수 와이어 장면의 법선은 면에 가려지지 않습니다. 깊이를 검사하는 선은 공통 수치 여유를 쓰며 깊이·ID를 수정하지 않습니다. AABB·광원은 깊이를 무시하는 오버레이입니다.
@@ -161,7 +162,7 @@ sequenceDiagram
 
 ### 소유권과 한 프레임 계약
 
-- `Framework`는 `GdiPresenter`, `RenderTarget`, `unique_ptr<Renderer>`를 이 순서로 선언해 역순 파괴를 보장합니다. 루트 `GameObject`는 `shared_ptr`, 각 객체의 `Model`은 `unique_ptr`로 소유합니다.
+- `Win32App`은 `GdiPresenter`, `RenderTarget`, `FrameRunner`(Scene·RenderQueue·`unique_ptr<Renderer>` 소유)를 이 순서로 선언해 역순 파괴를 보장합니다. 루트 `GameObject`는 `shared_ptr`, 각 객체의 `Model`은 `unique_ptr`로 소유합니다.
 - `Model`은 mesh 배열을 소유하고, 각 `Mesh`는 정점·인덱스·material·octree를 소유합니다. Texture는 material 사이에서 `shared_ptr`로 공유될 수 있습니다.
 - `MeshRenderCommand`의 mesh/material 포인터와 index `span`은 소유하지 않습니다. 원본 `GameObject`와 `Model`이 프레임의 `RenderQueue`보다 오래 산다는 조건으로 유효합니다.
 - `DebugPrimitiveCommand`는 생성된 debug vertex를 값으로 소유합니다. `RenderQueue::Clear`가 다음 프레임 시작 전에 두 명령 배열을 비웁니다.
@@ -171,7 +172,7 @@ sequenceDiagram
 
 ### 현재의 경계와 제한
 
-- `Renderer`/`RenderTarget`/`Rasterizer`는 Win32 표시와 분리되어 일반 메모리로 테스트할 수 있습니다. 코어와 `srcli`·테스트는 CMake로 GCC에서도 빌드되며, 창 앱은 Windows/MSVC 전용입니다. Win32 handle은 Framework와 표시 계층에 남습니다.
+- `Renderer`/`RenderTarget`/`Rasterizer`는 Win32 표시와 분리되어 일반 메모리로 테스트할 수 있습니다. 코어와 `srcli`·테스트는 CMake로 GCC에서도 빌드되며, 창 앱은 Windows/MSVC 전용입니다. Win32 handle은 Win32App과 표시 계층에 남습니다.
 - 기존 FXAA는 BGRX의 하위 바이트를 red로 해석해 red/blue 휘도 가중치가 뒤바뀌어 있습니다. 구조 변경 중 픽셀 기준을 바꾸지 않기 위해 유지했으며 별도 수정 과제로 기록합니다.
 - 기본 X-ray 와이어와 선택적인 숨은 와이어는 동작·비용이 다릅니다. `hiddenWireframe`을 고정한 상태에서만 정렬/Hi-Z OFF→ON을 비교합니다. 법선 깊이 정책은 이 옵션과 독립적입니다. 비용·메모리·검증 상태는 [가시성 변경 기록](PERFORMANCE.md#renderer-visibility-2026)에서 구분합니다.
 - `src/Modules/sr.math.ixx`는 `import std;`와 math concept를 검증하는 named-module 경계입니다. 전체 프로젝트가 모듈만으로 구성된 것은 아니며, 나머지 자체 코드는 현재 헤더/소스 구조를 유지합니다.
@@ -183,14 +184,15 @@ sequenceDiagram
 
 ### Purpose of the architecture
 
-This project does not delegate rasterization to a GPU API. It loads OBJ assets, builds a scene, and performs the pipeline from vertex processing through pixel output on the CPU. `Framework` coordinates the Win32 application and each frame, the scene produces commands that are valid for that frame, and `Renderer` converts those commands into parallel tile work.
+This project does not delegate rasterization to a GPU API. It loads OBJ assets, builds a scene, and performs the pipeline from vertex processing through pixel output on the CPU. `Win32App` owns the window and input, the platform-independent `FrameRunner` owns frame order, `SceneRenderCollector` turns the scene into commands that are valid for that frame, and `Renderer` converts those commands into parallel tile work.
 
 ### Layer responsibilities
 
 | Layer | Main code | Responsibility |
 |---|---|---|
-| Entry and core | `SoftrendererProject.cpp`, `src/Core/Framework.*` | Create the window; process messages and input; track frame time; present user-facing errors; coordinate Update/Render/Present |
-| Scene and headless | `src/Core/DemoScene.*`, `src/Core/HeadlessRunner.*`, `tools/srcli` | Define and update the demo scene without a window; windowless rendering, benchmarks, PNG output. Framework, srcli, and golden tests share one scene |
+| Entry and app | `SoftrendererProject.cpp`, `src/App/Win32App.*` | Create the window; process messages, menus and input; track frame time; present user-facing errors; Present |
+| Frame core | `src/Core/FrameRunner.*`, `src/Core/SceneRenderCollector.*` | Frame-start hook → scene update → visibility collection (RenderQueue) → Clear → RenderScene. The window app, srcli, and golden tests share this path |
+| Demo and headless | `src/Core/DemoScene.*`, `src/Core/HeadlessRunner.*`, `tools/srcli` | Build the fixed benchmark/golden scene; windowless rendering, benchmarks, PNG output |
 | Assets and graphics | `src/Graphics` | Load OBJ/MTL/images; generate missing normals; build `Model`, `Mesh`, `Material`, and `Texture`; construct AABBs and octrees |
 | Scene | `src/Scene` | Update the camera and frustum; maintain object transforms and hierarchy; submit visible objects as render commands |
 | Submission boundary | `RenderCommand.h`, `RenderQueue.h` | Provide a frame-scoped command buffer between scene data and the renderer |
@@ -200,16 +202,16 @@ This project does not delegate rasterization to a GPU API. It loads OBJ assets, 
 
 ### Startup asset path
 
-1. `Framework::initializeScene` passes the executable-relative `assets` path to `DemoScene::Load`, which calls `ModelLoader::LoadOBJ` for each model in the scene table.
+1. `Win32App::initializeScene` passes the executable-relative `assets` path to `sr::demo::LoadScene`, which calls `ModelLoader::LoadOBJ` for each model in the scene table.
 2. `ModelLoader` opens the OBJ through `std::filesystem::path` and parses positions, texture coordinates, normals, faces, and material usage primarily with `std::string_view` and `std::from_chars`.
 3. `TextureLoader` reads material colors and shininess from MTL. Image decoding uses the separate `LoadImageFile` API; MTL `map_Kd` is not automatically connected today.
 4. Missing normals are generated, then per-mesh AABBs and octrees are constructed. Independent mesh post-processing is parallelized with oneTBB.
-5. On success, the `std::unique_ptr<Model>` moves into a `GameObject`. On failure, `AssetLoadError` travels through `std::expected` to `Framework`, where—and only where—it becomes a `MessageBoxW`.
+5. On success, the `std::unique_ptr<Model>` moves into a `GameObject`. On failure, `AssetLoadError` travels through `std::expected` to `Win32App`, where—and only where—it becomes a `MessageBoxW`.
 
 ### Per-frame path
 
-1. `Framework::Run` processes Win32 messages and updates its `steady_clock`-based performance measurements.
-2. `Framework::Update` calls `DemoScene::Update`, which clears the `RenderQueue`, then updates the camera and object transforms.
+1. `Win32App::Run` processes Win32 messages and updates its `steady_clock`-based performance measurements.
+2. `FrameRunner::Update` runs the frame-start hook, clears the `RenderQueue`, then `Scene::Update` updates the camera and object transforms; `SceneRenderCollector` then submits visible meshes and octree nodes.
 3. `GameObject` and `Octree` submit only meshes or nodes that pass AABB/Frustum tests as `MeshRenderCommand` objects. Wireframe is selected through the command's rasterize mode, while normal, AABB, and light-direction visualizations become debug commands.
 4. After `RenderTarget::Clear`, `Renderer::RenderScene(target, ...)` transforms vertices, back-face culls, and clips against six frustum planes. Each result prepares screen coordinates, inverse depth, interpolants, bounds, and reusable edge data once in a shared `PreparedTriangle`.
 5. `Rasterizer` applies reciprocal-depth tests, perspective correction, texture sampling, and Phong illumination in disjoint tiles. Larger `1/w` is closer; smaller primitive ID wins an exact tie. With default `hiddenWireframe=false`, only fill commands rasterize faces: wire faces neither create depth nor occlude filled faces. Only enabling the option in a frame containing wire commands adds an all-face depth-only pass before shading visible fill pixels.
@@ -230,7 +232,7 @@ This project does not delegate rasterization to a GPU API. It loads OBJ assets, 
 
 ### Ownership and frame contracts
 
-- `Framework` declares `GdiPresenter`, `RenderTarget`, then `unique_ptr<Renderer>`, ensuring reverse destruction order. Root `GameObject` instances use `shared_ptr`; each uniquely owns one `Model`.
+- `Win32App` declares `GdiPresenter`, `RenderTarget`, then `FrameRunner` (which owns the Scene, RenderQueue and `unique_ptr<Renderer>`), ensuring reverse destruction order. Root `GameObject` instances use `shared_ptr`; each uniquely owns one `Model`.
 - `Model` owns its mesh array, and each `Mesh` owns its vertices, indices, material, and octree. Materials may share textures through `shared_ptr`.
 - The mesh/material pointers and index `span` in `MeshRenderCommand` are non-owning. They remain valid because the source `GameObject` and `Model` outlive the frame's `RenderQueue`.
 - `DebugPrimitiveCommand` owns generated debug vertices by value. `RenderQueue::Clear` empties both command arrays before the next frame is submitted.
@@ -240,7 +242,7 @@ This project does not delegate rasterization to a GPU API. It loads OBJ assets, 
 
 ### Current boundaries and limitations
 
-- `Renderer`, `RenderTarget`, and `Rasterizer` are separate from Win32 presentation and support ordinary-memory tests. The core, `srcli`, and tests also build with GCC through CMake; the windowed app is Windows/MSVC only. Win32 handles remain in Framework and presentation.
+- `Renderer`, `RenderTarget`, and `Rasterizer` are separate from Win32 presentation and support ordinary-memory tests. The core, `srcli`, and tests also build with GCC through CMake; the windowed app is Windows/MSVC only. Win32 handles remain in Win32App and presentation.
 - Existing FXAA interprets the low BGRX byte as red, reversing red/blue luminance weights. It is deliberately retained to preserve the structural refactor's pixel reference and recorded as a separate behavior issue.
 - Default X-ray and optional hidden wire differ in behavior and cost. Keep `hiddenWireframe` fixed when comparing sorting/Hi-Z OFF→ON. Normal depth policy is independent. Costs, memory, and validation status are separated in the [visibility change record](PERFORMANCE.md#renderer-visibility-2026).
 - `src/Modules/sr.math.ixx` is a named-module boundary that validates `import std;` and math concepts. The entire project is not module-only; the remaining first-party code currently retains its header/source organization.
@@ -252,14 +254,15 @@ This project does not delegate rasterization to a GPU API. It loads OBJ assets, 
 
 ### アーキテクチャの目的
 
-このプロジェクトは、ラスタライズをGPU APIに任せません。OBJアセットからシーンを構築し、頂点処理からピクセル出力までをCPU上で実行します。`Framework`がWin32アプリケーションと各フレームを調整し、シーンがそのフレーム中だけ有効なコマンドを生成し、`Renderer`がコマンドを並列なタイル処理へ変換します。
+このプロジェクトは、ラスタライズをGPU APIに任せません。OBJアセットからシーンを構築し、頂点処理からピクセル出力までをCPU上で実行します。`Win32App`がwindowと入力を、プラットフォーム非依存の`FrameRunner`がフレーム順序を担当し、`SceneRenderCollector`がシーンからそのフレーム中だけ有効なコマンドを生成し、`Renderer`がコマンドを並列なタイル処理へ変換します。
 
 ### レイヤーごとの責務
 
 | レイヤー | 主なコード | 責務 |
 |---|---|---|
-| エントリとコア | `SoftrendererProject.cpp`, `src/Core/Framework.*` | Window作成、message/input処理、frame time計測、エラー表示、Update/Render/Presentの調整 |
-| シーン・headless | `src/Core/DemoScene.*`, `src/Core/HeadlessRunner.*`, `tools/srcli` | windowに依存しないデモシーンの定義・更新、windowなしの描画・benchmark・PNG保存。Framework、srcli、goldenテストが同じシーンを使う |
+| エントリとアプリ | `SoftrendererProject.cpp`, `src/App/Win32App.*` | Window作成、message/menu/input処理、frame time計測、エラー表示、Present |
+| フレームコア | `src/Core/FrameRunner.*`, `src/Core/SceneRenderCollector.*` | frame開始hook → シーン更新 → 可視性収集(RenderQueue) → Clear → RenderScene。windowアプリ・srcli・goldenテストが同じ経路を使う |
+| デモ・headless | `src/Core/DemoScene.*`, `src/Core/HeadlessRunner.*`, `tools/srcli` | benchmark・golden用の固定シーン構成、windowなしの描画・benchmark・PNG保存 |
 | アセットとグラフィックス | `src/Graphics` | OBJ/MTL/imageの読み込み、欠落normalの生成、`Model`・`Mesh`・`Material`・`Texture`の構築、AABBとoctreeの生成 |
 | シーン | `src/Scene` | Cameraとfrustumの更新、GameObjectの階層とtransformの管理、可視オブジェクトのrender command提出 |
 | 提出境界 | `RenderCommand.h`, `RenderQueue.h` | Scene dataとrendererの間にframe単位のcommand bufferを提供 |
@@ -269,16 +272,16 @@ This project does not delegate rasterization to a GPU API. It loads OBJ assets, 
 
 ### 起動時にアセットがシーンになるまで
 
-1. `Framework::initializeScene`が実行ファイル基準の`assets`パスで`DemoScene::Load`を呼び、シーン表の各モデルに`ModelLoader::LoadOBJ`を呼び出します。
+1. `Win32App::initializeScene`が実行ファイル基準の`assets`パスで`sr::demo::LoadScene`を呼び、シーン表の各モデルに`ModelLoader::LoadOBJ`を呼び出します。
 2. `ModelLoader`は`std::filesystem::path`でOBJを開き、主に`std::string_view`と`std::from_chars`を使ってposition、texture coordinate、normal、face、material usageを解析します。
 3. `TextureLoader`がMTLの色と光沢を読み込みます。画像は別の`LoadImageFile` APIでdecodeし、現在MTLの`map_Kd`は自動接続しません。
 4. 欠落したnormalを生成し、meshごとのAABBとoctreeを構築します。独立したmeshの後処理はoneTBBで並列化されます。
-5. 成功時は`std::unique_ptr<Model>`が`GameObject`へmoveされます。失敗時は`AssetLoadError`が`std::expected`で`Framework`まで渡り、UI層だけで`MessageBoxW`へ変換されます。
+5. 成功時は`std::unique_ptr<Model>`が`GameObject`へmoveされます。失敗時は`AssetLoadError`が`std::expected`で`Win32App`まで渡り、UI層だけで`MessageBoxW`へ変換されます。
 
 ### 1フレームの処理
 
-1. `Framework::Run`がWin32 messageを処理し、`steady_clock`ベースの性能計測を更新します。
-2. `Framework::Update`が`DemoScene::Update`を呼び、`RenderQueue`をclearしてからcameraとGameObjectのtransformを更新します。
+1. `Win32App::Run`がWin32 messageを処理し、`steady_clock`ベースの性能計測を更新します。
+2. `FrameRunner::Update`がframe開始hookを呼び、`RenderQueue`をclearしてから`Scene::Update`でcameraとGameObjectのtransformを更新し、`SceneRenderCollector`が可視meshとoctree nodeを提出します。
 3. `GameObject`と`Octree`はAABB/Frustum判定を通過したmeshまたはnodeだけを`MeshRenderCommand`として提出します。Wireframeはcommandのrasterize modeで指定し、normal、AABB、light directionの可視化はdebug commandとして提出します。
 4. `RenderTarget::Clear`の後、`Renderer::RenderScene(target, ...)`が頂点変換・back-face culling・6面のfrustum clippingを行います。結果の画面座標・逆深度・補間属性・境界・再利用するedge情報を`PreparedTriangle`として一度準備し、各tileで共有します。
 5. `Rasterizer`が重ならないtileに逆深度判定・透視補正・texture sampling・Phong照明を適用します。大きな`1/w`が手前で、同一深度は小さいprimitive IDを優先します。標準の`hiddenWireframe=false`ではfill commandだけが面を描画し、wire面は深度を作らずfill面も隠しません。ONかつwire commandがある時だけ全ての面のdepth-only passを先行し、可視fill pixelをshadeします。
@@ -299,7 +302,7 @@ This project does not delegate rasterization to a GPU API. It loads OBJ assets, 
 
 ### 所有権とフレーム契約
 
-- `Framework`は`GdiPresenter`、`RenderTarget`、`unique_ptr<Renderer>`の順に宣言し、逆順に破棄します。Root `GameObject`は`shared_ptr`、各objectの`Model`は`unique_ptr`で所有します。
+- `Win32App`は`GdiPresenter`、`RenderTarget`、`FrameRunner`（Scene・RenderQueue・`unique_ptr<Renderer>`を所有）の順に宣言し、逆順に破棄します。Root `GameObject`は`shared_ptr`、各objectの`Model`は`unique_ptr`で所有します。
 - `Model`はmesh配列を所有し、各`Mesh`はvertex、index、material、octreeを所有します。Textureはmaterial間で`shared_ptr`により共有できます。
 - `MeshRenderCommand`内のmesh/material pointerとindex `span`は非所有です。元の`GameObject`と`Model`がframeの`RenderQueue`より長く生存する契約によって有効性を保ちます。
 - `DebugPrimitiveCommand`は生成したdebug vertexを値として所有します。`RenderQueue::Clear`は次のframeを提出する前に両方のcommand配列を空にします。
@@ -309,7 +312,7 @@ This project does not delegate rasterization to a GPU API. It loads OBJ assets, 
 
 ### 現在の境界と制限
 
-- `Renderer`・`RenderTarget`・`Rasterizer`はWin32表示から分離され、通常のmemoryでテストできます。coreと`srcli`・テストはCMakeでGCCでもビルドでき、windowアプリはWindows/MSVC専用です。Win32 handleはFrameworkと表示層に残ります。
+- `Renderer`・`RenderTarget`・`Rasterizer`はWin32表示から分離され、通常のmemoryでテストできます。coreと`srcli`・テストはCMakeでGCCでもビルドでき、windowアプリはWindows/MSVC専用です。Win32 handleはWin32Appと表示層に残ります。
 - 既存FXAAはBGRXの下位byteをredとして扱い、red/blue輝度重みが逆転しています。構造変更時のpixel基準を保つため維持し、別の動作修正課題として記録します。
 - 標準X-rayと任意のhidden wireは動作・コストが異なります。`hiddenWireframe`を固定してsorting/Hi-Z OFF→ONを比較します。Normalのdepth policyは独立です。コスト・memory・検証状況は[可視性変更記録](PERFORMANCE.md#renderer-visibility-2026)に分けます。
 - `src/Modules/sr.math.ixx`は`import std;`とmath conceptを検証するnamed-module境界です。プロジェクト全体がmoduleのみで構成されているわけではなく、残りの自作コードは現在header/source構成を維持しています。
