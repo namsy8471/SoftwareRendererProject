@@ -78,14 +78,14 @@ The performance images were captured on 2025-08-27. Results vary with the CPU, r
 - Triangle rasterization using fixed-point edge functions
 - Perspective-correct attribute interpolation
 - Directional-light Phong illumination
-- OBJ/MTL and diffuse-texture loading
+- OBJ/MTL loading and a separate image-decoding API (no automatic `map_Kd` connection)
 - Bresenham/DDA line drawing and FXAA
 
 ### Systems and optimization
 
 - A render queue and 16×16 tile binning
 - oneTBB-based command processing and tile rasterization
-- Thread-local vertex caches, stamps, clip buffers, and triangle pools
+- Per-worker clip buffers and triangle pools in each renderer's `WorkerScratch`, plus a frame-local single-entry vertex/transform cache reused only by exact-key matches; see [maintenance contracts](MAINTENANCE.md)
 - SSE operations in the custom `SRMath` library
 - Runtime dispatch between SSE and AVX after CPUID/XCR0 validation
 - Coarse/fine frustum culling using AABBs and an octree
@@ -94,39 +94,45 @@ The performance images were captured on 2025-08-27. Results vary with the CPU, r
 
 ## Rendering architecture
 
-```text
-SoftrendererProject.exe
-├─ Framework
-│  ├─ WinAPI window / input / frame loop
-│  └─ Camera / GameObject update
-├─ Asset Pipeline
-│  ├─ OBJ / MTL parser
-│  ├─ Texture loader
-│  └─ Missing-normal generation
-├─ Scene Submission
-│  ├─ AABB / Frustum / Octree culling
-│  └─ RenderQueue
-└─ Renderer
-   ├─ Vertex transform / back-face culling / clipping
-   ├─ 16×16 tile binning
-   ├─ Parallel rasterization / depth / Phong shading
-   ├─ Optional FXAA
-   └─ GDI DIB Present
+```mermaid
+flowchart LR
+    App["WinMain / Framework<br/>Win32 message loop · input · timing"]
+    Assets["Asset Pipeline<br/>OBJ · MTL · texture · normal generation"]
+    Scene["Scene<br/>Camera · GameObject · transforms"]
+    Submit["Scene Submission<br/>AABB / Frustum / Octree · RenderQueue"]
+    Frontend["Renderer Front End<br/>MVP · culling · clipping · 16×16 binning"]
+    Tiles["Rasterizer / oneTBB Tiles<br/>prepared triangles · depth · Phong"]
+    Lines["Line Row Bands<br/>parallel wires / large normal batches · sequential overlays"]
+    Post["Post Process<br/>optional FXAA"]
+    Target["RenderTarget<br/>borrowed pixels · owned depth / IDs"]
+    Present["GdiPresenter<br/>owned 32-bit DIB · BitBlt"]
+    Math["Math / SIMD<br/>SRMath · SSE · runtime AVX dispatch"]
+
+    App -->|startup load| Assets
+    Assets -->|Model / Mesh| Scene
+    App -->|frame update| Scene
+    Scene --> Submit --> Frontend --> Tiles --> Lines --> Post --> Present
+    App --> Target
+    Tiles -. writes .-> Target
+    Present -. lends PixelSurfaceView .-> Target
+    Math -.-> Assets
+    Math -.-> Scene
+    Math -.-> Frontend
 ```
 
-```text
-OBJ · MTL · Texture
-→ Scene update
-→ Frustum / Octree culling
-→ RenderQueue
-→ Vertex transform / clipping
-→ Tile binning
-→ Rasterization / depth test / shading
-→ Optional FXAA
-→ GDI Present
-```
+Scene commands retain stable object, mesh, and octree order. Each clipped `PreparedTriangle` is created once in a per-worker `concurrent_vector` pool; `(tileIndex, triangle*)` references enter a worker-local flat array with per-tile counts/cursors and touched IDs. After the front-end join freezes the active-worker list, prefix offsets assign disjoint destination ranges. Parallel worker scatters fill one pointer array and join before each tile span is optionally sorted and rasterized. Scheduling remains with oneTBB; primitive IDs and pixel-ownership rules are unchanged. A pure default fast X-ray scene skips new flat tile-reference/worker-metadata allocations and the depth prepass.
 
-Render commands are collected from scene objects. Triangles that affect the screen are distributed into tile bins, and separate tiles are processed in parallel by oneTBB workers. The final pixels are written to a 32-bit DIB back buffer and presented with `BitBlt`.
+Worker-flat and final-pointer capacities are reused instead of accumulating capacity in per-tile vectors. `binReferences` counts logical references once; `retainedBinBytes` includes flat/final/wire/debug storage, counts/cursors/offsets, headers, and touched/active-worker lists. `binMs` covers front-end reference preparation; `rasterMs` includes prefix, scatter, sorting, and rasterization. Speed and memory comparisons are still in progress: this structure is not a claim of improved performance or final adoption.
+
+`Renderer` accepts a `RenderTarget&` without a window handle. `RenderTarget` binds a strided, non-owning `PixelSurfaceView` and owns tight depth/ID buffers; `GdiPresenter` creates, resizes, and presents the DIB. The application renders directly into that DIB, with no additional full-screen copy introduced by the split. FXAA retains its existing input snapshot.
+
+Wireframe defaults to fast **X-ray display**, including occluded lines. Only enabling `Hidden-line wireframe (depth prepass)` adds an all-face depth-only pass to frames containing wire commands and hides their occluded segments. Default mixed-mode wire faces do not occlude filled faces and require no prepass. Normals have an independent depth policy: they test existing face depth; with hidden wire off, only fill faces produce it, so a pure X-ray wire scene has no face depth to hide normals. AABB/light gizmos remain depth-independent overlays. Optional FXAA follows all line passes.
+
+Wire lines run in parallel using disjoint oneTBB Y-row bands: roughly one band per 64 rows, capped at 32. Completed front-end triangle pools, depth, and primitive IDs are read-only. `BeginLineRows` restricts pixel writes without clipping endpoints or restarting a line at a band boundary, preserving the original Bresenham/DDA pixel rules. After wire workers join, batches of at least 256 DepthTested lines prepare transforms and clipping in parallel 256-line chunks, then draw through original-order bins and disjoint Y-row bands. Smaller normal batches use the existing sequential path; overlays run sequentially after normal workers join.
+
+Tile-local front-to-back sorting and current-frame tile Hi-Z are independent experimental menu options, **both off by default**. Unwritten pixels, equal depth, and uncertain numerical bounds are not rejected. Testing and updating depth summaries also costs time, so more occlusion does not guarantee a speedup. Optional pass timings/counters and current comparison status are recorded in the [visibility change record](PERFORMANCE.md#renderer-visibility-2026).
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the layer responsibilities, startup asset path, per-frame execution order, ownership model, parallel work, and current platform boundary in Korean, English, and Japanese.
 
 ## Problem-solving cases
 
@@ -141,6 +147,7 @@ This section records not only the final changes, but also the problems encounter
 | Missing normals | Some teapot faces had no normal data, breaking shading | Accumulate face normals and generate smooth normals |
 | MTL names | Material lookup failed for keys containing a colon | Fallback lookup using the suffix after the last colon |
 | Multithreading | Single-threaded rasterization and repeated allocation dominated frame time | Tile rendering, oneTBB, TLS caches/pools |
+| Maintainability | Large functions and scattered state obscured the impact of changes | Responsibility-based files, WorkerScratch, regression tests |
 
 ### 1. C++ standards compliance and resource lifetime
 
@@ -148,7 +155,7 @@ This section records not only the final changes, but also the problems encounter
 
 **Root-cause analysis:** Resource ownership and release order were expressed only through calling conventions and comments rather than through types. A DIB bitmap, in particular, cannot be represented safely by one raw pointer: the original object selected into the DC must be restored before that bitmap is deleted.
 
-**Solution:** Constructors and destructors now manage lifetime, while the screen DC, memory DC, DIB bitmap, and previously selected object are grouped into the move-only `Renderer::GdiBackBuffer`. Conversions use `static_cast` and boundary-specific `reinterpret_cast` explicitly. Project code is compiled with `/W4 /WX`, while vendor headers are isolated behind the external-warning boundary.
+**Solution:** Constructors and destructors now manage lifetime, while the memory DC, DIB bitmap, and previously selected object are grouped into the move-only `sr::platform::GdiBackBuffer`. Borrowed screen DCs are returned by separate scope guards. Conversions use `static_cast` and boundary-specific `reinterpret_cast` explicitly. Project code is compiled with `/W4 /WX`, while vendor headers are isolated behind the external-warning boundary.
 
 **Result:** Intermediate failures and resize paths follow the same RAII cleanup rules as normal shutdown. Project-owned source remains buildable with warnings treated as errors after third-party diagnostics are excluded.
 
@@ -194,13 +201,13 @@ This section records not only the final changes, but also the problems encounter
 
 ### 6. MTL material names containing colons
 
-**Problem:** When an OBJ `usemtl` name contained a colon (`:`), it sometimes failed to match the key parsed from the MTL file, so the expected color and texture were not loaded.
+**Problem:** When an OBJ `usemtl` name contained a colon (`:`), it sometimes failed to match the key parsed from the MTL file, so the expected color and shininess properties were not applied.
 
 **Root-cause analysis:** The OBJ could use a name such as `object-part:material`, while the MTL map contained only the actual material name after the colon. Looking up only the full string left the mesh on the default material with no fallback.
 
 **Solution:** The loader first attempts an exact lookup. If that fails, it finds the final colon and performs a second lookup using the substring that follows it.
 
-**Result:** Models whose material names include a colon are remapped to the intended MTL entry, restoring their color and texture data.
+**Result:** Models whose material names include a colon are remapped to the intended MTL entry, restoring their color and shininess properties. Image decoding remains a separate API; MTL `map_Kd` is not connected automatically.
 
 ### 7. Tile-based multithreading optimization
 
@@ -211,6 +218,16 @@ This section records not only the final changes, but also the problems encounter
 **Solution:** The viewport is split into 16×16 tiles. A triangle's screen-space AABB determines which tile bins receive a reference to it, and oneTBB processes those tiles as parallel tasks. Vertex results, stamps, clip buffers, and triangle pools are reused through thread-local storage. `reserve()`, high-watermark caches, and ping-pong buffers reduce reallocation.
 
 **Result:** One development measurement improved from roughly 5 FPS on the single-threaded path to roughly 60 FPS after multithreading. The comparison images captured on 2025-08-27 show 8 FPS increasing to 58 FPS. These figures came from different development stages and conditions and are not standardized benchmarks.
+
+### 8. Separating responsibilities and state while preserving behavior
+
+**Problem:** Large functions mixed rendering stages with temporary state, making it difficult to trace whether a change belonged to vertex processing, tile binning, or debug output.
+
+**Root-cause analysis:** Vertex transforms and viewport calculations were duplicated, while worker caches, clipping buffers, and triangle pools were managed separately. Lines that write across the screen also cannot follow the same parallel-write rules as tile-bounded filling.
+
+**Solution:** `RenderScene` now coordinates named stages, with separate Frontend, Clipping, Rasterizer, Shading, and platform GDI implementations. Each renderer owns its `WorkerScratch` state. The earlier refactor made wireframe/debug lines sequential after filling to remove races. Later changes parallelize wires and large normal batches with disjoint row-band writes; small normal batches and overlays remain sequential. OBJ loading separates statement parsing, index validation, normal generation, and spatial construction; Framework and Scene distinguish initialization, updates, and command collection.
+
+**Result:** Function names and call order now expose the frame flow. Structural changes and behavior fixes are documented separately and covered by regression tests. C++26 Preview, oneTBB, and SSE/AVX remain in use; this refactoring does not claim a measured performance improvement.
 
 <details>
 <summary><strong>View the C++26 modernization details</strong></summary>
@@ -225,13 +242,89 @@ This section records not only the final changes, but also the problems encounter
 | Loader-owned `MessageBox`/exceptions | `std::expected<T, AssetLoadError>` | Separate parsing from WinAPI presentation |
 | `static_assert` inside templates | C++20 concepts and the `sr.math` module | Diagnose invalid types at the call site |
 | `std::vector` for clipping | `FixedCapacityVector` / `std::inplace_vector` compatibility path | Remove heap allocation from a fixed-size hot path |
-| Manual cleanup of raw GDI handles | Move-only `Renderer::GdiBackBuffer` | Guarantee restore-selected-object → delete bitmap → delete DC order |
+| Manual cleanup of raw GDI handles | Move-only `sr::platform::GdiBackBuffer` | Guarantee restore-selected-object → delete bitmap → delete DC order |
 | One SSE path | CPUID/XCR0 runtime dispatch + separate AVX translation unit | Retain old-CPU compatibility and use AVX only for suitable batches |
 | Overlapping parallel FXAA writes | `span` API + separated luminance/filter passes | Remove the data race even when workers would write equal values |
 
-The project uses `/std:c++latest`. C++26 library facilities that are not yet available are detected through feature-test macros and replaced with fallbacks that preserve the same contract. Features are not adopted merely because they are newer; operations such as a single `vec4`, whose width naturally fits SSE, deliberately retain that implementation.
+The project uses `/std:c++latest`. C++26 library facilities that are not yet available are detected through feature-test macros and replaced with fallbacks that provide the operations needed by the current value types. The fixed-capacity fallback's `clear()` resets its logical size without destroying elements immediately, unlike `std::inplace_vector`. Features are not adopted merely because they are newer; operations such as a single `vec4`, whose width naturally fits SSE, deliberately retain that implementation.
 
 </details>
+
+## Maintenance and tests
+
+### Reading the code
+
+| Concern | Main code and responsibility |
+|---|---|
+| Frame coordination | `Framework::runFrame` → `GameObject::Update/SubmitToRenderQueue` → `Renderer::RenderScene` |
+| Rendering stages | `prepareFrame` → `binCommands` → `renderTiles` → `renderLines` → `applyPostProcessing` |
+| Renderer implementation | `RendererFrontend.cpp`, `RendererClipping.cpp`, `Rasterizer.cpp`, `RendererShading.cpp` |
+| State and lifetime | Per-renderer `WorkerScratch`, borrowed `RenderQueue`, depth/IDs in `RenderTarget`, DIB in `GdiPresenter` |
+| Asset parsing | `ModelLoader.cpp`, `TextureLoader.cpp`, and shared token/numeric parsing in `AssetParsing.h` |
+| Math | `SRMath.h` remains the include entry point over separate FixedPoint, Vector, and Matrix headers |
+| Build and conventions | Shared app/test `build/*.props` and first-party `.clang-format`; ThirdParty is excluded from formatting |
+
+Korean code comments explain design intent, coordinate systems, ownership, and concurrency. See the [maintenance guide](MAINTENANCE.md#english) for detailed contracts and code locations.
+
+### Behavior fixes and regression checks
+
+| Area | Change and validation |
+|---|---|
+| Clipping | Linear homogeneous interpolation, with perspective correction only during rasterization; rejected-output reset, six-plane/capacity checks, and input immutability |
+| Win32 Release interpolation | Reproduced input corruption in the compound vector temporary path; explicit SSE retains the subtract → multiply → add order without relaxing tolerances |
+| Lines | Initial sequential pass removed cross-tile races; wires and large normal batches now use order-preserving disjoint Y-row bands, while small normal batches/overlays stay sequential. Tests compare pixels/depth/IDs/stats/padding and band edges |
+| Scene and input | Parent transforms, visible children, duplicate/cycle rejection, Space key repeat, and algorithm menu state |
+| Buffers and post-processing | Renderer isolation, frame reset, zero-size resize/recovery, Phong, and FXAA |
+
+### Running tests and recorded results
+
+`RendererTests` needs no external test framework and returns a nonzero exit code on failure in Release too. Run from PowerShell at the repository root.
+
+```powershell
+# Rebuild the app and tests, then run all four configurations
+./tests/RunTests.ps1 -Rebuild
+
+# Build and run a selected configuration
+./tests/RunTests.ps1 -Platforms x64 -Configurations Debug
+
+# Build x64 Release only and run a subset (prints failures and the summary)
+./tests/RunTests.ps1 -Quick -Filter golden
+
+# Time each mode with the headless srcli (100 fps goal, saved as JSON Lines)
+./tests/Bench.ps1
+```
+
+`srcli` (`tools/srcli`) renders the same demo scene without a window, and golden-image tests compare against `tests/golden/*.png`. `srcli render --out frame.png` saves a frame as PNG, and `CMakeLists.txt` builds the core, srcli, and tests on Linux and other platforms (`tools/dev.sh`). The AI-facing summary is [CLAUDE.md](CLAUDE.md).
+
+Benchmarks warm up for 60 frames, then measure the requested frames. Compare `none | sort | hiz | both`; use `stats` only for diagnostics. Default `wire` is X-ray; a final `hidden` token selects hidden wire. Explicitly put `nostats` in the preceding diagnostics slot to select it without instrumentation. Synthetic scenarios are `occluded | open` and exclude presentation. See the [maintenance guide](MAINTENANCE.md) for measurement boundaries.
+
+```powershell
+.\tests\bin\x64\Release\RendererTests.exe . --benchmark 600 1280 720 fill none
+.\tests\bin\x64\Release\RendererTests.exe . --benchmark 600 1280 720 normal both stats
+.\tests\bin\x64\Release\RendererTests.exe . --benchmark 600 1280 720 wire none nostats hidden
+.\tests\bin\x64\Release\RendererTests.exe . --visibility-benchmark 600 1280 720 fill both occluded
+.\tests\bin\x64\Release\RendererTests.exe . --visibility-benchmark 600 1920 1080 fill none open
+.\tests\bin\x64\Release\RendererTests.exe . --visibility-benchmark 120 1280 720 wire none occluded nostats hidden
+```
+
+The table below records the earlier refactor's validation on 2026-10-05, before the visibility changes. It does not certify the new buffer split, hidden lines, sorting, or Hi-Z. New validation is tracked separately in the [visibility change record](PERFORMANCE.md#renderer-visibility-2026). Logs are stored in the Git-ignored `tests/bin/logs` directory.
+
+| Configuration | App/test rebuild | Runtime tests | Warnings |
+|---|---|---|---|
+| Debug × x64 | PASS | PASS | 0 |
+| Release × x64 | PASS | PASS | 0 |
+| Debug × Win32 | PASS | PASS | 0 |
+| Release × Win32 | PASS | PASS | 0 |
+
+Coverage also includes matrix/normal transforms, AABB/Frustum, viewport mapping, valid/invalid assets, and numerical SIMD comparisons. IronMan and teapot smoke tests exercise rotation, debug modes, and FXAA in hidden Win32 windows with GDI buffers. App/test asset deployment and architecture-specific oneTBB DLL hashes were also checked.
+
+**Validation boundary:** These tests are neither a headless runtime nor a substitute for manual visual regression. Interactive camera/mouse/minimize checks, before/after screenshots, and non-AVX hardware validation remain outstanding. The existing 8 → 58 FPS images do not measure this refactoring.
+
+**Historical optimization:** Earlier VS CPU Usage/VTune work identified redundant tile insertion and line-rendering costs. Three Release x64, 1280×720 hidden-GDI-window comparisons showed approximately 39.5%, 26.8%, and 30.5% lower frame times for fill, normals, and wireframe. These are not results for the new hidden-wire option, sorting, or Hi-Z. New comparisons distinguish X-ray/hidden-wire settings and normal depth policy. See the [historical conditions](PERFORMANCE.md#english) and separate [visibility change record](PERFORMANCE.md#renderer-visibility-2026).
+
+New regression coverage uses memory targets for stride/padding, invalid and zero dimensions, depth/IDs, FXAA, occlusion, exact-depth ties, and single/multi-worker pixel/depth comparisons. Memory rendering tests and `srcli` run without a window. FXAA's existing red/blue luminance-weight mismatch is deliberately preserved and regression-tested separately from the structural change.
+
+**Toolchain limitation:** After the source split, MSVC 14.51.36231 produced a C1001 internal compiler error during `/GL` linking. Only Release LTCG is disabled; ordinary optimization and SSE/AVX remain enabled. Re-enable it after toolchain retesting and performance measurements.
 
 ## Build and run
 
@@ -249,9 +342,9 @@ oneTBB 2023.1.0 and stb_image are included under `src/ThirdParty`, so no separat
 1. Open `SoftrendererProject.sln` from the repository root.
 2. Select `Release | x64`, or another required configuration.
 3. Run **Build > Build Solution**.
-4. Run **Debug > Start Without Debugging**.
+4. Set `SoftrendererProject` as the startup project and run **Debug > Start Without Debugging**. `RendererTests` is a separate console test executable.
 
-The supported configurations are `Debug|x64`, `Release|x64`, `Debug|Win32`, and `Release|Win32`. After a build, `assets` and the architecture-specific `tbb12.dll` are copied automatically to the output directory.
+The supported configurations are `Debug|x64`, `Release|x64`, `Debug|Win32`, and `Release|Win32`. After a build, `assets` and the architecture-specific `tbb12_debug.dll` (Debug) or `tbb12.dll` (Release) are copied automatically to the output directory.
 
 ### Command line
 
@@ -273,6 +366,8 @@ msbuild .\SoftrendererProject.sln /m /p:Configuration=Release /p:Platform=x64
 
 The window menu also provides Bresenham/DDA line drawing, None/FXAA selection, and Normal Vector/AABB/Wire Frame/Light Direction visualizations.
 
+Algorithms provides independent `Front-to-back sorting (experimental)`, `Hi-Z culling (experimental)`, and `Hidden-line wireframe (depth prepass)` toggles, all initially off. Debug → Wire Frame uses X-ray wires by default; enabling hidden wire additionally creates face depth and removes hidden lines. Normals retain their separate depth policy, while AABB/light direction remain overlays.
+
 <details>
 <summary><strong>View the directory structure</strong></summary>
 
@@ -281,16 +376,26 @@ The window menu also provides Bresenham/DDA line drawing, None/FXAA selection, a
 ```text
 SoftwareRendererProject/
 ├─ assets/                 # OBJ, MTL, and texture assets
+├─ build/                  # Shared MSBuild settings and runtime sources
+├─ tests/                  # Regression tests, golden images, fixtures, and runners
+├─ tools/srcli/            # Headless benchmark and PNG dump CLI
 ├─ src/
-│  ├─ Core/               # WinAPI application and main loop
+│  ├─ Core/               # WinAPI Framework, demo scene, headless runner
 │  ├─ Graphics/           # Model, Mesh, Material, Texture, Octree
 │  ├─ Math/               # SRMath, AABB, Frustum, SSE/AVX dispatch
 │  ├─ Modules/            # sr.math C++ module interface
-│  ├─ Platform/           # Minimal Win32 boundary header
+│  ├─ Platform/           # Win32 boundary header and GDI back-buffer RAII
 │  ├─ Renderer/           # RenderQueue, clipping, tile rasterizer, FXAA
 │  ├─ Scene/              # Camera and GameObject
 │  ├─ ThirdParty/         # oneTBB and stb_image
 │  └─ Utils/              # Error types, fixed-capacity storage, timing
+├─ ARCHITECTURE.md
+├─ CLAUDE.md              # AI-facing summary (commands, rules, performance bar)
+├─ CMakeLists.txt         # Headless build (core, srcli, tests)
+├─ MAINTENANCE.md
+├─ PERFORMANCE.md
+├─ RendererTests.vcxproj
+├─ SrCli.vcxproj
 ├─ SoftrendererProject.sln
 └─ SoftrendererProject.vcxproj
 ```
@@ -305,6 +410,9 @@ SoftwareRendererProject/
 - Lighting is centered on a directional-light Phong model.
 - Published FPS figures come from different development stages and are not controlled, same-condition benchmarks.
 - The scope is CPU rendering-pipeline study and optimization; a GPU API backend and a general-purpose scene editor are intentionally outside it.
+- `sr.math` is a partial module adoption, not a full migration of the codebase to named modules or `import std;`.
+- The renderer core and headless tools (`srcli`, tests) also build with GCC through CMake, but the windowed app and Framework/GDI tests remain Windows/MSVC only. No new Job System is added.
+- MTL parses colors and shininess, but does not automatically connect `map_Kd`. Image decoding is exposed separately through `LoadImageFile`.
 
 ## Third-party libraries
 

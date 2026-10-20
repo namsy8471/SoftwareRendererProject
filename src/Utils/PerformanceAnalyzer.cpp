@@ -2,7 +2,7 @@
 
 namespace
 {
-constexpr auto kFpsInterval = std::chrono::seconds{ 1 };
+constexpr auto fpsInterval = std::chrono::seconds{1};
 }
 
 PerformanceAnalyzer::PerformanceAnalyzer() : m_prevTime(Clock::now()) {}
@@ -18,12 +18,10 @@ void PerformanceAnalyzer::Update()
     m_elapsedTime += m_deltaTime;
 
     // 1초가 지났으면 FPS를 계산하고 초기화합니다.
-    // C++11 chrono duration 자체를 비교하면 초/틱 단위 변환을 컴파일러가
-    // 처리한다. float 초로 바꿔 누적하던 방식보다 정밀도 손실이 적다.
-    if (m_elapsedTime >= kFpsInterval)
+    if (m_elapsedTime >= fpsInterval)
     {
-        m_avgfps = m_frameCount;
+        m_avgFps = m_frameCount;
         m_frameCount = 0;
-        m_elapsedTime -= kFpsInterval;
+        m_elapsedTime -= fpsInterval;
     }
 }

@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|Win32">
+      <Configuration>Debug</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|Win32">
+      <Configuration>Release</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>17.0</VCProjectVersion>
+    <Keyword>Win32Proj</Keyword>
+    <ProjectGuid>{8E736D21-99F9-4F66-A8AA-3DB3855324DB}</ProjectGuid>
+    <RootNamespace>RendererTests</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+    <!-- Dependencies are vendored below src/ThirdParty. Disabling the global
+         vcpkg integration avoids an unrelated pwsh app-local fallback during builds. -->
+    <VcpkgEnabled>false</VcpkgEnabled>
+  </PropertyGroup>
+  <Import Project="build\BuildSettings.props" />
+  <PropertyGroup>
+    <TargetName>RendererTests</TargetName>
+    <OutDir>$(ProjectDir)tests\bin\$(Platform)\$(Configuration)\</OutDir>
+    <IntDir>$(ProjectDir)tests\obj\$(Platform)\$(Configuration)\</IntDir>
+  </PropertyGroup>
+  <ItemDefinitionGroup><Link><SubSystem>Console</SubSystem></Link></ItemDefinitionGroup>
+  <Import Project="build\RuntimeSources.props" />
+  <ItemGroup>
+    <!-- CMakeLists.txt는 tests/*.cpp를 자동으로 모은다. 새 테스트 파일은 여기에도 추가한다. -->
+    <ClCompile Include="tests\TestMain.cpp" />
+    <ClCompile Include="tests\MathTests.cpp" />
+    <ClCompile Include="tests\AssetTests.cpp" />
+    <ClCompile Include="tests\RendererCoreTests.cpp" />
+    <ClCompile Include="tests\VisibilityTests.cpp" />
+    <ClCompile Include="tests\RenderTargetTests.cpp" />
+    <ClCompile Include="tests\GoldenTests.cpp" />
+    <ClCompile Include="tests\FrameworkTests.cpp" />
+    <ClInclude Include="tests\TestHarness.h" />
+    <ClInclude Include="tests\TestSupport.h" />
+    <ClCompile Include="src\Core\Framework.cpp" />
+    <ResourceCompile Include="SoftrendererProject.rc" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+</Project>

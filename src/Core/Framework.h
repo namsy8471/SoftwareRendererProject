@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include <array>
 #include <cstddef>
@@ -8,67 +8,67 @@
 #include <string>
 #include <string_view>
 #include "Platform/Win32Headers.h"
+#include "Platform/GdiPresenter.h"
+#include "Renderer/RenderTarget.h"
 #include "Utils/PerformanceAnalyzer.h"
-#include "Math/SRMath.h"
-#include "Scene/Camera.h"
-#include "Renderer/RenderQueue.h"
-#include "Graphics/Light.h"
-#include "Utils/DebugUtils.h"
+#include "Core/DemoScene.h"
 
+struct AssetLoadError;
 class Renderer;
-class GameObject;
 
+// Win32 창·메뉴·입력·GDI 표시만 담당한다. 장면 정의와 갱신은 DemoScene이 맡아
+// headless srcli와 같은 장면을 공유한다.
 class Framework
 {
-private:
-	static constexpr std::size_t max_load_string = 100;
-	static constexpr std::size_t key_count = 256;
+    friend struct FrameworkTestAccess;
 
-	// Windows Variables
-	HWND m_hWnd;                            // 윈도우 핸들
-	HINSTANCE m_hInstance;					// 핸들 인스턴스
+  private:
+    static constexpr std::size_t maxLoadString = 100;
+    static constexpr std::size_t keyCount = 256;
 
-	// C++11 이전 스타일의 매크로/C 배열 대신 크기를 타입에 보존하는 array를 쓴다.
-	std::array<WCHAR, max_load_string> m_szTitle{};
-	std::array<WCHAR, max_load_string> m_szWindowClass{};
+    // Windows Variables
+    HWND m_hWnd = nullptr;           // 윈도우 핸들
+    HINSTANCE m_hInstance = nullptr; // 핸들 인스턴스
 
-	// Framework Variables
-	std::unique_ptr<Renderer> m_pRenderer;	// It is for Rendering
-	RenderQueue m_renderQueue;				// It is for Render Queue
-	PerformanceAnalyzer m_perfAnalyzer;		// It is for counting FPS/CPU/GPU
-	std::vector<DirectionalLight> m_lights; // It is for Directional Lights
+    std::array<WCHAR, maxLoadString> m_szTitle{};
+    std::array<WCHAR, maxLoadString> m_szWindowClass{};
 
-	DebugFlags m_debugFlags;				// It is for Debug Flags
-	bool m_isRotateMode = true;		    // It is for Rotate Mode
+    // Framework Variables
+    // 선언의 역순으로 파괴되어 renderer/target이 먼저 사라지고 마지막에 DIB가 해제된다.
+    sr::platform::GdiPresenter m_presenter;
+    RenderTarget m_renderTarget;
+    std::unique_ptr<Renderer> m_renderer;
+    PerformanceAnalyzer m_perfAnalyzer;
+    DemoScene m_scene;
 
-	// Key Input Variables
-	std::array<bool, key_count> m_keys{};
-	bool m_isRightMouseDown = false;
-	POINT m_lastMousePos;
+    // Key Input Variables
+    std::array<bool, keyCount> m_keys{};
+    bool m_isRightMouseDown = false;
+    POINT m_lastMousePos{};
 
-	// Model Variables
-	std::vector<std::shared_ptr<GameObject>> m_gameobjects; // 게임오브젝트 리스트
+    void initializeWindow(HINSTANCE instance, int showCommand);
+    [[nodiscard]] bool resizeRenderTarget(HWND window);
+    void initializeScene();
+    void runFrame();
+    bool handleMenuCommand(int commandId);
+    void handleMouseMove(LPARAM position);
+    void handleKeyDown(WPARAM key, bool repeated);
+    void updateFrameTime();
+    void showAssetError(const AssetLoadError &error) const;
 
-	// Camera Variables
-	Camera m_camera;
+  public:
+    explicit Framework(HINSTANCE hInstance, int nCmdShow);
+    ~Framework();
 
-	// Load Gameobject
-	[[nodiscard]] bool initializeGameobject(const SRMath::vec3& pos, const SRMath::vec3& rotation,
-		const SRMath::vec3& scale, std::string_view modelName);
+    void Run();
+    void Update(float deltaTime);
+    void Render();
 
-public:
-	explicit Framework(HINSTANCE hInstance, int nCmdShow);
-	~Framework();
+    LRESULT HandleMessage(HWND, UINT, WPARAM, LPARAM);
 
-	void Run();
-	void Update(float deltaTime);
-	void Render();
+    void CheckMenuBox(bool isOn, int menuId) const noexcept;
 
-	LRESULT HandleMessage(HWND, UINT, WPARAM, LPARAM);
-
-	void CheckMenuBox(bool isOn, int menuId) const noexcept;
-
-public:
-	static LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
-	static INT_PTR CALLBACK About(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam);
+  public:
+    static LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
+    static INT_PTR CALLBACK About(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam);
 };

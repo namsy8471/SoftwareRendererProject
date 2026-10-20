@@ -1,0 +1,58 @@
+# Linux CI: push/PR마다 CMake+GCC로 headless 렌더러를 빌드하고 단위 테스트와 골든 이미지 테스트를 돌린다.
+# Win32 앱과 MSVC 빌드는 여기서 다루지 않는다(나중에 self-hosted Windows runner로 추가).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: Linux (GCC, headless)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build libtbb-dev
+
+      - name: Configure
+        run: cmake --preset release
+
+      - name: Build
+        run: cmake --build --preset release
+
+      - name: Test (unit + golden)
+        run: ./out/release/RendererTests "$GITHUB_WORKSPACE"
+
+      # 골든 테스트가 실패하면 actual/diff PNG를 내려받아 바로 비교할 수 있게 올린다.
+      - name: Upload golden diffs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-diffs
+          path: tests/out/golden/
+          if-no-files-found: ignore
+
+      # 참고용 성능 수치. 공용 runner는 CPU를 나눠 써서 측정값이 흔들리므로 실패 조건으로 쓰지 않는다.
+      - name: Benchmark (informational)
+        continue-on-error: true
+        run: |
+          for mode in fill wire normal; do
+            ./out/release/srcli bench --mode "$mode" --json | tee -a bench.jsonl
+          done
+          {
+            echo '### Benchmark (shared runner, 참고용)'
+            echo '```'
+            cat bench.jsonl
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
