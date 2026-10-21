@@ -1,4 +1,8 @@
 #include "Core/HeadlessRunner.h"
+#include "Animation/Animator.h"
+#include "Animation/Skinning.h"
+#include "Graphics/GltfLoader.h"
+#include "Scene/GameObject.h"
 #include "Core/DemoScene.h"
 #include "Core/FrameRunner.h"
 #include "Graphics/Model.h"
@@ -63,15 +67,61 @@ std::expected<RunResult, std::string> Run(const RunConfig &config)
         threadLimit.emplace(tbb::global_control::max_allowed_parallelism,
                             static_cast<std::size_t>(config.threads));
 
-    auto loaded = sr::demo::LoadScene(config.assetDirectory);
-    if (!loaded)
+    const auto describe = [](const AssetLoadError &error)
     {
-        std::string message = loaded.error().message;
-        if (!loaded.error().path.empty())
-            message += " (" + loaded.error().path.string() + ")";
-        return std::unexpected(message);
+        std::string message = error.message;
+        if (!error.path.empty())
+            message += " (" + error.path.string() + ")";
+        return message;
+    };
+    const float aspectRatio = static_cast<float>(config.width) / static_cast<float>(config.height);
+    std::expected<Scene, AssetLoadError> loaded = std::unexpected(AssetLoadError{});
+    std::shared_ptr<sr::anim::Animator> animator;
+    if (config.scenePath.empty())
+    {
+        loaded = sr::demo::LoadScene(config.assetDirectory);
+        if (!loaded)
+            return std::unexpected(describe(loaded.error()));
+        sr::demo::FitCameraToScene(*loaded, aspectRatio);
     }
-    sr::demo::FitCameraToScene(*loaded, static_cast<float>(config.width) / static_cast<float>(config.height));
+    else
+    {
+        auto gltfScene = sr::gltf::LoadScene(config.scenePath);
+        if (!gltfScene)
+            return std::unexpected(describe(gltfScene.error()));
+        auto created = sr::anim::Animator::Create(*gltfScene);
+        if (!created)
+            return std::unexpected("animation setup failed: " + created.error());
+        animator = std::move(*created);
+        if (animator->GetClipCount() > 0)
+        {
+            if (config.clip < 0 || static_cast<std::size_t>(config.clip) >= animator->GetClipCount())
+                return std::unexpected("clip " + std::to_string(config.clip) + " does not exist");
+            animator->SetClip(static_cast<std::size_t>(config.clip));
+        }
+        // 모델 단위(cm, m)가 제각각이고 카메라 far는 100이므로, 첫 포즈 경계의 가장 긴 변이 normalizedSize가
+        // 되도록 root 크기를 맞추고 중심을 원점에 둔다. 그다음 데모와 같은 카메라·광원 규칙을 쓴다.
+        constexpr float normalizedSize = 4.f;
+        if (const AABB bounds = animator->GetBounds(); bounds.IsValid())
+        {
+            const SRMath::vec3 extent = bounds.max - bounds.min;
+            const float longest = std::max({extent.x, extent.y, extent.z});
+            const float scale = longest > 0.f ? normalizedSize / longest : 1.f;
+            gltfScene->root->SetScale(SRMath::vec3(scale, scale, scale));
+            gltfScene->root->SetPosition(bounds.Center() * -scale);
+            gltfScene->root->Update(0.f, false);
+            animator->UpdateSkins();
+        }
+        // 자동 회전은 끄고 애니메이션만 움직인다.
+        Scene scene;
+        (void)scene.AddObject(gltfScene->root);
+        scene.AddAnimator(animator);
+        scene.SetCamera(Camera(SRMath::vec3(0.f, 0.f, -5.f)));
+        scene.AddLight(DirectionalLight());
+        scene.SetRotateMode(false);
+        sr::demo::FitCameraToBounds(scene, animator->GetBounds(), aspectRatio);
+        loaded = std::move(scene);
+    }
 
     FrameRunner runner;
     runner.SetScene(std::move(*loaded));
@@ -131,6 +181,21 @@ std::expected<RunResult, std::string> Run(const RunConfig &config)
     }
 
     RunResult result;
+    if (animator)
+    {
+        // 측정 프레임과 같은 dt로 애니메이션 단계(포즈 → 계층 transform → 스키닝)만 다시 잰다. 렌더는 하지 않으므로
+        // 아래에서 복사하는 마지막 프레임 픽셀은 측정 루프가 그린 그대로다.
+        const auto &roots = runner.GetScene().GetRootObjects();
+        const auto begin = Clock::now();
+        for (int frame = 0; frame < config.measuredFrames; ++frame)
+        {
+            animator->ApplyPose(config.deltaTime);
+            for (const auto &root : roots)
+                root->Update(config.deltaTime, false);
+            animator->UpdateSkins();
+        }
+        result.timings.animationMeanMs = milliseconds(Clock::now() - begin) / config.measuredFrames;
+    }
     const double count = static_cast<double>(frameTimes.size());
     double total = 0;
     for (const double time : frameTimes)
@@ -148,6 +213,16 @@ std::expected<RunResult, std::string> Run(const RunConfig &config)
     result.pixelHash = sr::image::HashPixels(result.lastFrame);
     result.backgroundLoadsSubmitted = loadsSubmitted;
     result.backgroundLoadsApplied = loadsApplied;
+    if (animator)
+    {
+        for (const auto &object : animator->GetSkinnedObjects())
+        {
+            result.skinnedVertices += object->GetSkinnedMesh()->GetVertexCount();
+            result.skinJoints += object->GetSkinnedMesh()->GetJointCount();
+        }
+        if (animator->GetClip() >= 0)
+            result.clipName = animator->GetClipName(static_cast<std::size_t>(animator->GetClip()));
+    }
     result.threads = static_cast<int>(
         tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism));
     return result;

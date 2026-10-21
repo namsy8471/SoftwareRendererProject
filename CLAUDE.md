@@ -41,6 +41,8 @@ tools/dev.sh render wire out.png
 `srcli` 옵션: `--size WxH --frames N --warmup N --mode fill|wire|normal|aabb|fxaa --opt none|sort|hiz|both
 --hidden-wire --dda --stats --threads N --load-every N --target-fps F --require-target --json --out file.png`.
 `--load-every N`은 측정 중 N프레임마다 teapot.obj를 백그라운드로 로드한다(결과는 버려 픽셀 동일). 로딩이 p95를 흔드는지 볼 때 쓴다.
+`--scene`은 데모 대신 glTF 장면을 가장 긴 변 4로 맞춰 그리고 `--clip` 애니메이션을 재생한다(자동 회전 끔). JSON에 `skinned_vertices`, `joints`,
+`anim_ms`(포즈 + 계층 transform + 스키닝 한 번의 평균, 측정 프레임 뒤 따로 잼)가 붙는다. 데모 장면 판정 수치와 섞지 않는다.
 `--stats`는 패스별 시간(`prepare/bin/raster/line/post_ms`)과 카운터를 JSON에 넣지만 측정을 느리게 하므로 최종 수치에는 쓰지 않는다.
 
 ## 최적화 작업 흐름
@@ -59,6 +61,7 @@ tools/dev.sh render wire out.png
 
 - `srcli render ... --out x.png`로 저장한 PNG를 직접 열어 본다.
 - 골든: `tests/golden/{fill,wire,wire-hidden,normal,aabb,fxaa}.png` (320×180, warmup 30프레임).
+  `anim.png`, `anim-normal.png`는 데모 대신 `tests/fixtures/gltf/skinned-tube.glb`(0.5초, Bend 45도)를 그린다.
   실패하면 `tests/out/golden/<이름>.actual.png`, `<이름>.diff.png`(다른 픽셀=빨강)가 생긴다.
 - 허용 오차(채널 4, 픽셀 0.2%)는 `tests/GoldenTests.cpp` 상단에 있다. 의도한 변경일 때만
   `-UpdateGolden`(Windows) 또는 `tools/dev.sh golden`으로 갱신하고 PNG를 같이 커밋한다.
@@ -78,8 +81,9 @@ tools/dev.sh render wire out.png
 | `src/Core/HeadlessRunner.*`, `tools/srcli/` | 창 없는 실행·측정·PNG |
 | `src/App/Win32App.*`, `src/Platform/` | Win32 창·메뉴·입력·GDI 표시 (Windows 전용, CMake 빌드에서 빠짐) |
 | `src/IO/` | 자체 JSON(`Json.*`), 백그라운드 로드 큐(`BackgroundLoader.*`: 작업 스레드 파싱 → 프레임 시작 훅에서 적용), 파일 읽기·원자적 쓰기 |
-| `src/IO/Gltf.*`, `src/Graphics/GltfLoader.*` | 자체 glTF 2.0 로더. `Gltf`는 .gltf/.glb 문서 파싱·범위 검증·accessor 읽기, `GltfLoader`는 node 계층 → GameObject 트리, primitive → Mesh, baseColor → Phong 재질, skin/animation 데이터(아직 화면에 반영 안 함). 표본은 `tests/fixtures/gltf/generate.py` |
-| `src/Math/` | SRMath(SSE), `SIMD_AVX.cpp`만 AVX로 컴파일 |
+| `src/IO/Gltf.*`, `src/Graphics/GltfLoader.*` | 자체 glTF 2.0 로더. `Gltf`는 .gltf/.glb 문서 파싱·범위 검증·accessor 읽기, `GltfLoader`는 node 계층 → GameObject 트리, primitive → Mesh, baseColor → Phong 재질, skin/animation 데이터. 표본은 `tests/fixtures/gltf/generate.py` |
+| `src/Animation/` | `Animator`(glTF 클립 재생: 재생/정지·속도·반복·클립 전환, 키프레임 → node 로컬 TRS), `AnimationSampling`(STEP/LINEAR/CUBICSPLINE, 회전 slerp), `Skinning`(CPU 선형 블렌드 스키닝, `SkinningAVX.cpp`만 AVX). 순서: `Scene::Update`가 포즈 → transform → 스킨. 스킨 메시는 월드 공간 변형 버퍼를 world=단위 행렬로 그리고, Octree 대신 변형 정점 AABB로 컬링한다. 쿼터니언은 `src/Math/Quaternion.h` |
+| `src/Math/` | SRMath(SSE), `SIMD_AVX.cpp`만 AVX로 컴파일. `Quaternion.h`(곱, slerp/nlerp, 행렬·축각 변환) |
 | `tests/` | `TestMain.cpp` 실행기, 영역별 `*Tests.cpp`, `golden/`, `fixtures/` |
 
 ## 규칙

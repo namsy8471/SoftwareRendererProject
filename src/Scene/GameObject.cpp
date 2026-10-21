@@ -1,4 +1,5 @@
 #include "GameObject.h"
+#include "Animation/Skinning.h"
 #include "Graphics/Model.h"
 
 #include <utility>
@@ -30,11 +31,12 @@ void GameObject::Update(float deltaTime, bool isRotate)
 void GameObject::UpdateTransform(float deltaTime, bool isRotate)
 {
     // 열벡터 규약: local = T * R * S, world = parentWorld * local.
-    if (isRotate)
+    if (isRotate && !m_useOrientation)
         m_rotation += SRMath::vec3(0.0f, 0.4f * deltaTime, 0.0f); // 초당 0.4 rad 회전
 
     const SRMath::mat4 scaleMatrix = SRMath::scale(m_scale);
-    const SRMath::mat4 rotationMatrix = SRMath::rotate(m_rotation);
+    const SRMath::mat4 rotationMatrix = m_useOrientation ? SRMath::to_mat4(SRMath::normalize(m_orientation))
+                                                         : SRMath::rotate(m_rotation);
     const SRMath::mat4 translationMatrix = SRMath::translate(m_position);
     m_worldMatrix = translationMatrix * rotationMatrix * scaleMatrix;
     if (const auto parent = m_parent.lock())
@@ -49,6 +51,11 @@ void GameObject::UpdateTransform(float deltaTime, bool isRotate)
 
     // 모델 없는 노드(그룹·광원 자리)는 빈 AABB라 컬링·카메라 맞춤에서 빠진다.
     m_worldAABB = m_model ? m_model->GetLocalAABB().Transform(m_worldMatrix) : AABB{};
+}
+
+void GameObject::SetSkinnedMesh(std::unique_ptr<sr::anim::SkinnedMesh> skinnedMesh) noexcept
+{
+    m_skinnedMesh = std::move(skinnedMesh);
 }
 
 bool GameObject::AddChild(std::shared_ptr<GameObject> child)

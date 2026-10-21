@@ -1,4 +1,5 @@
 #include "Core/SceneRenderCollector.h"
+#include "Animation/Skinning.h"
 #include "Core/DebugFlags.h"
 #include "Graphics/Model.h"
 #include "Graphics/Octree.h"
@@ -22,7 +23,13 @@ void SceneRenderCollector::Collect(std::span<const std::shared_ptr<GameObject>> 
 void SceneRenderCollector::Collect(const GameObject &object, const Frustum &frustum, const DebugFlags &flags,
                                    RenderQueue &queue)
 {
-    if (object.GetModel() && frustum.IsAABBInFrustum(object.GetWorldAABB()))
+    if (const auto *skinned = object.GetSkinnedMesh())
+    {
+        // Model의 정적 AABB·Octree는 바인드 포즈 기준이라 쓰지 않는다.
+        if (skinned->GetWorldAABB().IsValid() && frustum.IsAABBInFrustum(skinned->GetWorldAABB()))
+            collectSkinnedMeshes(*skinned, flags, queue);
+    }
+    else if (object.GetModel() && frustum.IsAABBInFrustum(object.GetWorldAABB()))
         collectOwnMeshes(object, frustum, flags, queue);
 
     // 부모 AABB는 자식 전체를 포함하지 않는다. 부모가 보이지 않아도 자식은 검사한다.
@@ -62,6 +69,37 @@ void SceneRenderCollector::collectOwnMeshes(const GameObject &object, const Frus
     for (std::size_t i = 0; i < meshCount; ++i)
         for (auto &command : m_batches[i].debugCommands)
             queue.Submit(std::move(command));
+}
+
+void SceneRenderCollector::collectSkinnedMeshes(const sr::anim::SkinnedMesh &skinned, const DebugFlags &flags,
+                                                RenderQueue &queue)
+{
+    const ERasterizeMode rasterizeMode = flags.bShowWireframe ? ERasterizeMode::Wireframe : ERasterizeMode::Fill;
+    const SRMath::mat4 identity = SRMath::mat4::identity();
+    const auto primitives = skinned.GetPrimitives();
+    for (const auto &primitive : primitives)
+        queue.Submit(MeshRenderCommand{.sourceMesh = &primitive.deformed,
+                                       .indicesToDraw = primitive.source->indices,
+                                       .worldTransform = identity,
+                                       .material = &primitive.source->material,
+                                       .rasterizeMode = rasterizeMode});
+    for (const auto &primitive : primitives)
+    {
+        if (flags.bShowAABB && primitive.worldBounds.IsValid())
+            queue.Submit(sr::debug::MakeAABBGizmo(primitive.worldBounds));
+        if (flags.bShowNormal)
+        {
+            auto normalLines = queue.AcquireDebugVertices();
+            normalLines.clear();
+            normalLines.reserve(primitive.deformed.vertices.size() * 2);
+            sr::debug::AppendNormalLines(normalLines, primitive.deformed.vertices, identity, identity);
+            if (!normalLines.empty())
+                queue.Submit(DebugPrimitiveCommand{.vertices = std::move(normalLines),
+                                                   .worldTransform = identity,
+                                                   .type = DebugPrimitiveType::Line,
+                                                   .depthPolicy = DebugDepthPolicy::DepthTested});
+        }
+    }
 }
 
 void SceneRenderCollector::collectMeshCommands(const GameObject &object, const Mesh &mesh,

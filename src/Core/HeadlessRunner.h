@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <filesystem>
@@ -44,6 +45,10 @@ struct RunConfig
     // 0보다 크면 측정 중 이 프레임 간격마다 teapot.obj를 백그라운드로 로드한다. 결과는 장면에 넣지 않고
     // 버리므로 픽셀은 같다. 로딩이 렌더 프레임 시간(p95)을 얼마나 흔드는지 재는 용도다.
     int backgroundLoadInterval = 0;
+    // 비어 있으면 DemoScene. .gltf/.glb 경로면 그 장면만 넣고(경계에 카메라를 맞춤) 애니메이션 clip을 재생한다.
+    // 스키닝·키프레임 비용을 재는 용도다. 데모 장면 벤치 수치와 섞지 않는다.
+    std::filesystem::path scenePath;
+    int clip = 0;
 };
 
 struct FrameTimings
@@ -51,6 +56,9 @@ struct FrameTimings
     // 한 프레임 = 장면 갱신 + 타깃 Clear + RenderScene. 화면 표시(GDI)는 포함하지 않는다.
     double meanMs = 0, medianMs = 0, p95Ms = 0, minMs = 0, maxMs = 0;
     double updateMeanMs = 0, renderMeanMs = 0;
+    // glTF 장면일 때: 포즈 적용 + 계층 transform + 스키닝 한 번의 평균. 측정 프레임이 끝난 뒤 같은 횟수를 따로
+    // 재므로 위 프레임 시간에는 영향이 없다(프레임 시간의 update에는 이미 포함되어 있다).
+    double animationMeanMs = 0;
 };
 
 struct RunResult
@@ -62,6 +70,10 @@ struct RunResult
     int threads = 0;            // 실제 사용한 최대 병렬 수
     int backgroundLoadsSubmitted = 0;
     int backgroundLoadsApplied = 0; // 측정이 끝나기 전에 프레임 시작 훅까지 돌아온 로드 수
+    // glTF 장면일 때: 스킨 정점 수, 관절 수, 재생한 clip 이름
+    std::size_t skinnedVertices = 0;
+    std::size_t skinJoints = 0;
+    std::string clipName;
 };
 
 [[nodiscard]] std::expected<RunResult, std::string> Run(const RunConfig &config);

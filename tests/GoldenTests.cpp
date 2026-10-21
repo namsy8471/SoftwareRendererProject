@@ -26,6 +26,8 @@ struct GoldenCase
     const char *name;
     sr::headless::ViewMode mode;
     bool hiddenWire;
+    // 비어 있지 않으면 데모 대신 이 glTF 장면(저장소 루트 기준)과 첫 클립을 그린다.
+    const char *scene = "";
 };
 
 constexpr std::array goldenCases{
@@ -35,6 +37,9 @@ constexpr std::array goldenCases{
     GoldenCase{"normal", sr::headless::ViewMode::Normal, false},
     GoldenCase{"aabb", sr::headless::ViewMode::AABB, false},
     GoldenCase{"fxaa", sr::headless::ViewMode::FXAA, false},
+    // 스킨 메시: 30프레임(0.5초) 뒤 Bend 관절이 45도 휜 원통. 법선 모드는 변형된 법선 선까지 본다.
+    GoldenCase{"anim", sr::headless::ViewMode::Fill, false, "tests/fixtures/gltf/skinned-tube.glb"},
+    GoldenCase{"anim-normal", sr::headless::ViewMode::Normal, false, "tests/fixtures/gltf/skinned-tube.glb"},
 };
 
 void runGolden(const GoldenCase &golden, const TestContext &context)
@@ -47,6 +52,8 @@ void runGolden(const GoldenCase &golden, const TestContext &context)
     config.measuredFrames = 1;
     config.mode = golden.mode;
     config.options.hiddenWireframe = golden.hiddenWire;
+    if (*golden.scene != '\0')
+        config.scenePath = context.root / golden.scene;
     const auto result = sr::headless::Run(config);
     check(result.has_value(), result ? "" : "headless run failed: " + result.error());
 

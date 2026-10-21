@@ -11,11 +11,17 @@ class GameObject;
 class RenderQueue;
 struct DebugFlags;
 struct Mesh;
+namespace sr::anim
+{
+class SkinnedMesh;
+}
 
 // 장면 → RenderQueue 변환을 한곳에 모은다. Scene/Graphics는 렌더 명령과 DebugFlags를 모르고,
 // 이 클래스만 가시성 결과(GameObject AABB, Octree 노드)를 MeshRenderCommand와 디버그 선으로 바꾼다.
 // 명령 순서: 루트 순서 → 객체 전위(자기 → 자식) → 메시 순서 → 옥트리 전위. 디버그 명령은 객체마다
 // 메시 명령 뒤에 붙는다. worker 수와 관계없이 순서가 같아 pixel_hash가 결정적이다.
+// 스킨 메시는 Octree 대신 이번 프레임 변형 정점의 AABB로 통째 컬링하고, primitive마다 전체 인덱스를 그리는
+// 명령 하나(world = 단위 행렬, 정점은 SkinnedMesh의 월드 공간 버퍼)를 낸다.
 class SceneRenderCollector
 {
   public:
@@ -37,6 +43,8 @@ class SceneRenderCollector
 
     void collectOwnMeshes(const GameObject &object, const Frustum &frustum, const DebugFlags &flags,
                           RenderQueue &queue);
+    static void collectSkinnedMeshes(const sr::anim::SkinnedMesh &skinned, const DebugFlags &flags,
+                                     RenderQueue &queue);
     static void collectMeshCommands(const GameObject &object, const Mesh &mesh, const Frustum &frustum,
                                     const DebugFlags &flags, MeshCommandBatch &batch);
 };
