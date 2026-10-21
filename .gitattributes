@@ -8,3 +8,7 @@
 # 대용량 Wavefront 모델은 자동 줄바꿈 변환과 거대한 텍스트 diff를 피하고
 # 원본 바이트를 그대로 보존한다. 런타임 로더는 파일 내용을 텍스트로 파싱한다.
 /assets/**/*.obj binary
+
+# glTF 테스트 표본의 바이너리 버퍼(GltfTests.cpp가 바이트 단위로 읽는다)
+*.glb binary
+/tests/fixtures/gltf/*.bin binary

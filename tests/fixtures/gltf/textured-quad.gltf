@@ -1,0 +1,154 @@
+{
+  "asset": {
+    "version": "2.0",
+    "generator": "SoftwareRenderer test fixtures"
+  },
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteOffset": 0,
+      "byteLength": 48
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 48,
+      "byteLength": 48
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 96,
+      "byteLength": 32
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 128,
+      "byteLength": 12
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 140,
+      "byteLength": 4
+    }
+  ],
+  "accessors": [
+    {
+      "bufferView": 0,
+      "componentType": 5126,
+      "count": 4,
+      "type": "VEC3",
+      "min": [
+        -1,
+        -1,
+        0
+      ],
+      "max": [
+        1,
+        1,
+        0
+      ]
+    },
+    {
+      "bufferView": 1,
+      "componentType": 5126,
+      "count": 4,
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 2,
+      "componentType": 5126,
+      "count": 4,
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 3,
+      "componentType": 5123,
+      "count": 6,
+      "type": "SCALAR"
+    },
+    {
+      "bufferView": 4,
+      "componentType": 5123,
+      "count": 2,
+      "type": "SCALAR"
+    }
+  ],
+  "scene": 0,
+  "scenes": [
+    {
+      "name": "Quad scene",
+      "nodes": [
+        0
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "name": "Quad",
+      "mesh": 0
+    }
+  ],
+  "meshes": [
+    {
+      "name": "Quad",
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 0,
+            "NORMAL": 1,
+            "TEXCOORD_0": 2
+          },
+          "indices": 3,
+          "material": 0
+        },
+        {
+          "attributes": {
+            "POSITION": 0
+          },
+          "indices": 4,
+          "mode": 1
+        }
+      ]
+    }
+  ],
+  "materials": [
+    {
+      "name": "Checker",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          1.0,
+          0.5,
+          0.25,
+          1.0
+        ],
+        "baseColorTexture": {
+          "index": 0
+        },
+        "metallicFactor": 0.0,
+        "roughnessFactor": 0.5
+      }
+    }
+  ],
+  "textures": [
+    {
+      "source": 0,
+      "sampler": 0
+    }
+  ],
+  "samplers": [
+    {
+      "magFilter": 9728,
+      "minFilter": 9728
+    }
+  ],
+  "images": [
+    {
+      "uri": "checker.png"
+    }
+  ],
+  "buffers": [
+    {
+      "uri": "textured-quad.bin",
+      "byteLength": 144
+    }
+  ]
+}

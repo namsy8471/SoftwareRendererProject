@@ -78,6 +78,7 @@ tools/dev.sh render wire out.png
 | `src/Core/HeadlessRunner.*`, `tools/srcli/` | 창 없는 실행·측정·PNG |
 | `src/App/Win32App.*`, `src/Platform/` | Win32 창·메뉴·입력·GDI 표시 (Windows 전용, CMake 빌드에서 빠짐) |
 | `src/IO/` | 자체 JSON(`Json.*`), 백그라운드 로드 큐(`BackgroundLoader.*`: 작업 스레드 파싱 → 프레임 시작 훅에서 적용), 파일 읽기·원자적 쓰기 |
+| `src/IO/Gltf.*`, `src/Graphics/GltfLoader.*` | 자체 glTF 2.0 로더. `Gltf`는 .gltf/.glb 문서 파싱·범위 검증·accessor 읽기, `GltfLoader`는 node 계층 → GameObject 트리, primitive → Mesh, baseColor → Phong 재질, skin/animation 데이터(아직 화면에 반영 안 함). 표본은 `tests/fixtures/gltf/generate.py` |
 | `src/Math/` | SRMath(SSE), `SIMD_AVX.cpp`만 AVX로 컴파일 |
 | `tests/` | `TestMain.cpp` 실행기, 영역별 `*Tests.cpp`, `golden/`, `fixtures/` |
 

@@ -98,4 +98,11 @@
     <ClInclude Include="src\IO\BackgroundLoader.h" />
     <ClInclude Include="src\IO\FileIO.h" />
   </ItemGroup>
+  <!-- 자체 glTF 2.0 로더: 문서 파서(IO)와 장면 변환(Graphics) -->
+  <ItemGroup>
+    <ClCompile Include="src\IO\Gltf.cpp" />
+    <ClCompile Include="src\Graphics\GltfLoader.cpp" />
+    <ClInclude Include="src\IO\Gltf.h" />
+    <ClInclude Include="src\Graphics\GltfLoader.h" />
+  </ItemGroup>
 </Project>

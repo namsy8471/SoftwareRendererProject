@@ -46,6 +46,7 @@
     <ClCompile Include="tests\RenderTargetTests.cpp" />
     <ClCompile Include="tests\GoldenTests.cpp" />
     <ClCompile Include="tests\IOTests.cpp" />
+    <ClCompile Include="tests\GltfTests.cpp" />
     <ClCompile Include="tests\Win32AppTests.cpp" />
     <ClInclude Include="tests\TestHarness.h" />
     <ClInclude Include="tests\TestSupport.h" />
