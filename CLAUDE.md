@@ -39,7 +39,8 @@ tools/dev.sh render wire out.png
 ```
 
 `srcli` 옵션: `--size WxH --frames N --warmup N --mode fill|wire|normal|aabb|fxaa --opt none|sort|hiz|both
---hidden-wire --dda --stats --threads N --target-fps F --require-target --json --out file.png`.
+--hidden-wire --dda --stats --threads N --load-every N --target-fps F --require-target --json --out file.png`.
+`--load-every N`은 측정 중 N프레임마다 teapot.obj를 백그라운드로 로드한다(결과는 버려 픽셀 동일). 로딩이 p95를 흔드는지 볼 때 쓴다.
 `--stats`는 패스별 시간(`prepare/bin/raster/line/post_ms`)과 카운터를 JSON에 넣지만 측정을 느리게 하므로 최종 수치에는 쓰지 않는다.
 
 ## 최적화 작업 흐름
@@ -76,6 +77,7 @@ tools/dev.sh render wire out.png
 | `src/Core/DemoScene.*` | 벤치·골든 전용 고정 장면(`sr::demo::LoadScene` 모델 표, `FitCameraToScene`) |
 | `src/Core/HeadlessRunner.*`, `tools/srcli/` | 창 없는 실행·측정·PNG |
 | `src/App/Win32App.*`, `src/Platform/` | Win32 창·메뉴·입력·GDI 표시 (Windows 전용, CMake 빌드에서 빠짐) |
+| `src/IO/` | 자체 JSON(`Json.*`), 백그라운드 로드 큐(`BackgroundLoader.*`: 작업 스레드 파싱 → 프레임 시작 훅에서 적용), 파일 읽기·원자적 쓰기 |
 | `src/Math/` | SRMath(SSE), `SIMD_AVX.cpp`만 AVX로 컴파일 |
 | `tests/` | `TestMain.cpp` 실행기, 영역별 `*Tests.cpp`, `golden/`, `fixtures/` |
 
