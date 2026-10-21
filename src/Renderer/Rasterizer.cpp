@@ -177,7 +177,8 @@ std::optional<PreparedTriangle> Rasterizer::Prepare(const ShadedVertex &a, const
                          ToRasterizerVertex(c, width, height), width, height, primitiveId, command);
 }
 
-std::optional<PreparedTriangle> Rasterizer::PrepareRaster(const RasterizerVertex &a, const RasterizerVertex &b,
+std::optional<PreparedTriangle> Rasterizer::PrepareRaster(const RasterizerVertex &a,
+                                                          const RasterizerVertex &b,
                                                           const RasterizerVertex &c, int width, int height,
                                                           std::uint64_t primitiveId,
                                                           const MeshRenderCommand *command)
@@ -357,14 +358,23 @@ template <bool Instrumented, RasterPass Pass> void Rasterizer::DrawTriangleImpl(
                               std::abs(static_cast<double>(dy)) * (x1 - x0 + 1.);
         return budget < 0x1p62;
     };
-    if (!safeEdge(r0, t.dx12Fixed, t.dy12Fixed) || !safeEdge(r1, t.dx20Fixed, t.dy20Fixed) ||
-        !safeEdge(r2, t.dx01Fixed, t.dy01Fixed))
+    // 보통은 모든 값이 2^56 미만이고 bbox가 작아 budget이 63 * 2^56 < 2^62로 막힌다.
+    // 이때는 double 9번 곱셈/덧셈 없이 정수 OR 한 번으로 같은 판정(통과)을 낸다.
+    // toFixed가 |값| < 2^60을 보장하므로 부호 반전은 넘치지 않는다.
+    const auto magnitude = [](std::int64_t v) { return static_cast<std::uint64_t>(v < 0 ? -v : v); };
+    const bool smallEdges = (magnitude(r0) | magnitude(r1) | magnitude(r2) | magnitude(t.dx12Fixed) |
+                             magnitude(t.dy12Fixed) | magnitude(t.dx20Fixed) | magnitude(t.dy20Fixed) |
+                             magnitude(t.dx01Fixed) | magnitude(t.dy01Fixed)) < (std::uint64_t{1} << 56) &&
+                            (x1 - x0) + (y1 - y0) < 60;
+    if (!smallEdges && (!safeEdge(r0, t.dx12Fixed, t.dy12Fixed) || !safeEdge(r1, t.dx20Fixed, t.dy20Fixed) ||
+                        !safeEdge(r2, t.dx01Fixed, t.dy01Fixed)))
         return;
     auto depth = m_target.Depth();
     auto ids = m_target.PrimitiveIds();
     auto surface = m_target.Surface();
     // edge 값이 이미 덮였다고 판정된 픽셀 하나를 처리한다. float 연산 순서는 기존과 같다.
-    const auto shadePixel = [&](int x, int y, std::int64_t w0, std::int64_t w1, std::int64_t w2) SR_FORCEINLINE_LAMBDA
+    const auto shadePixel = [&](int x, int y, std::int64_t w0, std::int64_t w1, std::int64_t w2)
+                                SR_FORCEINLINE_LAMBDA
     {
         const float f0 = static_cast<float>(w0) / 256.f;
         const float f1 = static_cast<float>(w1) / 256.f;
@@ -381,10 +391,9 @@ template <bool Instrumented, RasterPass Pass> void Rasterizer::DrawTriangleImpl(
             q += t.rv2.oneOverW * c;
             const auto index = static_cast<std::size_t>(y) * m_target.Width() + x;
             const bool finite = std::isfinite(q) && q > 0.f;
-            const bool visible =
-                Pass == RasterPass::ShadeVisible
-                    ? ids[index] == t.primitiveId && depth[index] == q
-                    : q > depth[index] || (q == depth[index] && t.primitiveId < ids[index]);
+            const bool visible = Pass == RasterPass::ShadeVisible
+                                     ? ids[index] == t.primitiveId && depth[index] == q
+                                     : q > depth[index] || (q == depth[index] && t.primitiveId < ids[index]);
             if (finite && visible)
             {
                 if constexpr (Pass != RasterPass::ShadeVisible)

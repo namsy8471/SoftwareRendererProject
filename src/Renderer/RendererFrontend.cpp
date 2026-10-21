@@ -40,7 +40,6 @@ void Renderer::WorkerScratch::BeginCommand(std::size_t vertexCount)
     if (++commandStamp == 0)
     {
         std::ranges::fill(vertexStamps, 0);
-        std::ranges::fill(setupStamps, 0);
         commandStamp = 1;
     }
     // 두 resize 사이에 할당 실패가 나도 다음 호출에서 각각 부족한 저장소를
@@ -51,8 +50,6 @@ void Renderer::WorkerScratch::BeginCommand(std::size_t vertexCount)
         vertexStamps.resize(vertexCount, 0);
     if (vertexSetups.size() < vertexCount)
         vertexSetups.resize(vertexCount);
-    if (setupStamps.size() < vertexCount)
-        setupStamps.resize(vertexCount, 0);
 }
 bool Renderer::WorkerScratch::BeginCachedCommand(const MeshRenderCommand &command,
                                                  const SRMath::mat4 &viewProjection)
@@ -74,9 +71,8 @@ bool Renderer::WorkerScratch::BeginCachedCommand(const MeshRenderCommand &comman
             key.worldBits[index] = std::bit_cast<std::uint32_t>(command.worldTransform.cols[column][row]);
             key.viewProjectionBits[index] = std::bit_cast<std::uint32_t>(viewProjection.cols[column][row]);
         }
-    if (transformCacheValid && transformCacheKey == key &&
-        shadedVertices.size() >= key.vertexCount && vertexStamps.size() >= key.vertexCount &&
-        vertexSetups.size() >= key.vertexCount && setupStamps.size() >= key.vertexCount)
+    if (transformCacheValid && transformCacheKey == key && shadedVertices.size() >= key.vertexCount &&
+        vertexStamps.size() >= key.vertexCount && vertexSetups.size() >= key.vertexCount)
         return true;
 
     // Octree의 index 부분집합과 material은 정점 변환에 영향을 주지 않는다.
@@ -105,45 +101,31 @@ ShadedVertex Renderer::shadeVertex(const Vertex &vertex, const SRMath::mat4 &wor
     result.texcoord = vertex.texcoord;
     return result;
 }
-const ShadedVertex &Renderer::cachedVertex(unsigned int index, const MeshRenderCommand &command,
-                                           const SRMath::mat4 &modelViewProjection,
-                                           const SRMath::mat4 &normalMatrix, WorkerScratch &scratch)
+void Renderer::fillVertex(unsigned int index, const MeshRenderCommand &command,
+                          const SRMath::mat4 &modelViewProjection, const SRMath::mat4 &normalMatrix,
+                          WorkerScratch &scratch, int width, int height)
 {
-    if (scratch.vertexStamps[index] != scratch.commandStamp)
+    auto &vertex = scratch.shadedVertices[index];
+    if (command.rasterizeMode == ERasterizeMode::Wireframe)
     {
-        if (command.rasterizeMode == ERasterizeMode::Wireframe)
-        {
-            // X-ray/숨은 선 모두 clip 좌표와 1/w만 사용한다. 법선 디버그는
-            // 별도 명령이므로 world/normal/UV 변환을 여기서 반복하지 않는다.
-            // mode도 캐시 키에 포함해 Fill과 섞이지 않으며 미사용 속성은 0이다.
-            ShadedVertex vertex{};
-            vertex.posClip =
-                modelViewProjection * SRMath::vec4(command.sourceMesh->vertices[index].position, 1.0f);
-            scratch.shadedVertices[index] = vertex;
-        }
-        else
-            scratch.shadedVertices[index] =
-                shadeVertex(command.sourceMesh->vertices[index], command.worldTransform, modelViewProjection,
-                            normalMatrix);
-        scratch.vertexStamps[index] = scratch.commandStamp;
+        // X-ray/숨은 선 모두 clip 좌표와 1/w만 사용한다. 법선 디버그는
+        // 별도 명령이므로 world/normal/UV 변환을 여기서 반복하지 않는다.
+        // mode도 캐시 키에 포함해 Fill과 섞이지 않으며 미사용 속성은 0이다.
+        ShadedVertex wire{};
+        wire.posClip = modelViewProjection * SRMath::vec4(command.sourceMesh->vertices[index].position, 1.0f);
+        vertex = wire;
     }
-    return scratch.shadedVertices[index];
-}
-const Renderer::WorkerScratch::VertexSetup &Renderer::vertexSetup(unsigned int index, const ShadedVertex &vertex,
-                                                                  WorkerScratch &scratch) const
-{
+    else
+        vertex = shadeVertex(command.sourceMesh->vertices[index], command.worldTransform, modelViewProjection,
+                             normalMatrix);
+    // processCommand와 Rasterizer::Prepare가 꼭짓점마다 하던 계산을 같은 식 그대로 옮겼다.
     auto &setup = scratch.vertexSetups[index];
-    if (scratch.setupStamps[index] != scratch.commandStamp)
-    {
-        // processCommand와 Rasterizer::Prepare가 꼭짓점마다 하던 계산을 같은 식 그대로 옮겼다.
-        setup.finiteClip = std::isfinite(vertex.posClip.x) && std::isfinite(vertex.posClip.y) &&
-                           std::isfinite(vertex.posClip.z) && std::isfinite(vertex.posClip.w);
-        setup.outcode = computeOutcode(vertex.posClip);
-        setup.ndc = SRMath::vec3(vertex.posClip) / vertex.posClip.w;
-        setup.raster = Rasterizer::ToRasterizerVertex(vertex, m_width, m_height);
-        scratch.setupStamps[index] = scratch.commandStamp;
-    }
-    return setup;
+    setup.finiteClip = std::isfinite(vertex.posClip.x) && std::isfinite(vertex.posClip.y) &&
+                       std::isfinite(vertex.posClip.z) && std::isfinite(vertex.posClip.w);
+    setup.outcode = computeOutcode(vertex.posClip);
+    setup.ndc = SRMath::vec3(vertex.posClip) / vertex.posClip.w;
+    setup.raster = Rasterizer::ToRasterizerVertex(vertex, width, height);
+    scratch.vertexStamps[index] = scratch.commandStamp;
 }
 void Renderer::prepareFrame()
 {
@@ -211,12 +193,12 @@ void Renderer::processCommand(const MeshRenderCommand &cmd, const FrameContext &
         if (i0 >= mesh->vertices.size() || i1 >= mesh->vertices.size() || i2 >= mesh->vertices.size())
             continue;
 
-        const auto &sv0 = cachedVertex(i0, cmd, mvp, inverseTransposeWorld, scratch);
-        const auto &sv1 = cachedVertex(i1, cmd, mvp, inverseTransposeWorld, scratch);
-        const auto &sv2 = cachedVertex(i2, cmd, mvp, inverseTransposeWorld, scratch);
-        const auto &setup0 = vertexSetup(i0, sv0, scratch);
-        const auto &setup1 = vertexSetup(i1, sv1, scratch);
-        const auto &setup2 = vertexSetup(i2, sv2, scratch);
+        const auto &sv0 = cachedVertex(i0, cmd, mvp, inverseTransposeWorld, scratch, m_width, m_height);
+        const auto &sv1 = cachedVertex(i1, cmd, mvp, inverseTransposeWorld, scratch, m_width, m_height);
+        const auto &sv2 = cachedVertex(i2, cmd, mvp, inverseTransposeWorld, scratch, m_width, m_height);
+        const auto &setup0 = scratch.vertexSetups[i0];
+        const auto &setup1 = scratch.vertexSetups[i1];
+        const auto &setup2 = scratch.vertexSetups[i2];
 
         const auto finiteClip = [](const SRMath::vec4 &clip)
         {
@@ -290,8 +272,8 @@ void Renderer::binTriangle(const MeshRenderCommand &cmd, const ShadedVertex &v0,
     if (prepared)
         binPrepared(cmd, *prepared, frame, scratch);
 }
-void Renderer::binPrepared(const MeshRenderCommand &cmd, const PreparedTriangle &prepared, const FrameContext &frame,
-                           WorkerScratch &scratch)
+void Renderer::binPrepared(const MeshRenderCommand &cmd, const PreparedTriangle &prepared,
+                           const FrameContext &frame, WorkerScratch &scratch)
 {
     // 숨은 선 모드에서는 같은 준비 결과를 depth-only 면 패스에도 전달한다. 병렬로
     // 늘어나는 concurrent_vector는 기존 요소를 옮기지 않아 bin 포인터가 유효하다.

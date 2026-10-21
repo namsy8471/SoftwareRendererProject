@@ -171,7 +171,8 @@ struct RendererTestAccess
                               v.posClip.y,     v.posClip.z,     v.posClip.w,  v.normalWorld.x,
                               v.normalWorld.y, v.normalWorld.z, v.texcoord.x, v.texcoord.y};
         };
-        const auto verify = [&](auto &scratch, const MeshRenderCommand &cmd, const SRMath::mat4 &vp)
+        const auto verify =
+            [&](auto &scratch, const MeshRenderCommand &cmd, const SRMath::mat4 &vp, int size = 64)
         {
             const auto mvp = vp * cmd.worldTransform;
             const auto normal = cmd.rasterizeMode == ERasterizeMode::Fill
@@ -192,11 +193,20 @@ struct RendererTestAccess
                     expected.posClip = mvp * SRMath::vec4(cmd.sourceMesh->vertices[i].position, 1.f);
                 const auto &actual =
                     Renderer::cachedVertex(static_cast<unsigned int>(i), cmd, scratch.modelViewProjection,
-                                           scratch.normalMatrix, scratch);
+                                           scratch.normalMatrix, scratch, size, size);
                 check(std::ranges::equal(vertexComponents(actual), vertexComponents(expected), sameFloat),
                       "reused vertex cache is bitwise equal to direct shading");
                 check(scratch.vertexStamps[i] == scratch.commandStamp,
                       "cache slot carries current transform stamp");
+                // 같은 stamp로 setup도 함께 채워진다. 직접 계산과 비트까지 같아야 한다.
+                const auto &setup = scratch.vertexSetups[i];
+                const auto raster = Rasterizer::ToRasterizerVertex(expected, size, size);
+                check(setup.outcode == Renderer::computeOutcode(expected.posClip) &&
+                          sameFloat(setup.raster.screenPos.x, raster.screenPos.x) &&
+                          sameFloat(setup.raster.screenPos.y, raster.screenPos.y) &&
+                          sameFloat(setup.raster.oneOverW, raster.oneOverW) &&
+                          sameFloat(setup.ndc.x, (SRMath::vec3(expected.posClip) / expected.posClip.w).x),
+                      "cached vertex setup matches direct clip/raster setup");
             }
         };
         Renderer::WorkerScratch scratch, independent;
@@ -214,7 +224,8 @@ struct RendererTestAccess
         const auto saved = scratch.shadedVertices[0];
         scratch.shadedVertices[0].texcoord.x = .9375f;
         check(scratch.BeginCachedCommand(command, identity), "same transform key really hits");
-        check(Renderer::cachedVertex(0, command, scratch.modelViewProjection, scratch.normalMatrix, scratch)
+        check(Renderer::cachedVertex(0, command, scratch.modelViewProjection, scratch.normalMatrix, scratch,
+                                     64, 64)
                       .texcoord.x == .9375f,
               "cache hit does not recompute an already stamped vertex");
         scratch.shadedVertices[0] = saved;
@@ -331,7 +342,7 @@ struct RendererTestAccess
         renderer.processCommand(secondCommand, frame, actualWorker, 1);
         check(actualWorker.commandStamp == stamp && actualWorker.vertexStamps[3] == stamp,
               "processCommand reuses transform cache and lazily shades newly referenced vertices");
-        verify(actualWorker, command, identity);
+        verify(actualWorker, command, identity, 32); // renderer 뷰포트 크기로 채운 setup이다.
         check(actualWorker.triangles.size() == 2 &&
                   actualWorker.triangles[0].sourceCommand == &firstCommand &&
                   actualWorker.triangles[1].sourceCommand == &secondCommand &&
