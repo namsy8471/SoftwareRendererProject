@@ -16,11 +16,13 @@ void GameObject::Update(float deltaTime, bool isRotate)
 {
     UpdateTransform(deltaTime, isRotate);
 
+    // 데모 자동 회전은 이 물체에만 준다. 자식은 부모 행렬을 따라 함께 돌므로 자기 회전까지 더하면
+    // 계층 모델(glTF)의 관절이 제각각 돌아간다.
     for (const auto &child : m_children)
     {
         if (child)
         {
-            child->Update(deltaTime, isRotate);
+            child->Update(deltaTime, false);
         }
     }
 }

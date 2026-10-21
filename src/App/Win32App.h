@@ -15,6 +15,8 @@
 #include "Utils/AssetLoadError.h"
 
 class Model;
+class GameObject;
+struct AABB;
 
 // Win32 창·메뉴·입력·GDI 표시만 담당한다. 장면 갱신과 렌더 순서는 FrameRunner가,
 // 장면 구성은 DemoScene이 맡아 headless srcli와 같은 프레임을 그린다.
@@ -77,7 +79,8 @@ class Win32App
     void showPendingAssetErrors();
     // 드롭·열기 대화상자 공통 진입점. 파싱은 m_loader 작업 스레드, 장면 추가는 프레임 시작 훅에서 한다.
     void loadModelAsync(std::filesystem::path path);
-    void placeLoadedModel(std::unique_ptr<Model> model);
+    // 경계 상자 중심이 카메라 앞에 오고 가장 긴 변이 일정한 크기가 되도록 object의 위치·크기를 정해 장면에 넣는다.
+    void placeLoadedObject(std::shared_ptr<GameObject> object, const AABB &bounds);
     void showOpenModelDialog();
     void handleDroppedFiles(WPARAM dropHandle); // WM_DROPFILES의 HDROP
 };

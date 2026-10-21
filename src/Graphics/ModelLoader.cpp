@@ -446,8 +446,13 @@ std::expected<std::unique_ptr<Model>, AssetLoadError> ModelLoader::LoadOBJ(
     if (!meshes)
         return std::unexpected(meshes.error());
 
+    return FromMeshes(std::move(*meshes));
+}
+
+std::unique_ptr<Model> ModelLoader::FromMeshes(std::vector<Mesh> meshes)
+{
     auto model = std::make_unique<Model>();
-    model->m_meshes = std::move(*meshes);
+    model->m_meshes = std::move(meshes);
     model->m_localAABB = buildSpatialData(model->m_meshes);
     return model;
 }

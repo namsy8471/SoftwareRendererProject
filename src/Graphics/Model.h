@@ -13,8 +13,7 @@ class Model
 {
     // Loader만 완성된 메시 묶음과 그에 대응하는 모델 AABB를 한 번에 채운다.
     // 공개 쓰기 API를 만들지 않아 로드 이후 Model의 불변식을 보존한다.
-    friend std::expected<std::unique_ptr<Model>, AssetLoadError> ModelLoader::LoadOBJ(
-        const std::filesystem::path &filepath);
+    friend class ModelLoader;
 
   private:
     std::vector<Mesh> m_meshes;

@@ -1,6 +1,7 @@
 #include "App/Win32App.h"
 #include "resource.h"
 #include "Core/DemoScene.h"
+#include "Graphics/GltfLoader.h"
 #include "Graphics/Model.h"
 #include "Graphics/ModelLoader.h"
 #include "Renderer/Renderer.h"
@@ -215,9 +216,32 @@ void Win32App::loadModelAsync(std::filesystem::path path)
     std::wstring extension = path.extension().wstring();
     std::ranges::transform(extension, extension.begin(),
                            [](wchar_t c) { return static_cast<wchar_t>(std::towlower(c)); });
+    if (extension == L".gltf" || extension == L".glb")
+    {
+        using SceneResult = std::expected<sr::gltf::LoadedScene, AssetLoadError>;
+        m_loader.Submit([path](std::stop_token) { return sr::gltf::LoadScene(path); },
+                        [this, path](SceneResult result)
+                        {
+                            if (!result)
+                            {
+                                m_pendingAssetErrors.push_back(std::move(result.error()));
+                                return;
+                            }
+                            // skin·animation 데이터는 5단계(애니메이션)에서 쓴다. 지금은 계층과 메시만 장면에 넣는다.
+                            if (!result->warnings.empty())
+                            {
+                                std::string message = "Loaded with warnings:";
+                                for (const auto &warning : result->warnings)
+                                    message += "\n- " + warning;
+                                m_pendingAssetErrors.push_back({std::move(message), path});
+                            }
+                            placeLoadedObject(std::move(result->root), result->bounds);
+                        });
+        return;
+    }
     if (extension != L".obj")
     {
-        showAssetError({"Unsupported file type (only .obj for now)", path});
+        showAssetError({"Unsupported file type (.obj, .gltf, .glb)", path});
         return;
     }
     using LoadResult = std::expected<std::unique_ptr<Model>, AssetLoadError>;
@@ -225,25 +249,29 @@ void Win32App::loadModelAsync(std::filesystem::path path)
                     [this](LoadResult result)
                     {
                         if (!result)
+                        {
                             m_pendingAssetErrors.push_back(std::move(result.error()));
-                        else
-                            placeLoadedModel(std::move(*result));
+                            return;
+                        }
+                        const AABB bounds = (*result)->GetLocalAABB();
+                        placeLoadedObject(std::make_shared<GameObject>(SRMath::vec3(0.f, 0.f, 0.f),
+                                                                       SRMath::vec3(0.f, 0.f, 0.f),
+                                                                       SRMath::vec3(1.f, 1.f, 1.f),
+                                                                       std::move(*result)),
+                                          bounds);
                     });
 }
 
-void Win32App::placeLoadedModel(std::unique_ptr<Model> model)
+void Win32App::placeLoadedObject(std::shared_ptr<GameObject> object, const AABB &bounds)
 {
     // 모델 원점이 아니라 경계 상자 중심이 카메라 앞에 오도록 위치를 보정한다.
-    const AABB &bounds = model->GetLocalAABB();
-    const SRMath::vec3 extent = bounds.max - bounds.min;
+    const SRMath::vec3 extent = bounds.IsValid() ? bounds.max - bounds.min : SRMath::vec3(0.f, 0.f, 0.f);
     const float longest = std::max({extent.x, extent.y, extent.z});
     const float scale = longest > 0.f ? placementSize / longest : 1.f;
+    const SRMath::vec3 center = bounds.IsValid() ? bounds.Center() : SRMath::vec3(0.f, 0.f, 0.f);
     const Camera &camera = m_runner.GetScene().GetCamera();
-    const SRMath::vec3 position =
-        camera.GetCameraPos() + camera.GetCameraForward() * placementDistance - bounds.Center() * scale;
-
-    auto object = std::make_shared<GameObject>(position, SRMath::vec3(0.f, 0.f, 0.f),
-                                               SRMath::vec3(scale, scale, scale), std::move(model));
+    object->SetPosition(camera.GetCameraPos() + camera.GetCameraForward() * placementDistance - center * scale);
+    object->SetScale(SRMath::vec3(scale, scale, scale));
     if (!m_runner.GetScene().AddObject(std::move(object)))
         m_pendingAssetErrors.push_back({"Failed to add the model to the scene"});
 }
@@ -254,7 +282,9 @@ void Win32App::showOpenModelDialog()
     OPENFILENAMEW dialog{};
     dialog.lStructSize = sizeof(dialog);
     dialog.hwndOwner = m_hWnd;
-    dialog.lpstrFilter = L"Wavefront OBJ (*.obj)\0*.obj\0All files (*.*)\0*.*\0";
+    dialog.lpstrFilter =
+        L"3D models (*.obj;*.gltf;*.glb)\0*.obj;*.gltf;*.glb\0Wavefront OBJ (*.obj)\0*.obj\0"
+        L"glTF 2.0 (*.gltf;*.glb)\0*.gltf;*.glb\0All files (*.*)\0*.*\0";
     dialog.lpstrFile = fileName.data();
     dialog.nMaxFile = static_cast<DWORD>(fileName.size());
     dialog.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR | OFN_EXPLORER;
