@@ -119,6 +119,8 @@ class Renderer
             bool finiteClip = false;
         };
         std::vector<VertexSetup> vertexSetups;
+        // 자명하게 수락된 삼각형을 준비하는 자리. 풀에 넣을 때 한 번만 복사한다.
+        PreparedTriangle stagingTriangle;
         std::uint64_t commandStamp = 0;
         // 한 worker의 현재 프레임에서 마지막으로 처리한 키 하나만 재사용한다.
         // 포인터는 queue와 같은 수명 계약으로 빌리며 프레임 밖으로 재사용하지 않는다.

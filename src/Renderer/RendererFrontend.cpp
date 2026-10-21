@@ -254,10 +254,10 @@ void Renderer::processCommand(const MeshRenderCommand &cmd, const FrameContext &
             if (triviallyAccepted)
             {
                 // 세 정점은 위에서 유한하고 w > 0임을 확인했다(Prepare의 첫 검사와 같다).
-                const auto prepared = Rasterizer::PrepareRaster(setup0.raster, setup1.raster, setup2.raster,
-                                                                m_width, m_height, primitiveId, &cmd);
-                if (prepared)
-                    binPrepared(cmd, *prepared, frame, scratch);
+                auto &staging = scratch.stagingTriangle;
+                if (Rasterizer::PrepareRasterInto(staging, setup0.raster, setup1.raster, setup2.raster,
+                                                  m_width, m_height, primitiveId, &cmd))
+                    binPrepared(cmd, staging, frame, scratch);
             }
             else
                 binTriangle(cmd, a, b, c, frame, scratch, primitiveId);

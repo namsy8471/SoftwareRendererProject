@@ -29,7 +29,9 @@ std::uint32_t packColor(const SRMath::vec3 &c)
 bool toFixed(float input, std::int64_t &result)
 {
     const float scaled = input * 256.f;
-    if (!std::isfinite(scaled) || std::abs(static_cast<double>(scaled)) >= 0x1p60)
+    // 2^60은 float와 double 모두 정확히 표현되므로 float 비교 하나가 기존
+    // "!isfinite || |double| >= 2^60"과 같다. NaN은 비교가 거짓이라 거부되고 inf는 2^60 이상이다.
+    if (!(std::abs(scaled) < 0x1p60f))
         return false;
     result = static_cast<std::int64_t>(scaled);
     return true;
@@ -177,26 +179,24 @@ std::optional<PreparedTriangle> Rasterizer::Prepare(const ShadedVertex &a, const
                          ToRasterizerVertex(c, width, height), width, height, primitiveId, command);
 }
 
-std::optional<PreparedTriangle> Rasterizer::PrepareRaster(const RasterizerVertex &a,
-                                                          const RasterizerVertex &b,
-                                                          const RasterizerVertex &c, int width, int height,
-                                                          std::uint64_t primitiveId,
-                                                          const MeshRenderCommand *command)
+bool Rasterizer::PrepareRasterInto(PreparedTriangle &t, const RasterizerVertex &a, const RasterizerVertex &b,
+                                   const RasterizerVertex &c, int width, int height,
+                                   std::uint64_t primitiveId, const MeshRenderCommand *command)
 {
     if (width <= 0 || height <= 0 || primitiveId == noPrimitive)
-        return std::nullopt;
-    PreparedTriangle t{};
+        return false;
     t.sourceCommand = command;
     t.primitiveId = primitiveId;
     t.rv0 = a;
     t.rv1 = b;
     t.rv2 = c;
     for (const auto *v : {&t.rv0, &t.rv1, &t.rv2})
-        if (!std::isfinite(v->screenPos.x) || !std::isfinite(v->screenPos.y) || !std::isfinite(v->oneOverW) ||
-            !(v->oneOverW > 0.f) ||
-            std::abs(static_cast<double>(v->screenPos.x)) >= std::numeric_limits<int>::max() ||
-            std::abs(static_cast<double>(v->screenPos.y)) >= std::numeric_limits<int>::max())
-            return std::nullopt;
+        // |x| >= INT_MAX(2^31 - 1)는 float에서 |x| >= 2^31과 같다(2^31 바로 아래 float는 2^31 - 128).
+        // 그래서 "!isfinite || |double| >= INT_MAX"를 float 비교 하나로 쓴다. NaN은 비교가 거짓이라 거부된다.
+        // 1/w는 isfinite와 > 0 둘 다 필요하므로 "0 < 1/w < inf"로 같은 판정을 한다.
+        if (!(std::abs(v->screenPos.x) < 0x1p31f) || !(std::abs(v->screenPos.y) < 0x1p31f) ||
+            !(v->oneOverW > 0.f && v->oneOverW < std::numeric_limits<float>::infinity()))
+            return false;
     const auto &p0 = t.rv0.screenPos;
     const auto &p1 = t.rv1.screenPos;
     const auto &p2 = t.rv2.screenPos;
@@ -207,7 +207,7 @@ std::optional<PreparedTriangle> Rasterizer::PrepareRaster(const RasterizerVertex
     t.maxX = std::min(width - 1, static_cast<int>(std::max(p0.x, std::max(p1.x, p2.x))));
     t.maxY = std::min(height - 1, static_cast<int>(std::max(p0.y, std::max(p1.y, p2.y))));
     if (t.minX > t.maxX || t.minY > t.maxY)
-        return std::nullopt;
+        return false;
     t.dx01 = p0.x - p1.x;
     t.dy01 = p0.y - p1.y;
     t.dx12 = p1.x - p2.x;
@@ -216,8 +216,20 @@ std::optional<PreparedTriangle> Rasterizer::PrepareRaster(const RasterizerVertex
     t.dy20 = p2.y - p0.y;
     if (!toFixed(t.dx01, t.dx01Fixed) || !toFixed(t.dy01, t.dy01Fixed) || !toFixed(t.dx12, t.dx12Fixed) ||
         !toFixed(t.dy12, t.dy12Fixed) || !toFixed(t.dx20, t.dx20Fixed) || !toFixed(t.dy20, t.dy20Fixed))
-        return std::nullopt;
+        return false;
     t.maximumInverseW = std::max(t.rv0.oneOverW, std::max(t.rv1.oneOverW, t.rv2.oneOverW));
+    return true;
+}
+
+std::optional<PreparedTriangle> Rasterizer::PrepareRaster(const RasterizerVertex &a,
+                                                          const RasterizerVertex &b,
+                                                          const RasterizerVertex &c, int width, int height,
+                                                          std::uint64_t primitiveId,
+                                                          const MeshRenderCommand *command)
+{
+    PreparedTriangle t;
+    if (!PrepareRasterInto(t, a, b, c, width, height, primitiveId, command))
+        return std::nullopt;
     return t;
 }
 

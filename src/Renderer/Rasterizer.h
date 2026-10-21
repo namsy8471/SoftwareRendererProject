@@ -45,6 +45,11 @@ class Rasterizer
                                                    std::uint64_t primitiveId,
                                                    const MeshRenderCommand *command);
     // Prepare에서 화면 정점 변환 뒤의 부분. 이미 변환한 정점을 받는다(정점 공유 캐시용).
+    // Into는 out에 바로 쓴다(약 370바이트의 0 초기화와 optional 복사를 생략). 성공하면 모든 필드를
+    // 쓰고 true를 반환한다. false면 out의 내용은 정해지지 않는다.
+    static bool PrepareRasterInto(PreparedTriangle &out, const RasterizerVertex &, const RasterizerVertex &,
+                                  const RasterizerVertex &, int width, int height, std::uint64_t primitiveId,
+                                  const MeshRenderCommand *command);
     static std::optional<PreparedTriangle> PrepareRaster(const RasterizerVertex &, const RasterizerVertex &,
                                                          const RasterizerVertex &, int width, int height,
                                                          std::uint64_t primitiveId,
