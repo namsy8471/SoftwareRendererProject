@@ -4,7 +4,7 @@
 # - 모드(fill/wire/normal)마다 별도 VM(job)에서 동시에 돈다. 한 모드의 A/B 쌍은 항상 한 VM 안에서만 잰다.
 # - PR: base = PR 브랜치가 갈라진 지점(merge-base), head = PR의 마지막 커밋. 결과는 job 요약과 PR 댓글(하나를 계속 갱신)에 남는다.
 # - 수동: Actions → Cloud A/B bench → Run workflow 또는
-#     gh workflow run ab-bench.yml --ref <브랜치> -f base=main -f modes=normal -f rounds=12
+#     gh workflow run ab-bench.yml --ref <브랜치> -f base=main -f modes=normal -f rounds=60
 # 절대 기준(p95 <= 9ms)은 여기서 판정하지 않는다. 그것은 PC 벤치(windows.yml bench)의 몫이다.
 name: Cloud A/B bench
 
@@ -35,10 +35,10 @@ on:
         default: fill,wire,normal
       rounds:
         description: 모드마다 base/head 쌍을 몇 번 잴지 (많을수록 감지 한계가 작아진다)
-        default: '10'
+        default: '30'
       frames:
         description: 실행 한 번의 측정 프레임 수
-        default: '600'
+        default: '200'
 
 concurrency:
   group: ab-bench-${{ github.event.pull_request.number || github.ref }}-${{ inputs.base }}-${{ inputs.head }}
@@ -136,7 +136,7 @@ jobs:
           ./tools/ci/AB-Bench.ps1 -Mode ${{ matrix.mode }}
           -Base "$env:RUNNER_TEMP/base/tools/bin/x64/Release/srcli.exe"
           -Head tools/bin/x64/Release/srcli.exe
-          -Rounds ${{ inputs.rounds || '10' }} -Frames ${{ inputs.frames || '600' }}
+          -Rounds ${{ inputs.rounds || '30' }} -Frames ${{ inputs.frames || '200' }}
           -Out ab/${{ matrix.mode }}.jsonl
 
       # 커밋 제목은 PR 작성자가 정하는 문자열이라 명령줄에 직접 넣지 않고 환경 변수로 넘긴다.

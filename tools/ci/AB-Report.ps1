@@ -4,7 +4,7 @@ AB-Bench.ps1이 남긴 jsonl들을 모아 모드별 "head가 base보다 몇 % �
 .DESCRIPTION
 라운드마다 같은 시점에 잰 base·head 한 쌍의 비율(head/base)을 쓴다(짝지은 비교). 이웃 VM 때문에 머신 전체가
 잠깐 느려져도 같은 라운드의 두 값이 함께 느려지므로 비율은 덜 흔들린다.
-- 변화율 = exp(mean(ln(head/base))) - 1, 신뢰구간은 ln 비율에 t 분포를 적용한 95% 구간이다.
+- 변화율 = exp(median(ln(head/base))) - 1. 95% 구간은 중앙값의 분포 무관 구간(부호 검정 순위)이라 튀는 라운드에 강하다.
 - 구간이 0을 포함하면 "구분 불가"다. 구간의 절반 폭이 이번 측정으로 가려낼 수 있는 최소 차이(감지 한계)다.
 - 판정: 화면(pixel_hash)이 같고, mean 또는 p95가 유의하게 2% 이상 줄고, 다른 쪽이 유의하게 늘지 않았으면 "개선".
 - 기본값으로는 실패시키지 않는다. -FailOnRegressionPct N 이면 유의하게 N% 넘게 느려진 모드가 있을 때 실패한다.
@@ -22,16 +22,6 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 
-# 양측 95% t 분포 임계값(자유도 1..30). 그보다 크면 1.96에 가깝다.
-$tTable = @(12.706, 4.303, 3.182, 2.776, 2.571, 2.447, 2.365, 2.306, 2.262, 2.228,
-            2.201, 2.179, 2.160, 2.145, 2.131, 2.120, 2.110, 2.101, 2.093, 2.086,
-            2.080, 2.074, 2.069, 2.064, 2.060, 2.056, 2.052, 2.048, 2.045, 2.042)
-function Get-TCritical([int]$df) {
-    if ($df -lt 1) { return [double]::NaN }
-    if ($df -le $tTable.Count) { return $tTable[$df - 1] }
-    return 1.96
-}
-
 function Get-Median([double[]]$values) {
     $sorted = @($values | Sort-Object)
     $n = $sorted.Count
@@ -39,20 +29,32 @@ function Get-Median([double[]]$values) {
     return ($sorted[$n / 2 - 1] + $sorted[$n / 2]) / 2
 }
 
-# 짝지은 ln 비율의 평균과 95% 구간을 % 변화로 돌려준다.
+# 중앙값의 분포 무관 95% 구간에 쓸 순위 k(1부터): P(Binomial(n, 1/2) < k) <= 0.025인 가장 큰 k.
+# 구간은 정렬한 값의 k번째 ~ (n+1-k)번째다. n < 6이면 95% 구간을 만들 수 없어 최솟값~최댓값을 쓴다.
+function Get-MedianRank([int]$n) {
+    $cdf = 0.0
+    $coef = 1.0
+    $k = 1
+    for ($i = 0; $i -le $n; ++$i) {
+        if ($i -gt 0) { $coef = $coef * ($n - $i + 1) / $i }
+        $cdf += $coef / [math]::Pow(2, $n)
+        if ($cdf -gt 0.025) { break }
+        $k = $i + 1
+    }
+    return [math]::Max(1, $k)
+}
+
+# 짝지은 ln(head/base)의 중앙값과 95% 구간을 % 변화로 돌려준다.
+# 평균 대신 중앙값을 쓰는 이유: 이웃 VM 때문에 한 라운드만 크게 튀는 일이 잦은데, 중앙값은 그런 라운드에 끌려가지 않는다.
 function Get-PairedChange([double[]]$baseValues, [double[]]$headValues) {
-    $logs = for ($i = 0; $i -lt $baseValues.Count; ++$i) { [math]::Log($headValues[$i] / $baseValues[$i]) }
+    $logs = @($(for ($i = 0; $i -lt $baseValues.Count; ++$i) { [math]::Log($headValues[$i] / $baseValues[$i]) }) | Sort-Object)
     $n = $logs.Count
-    $mean = ($logs | Measure-Object -Average).Average
-    $var = 0.0
-    foreach ($x in $logs) { $var += ($x - $mean) * ($x - $mean) }
-    $sd = if ($n -gt 1) { [math]::Sqrt($var / ($n - 1)) } else { [double]::NaN }
-    $half = (Get-TCritical ($n - 1)) * $sd / [math]::Sqrt($n)
+    $k = Get-MedianRank $n
     $pct = { param($v) ([math]::Exp($v) - 1) * 100 }
-    $lo = & $pct ($mean - $half)
-    $hi = & $pct ($mean + $half)
+    $lo = & $pct $logs[$k - 1]
+    $hi = & $pct $logs[$n - $k]
     [pscustomobject]@{
-        pct    = & $pct $mean
+        pct    = & $pct (Get-Median $logs)
         lo     = $lo
         hi     = $hi
         half   = ($hi - $lo) / 2
@@ -130,7 +132,7 @@ foreach ($group in ($rows | Group-Object mode | Sort-Object { $order[$_.Name] })
 }
 
 $md.Add('')
-$md.Add("변화율은 라운드마다 같은 VM에서 번갈아 잰 head/base 비율의 기하평균이다(음수 = 빨라짐). ↓/↑는 95% 구간이 0을 넘지 않는 유의한 변화.")
+$md.Add("변화율은 라운드마다 같은 VM에서 번갈아 잰 head/base 비율의 중앙값이다(음수 = 빨라짐). ↓/↑는 95% 구간이 0을 넘지 않는 유의한 변화.")
 $md.Add("✅ 개선 = 화면 같음 + mean 또는 p95가 유의하게 $AdoptPct% 이상 감소 + 유의한 증가 없음. 감지 한계보다 작은 차이는 이 측정으로 가려낼 수 없다.")
 $md.Add('클라우드 4 vCPU 수치라 절대값(p95 <= 9ms 판정)은 PC 기준을 따른다. 스레드 수에 따라 달라지는 변경은 PC에서 다르게 나올 수 있다.')
 $md.Add('')

@@ -65,7 +65,7 @@ tools/dev.sh render wire out.png
 5. 재측정: 브랜치를 푸시하고 `gh workflow run ab-bench.yml --ref <브랜치>`(PR이 있으면 자동)로 클라우드 A/B 표를 받는다.
    PC로 확인할 때는 `./tests/Bench.ps1 -Runs 3 -Label after-<주제>`.
 6. 채택 조건: A/B 표에서 `pixel_hash`가 같고 판정이 ✅ 개선일 때만 남긴다. ❌ 느려짐이면 되돌린다.
-   ➖ 구분 불가면 `-f rounds=20`으로 다시 재고, 그래도 구분 불가면 PC에서 잰다. 스레드에 민감한 변경은 처음부터 PC A/B로 판단한다.
+   ➖ 구분 불가면 `-f rounds=60`으로 다시 재고, 그래도 구분 불가면 PC에서 잰다. 스레드에 민감한 변경은 처음부터 PC A/B로 판단한다.
 7. 커밋·푸시: 마무리 전 `./tests/RunTests.ps1 -Rebuild`(4개 구성) 통과 후, 커밋 메시지에 모드별 A/B 변화율(95% 구간)과
    pixel_hash 동일 여부를 적고 푸시한다. PC에서 쟀다면 PC 전후 mean/p95(ms)도 적는다.
 

@@ -22,12 +22,13 @@ PC는 절대 기준 벤치만 맡는다. 100fps 판정(p95 <= 9ms)은 이 PC 수
 - 언제 도나: `src/`, `tools/srcli/`, `assets/`, `build/`, `*.vcxproj`를 바꾼 PR마다 자동으로. 문서만 바꾼 PR은 돌지 않는다.
 - 무엇을 비교하나: PR이면 base = 브랜치가 갈라진 지점(merge-base), head = PR 마지막 커밋. 그 브랜치가 만든 변화만 본다.
 - 어떻게 재나: 모드(fill/wire/normal)마다 Windows VM 하나. VM 안에서 base와 head의 `srcli`를 MSVC Release x64로 빌드하고,
-  예열 한 쌍 뒤 10라운드를 base→head, head→base 순서를 번갈아 가며 잰다(`tools/ci/AB-Bench.ps1`, 1920x1080, 600프레임).
+  예열 한 쌍 뒤 30라운드를 base→head, head→base 순서를 번갈아 가며 잰다(`tools/ci/AB-Bench.ps1`, 1920x1080, 실행마다 200프레임).
+  PC 판정(600프레임 × 3회)보다 실행을 짧게, 대신 여러 번 번갈아 재는 이유는 VM 속도가 몇 분 단위로 오르내리기 때문이다.
 - 어떻게 읽나: `tools/ci/AB-Report.ps1`이 라운드별 head/base 비율로 변화율과 95% 구간을 낸다. 음수가 빨라진 것이다.
 
 | 열 | 뜻 |
 | --- | --- |
-| mean/p95 변화 [95% 구간] | 기하평균 변화율. 구간 전체가 0보다 작으면 ↓(유의하게 빨라짐), 크면 ↑ |
+| mean/p95 변화 [95% 구간] | 라운드별 head/base 비율의 중앙값(튀는 라운드에 끌려가지 않는다). 구간은 중앙값의 분포 무관 95% 구간. 구간 전체가 0보다 작으면 ↓(유의하게 빨라짐), 크면 ↑ |
 | 감지 한계 | 구간 절반 폭. 이보다 작은 차이는 이번 측정으로 가려낼 수 없다. `rounds`를 늘리면 줄어든다 |
 | 흔들림 CV | base p95의 라운드 간 변동계수. 크면 이웃 VM 영향이 큰 실행이니 다시 돌려 본다 |
 | pixel_hash | base와 head가 같아야 한다. 다르면 화면이 바뀐 것(성능 변경으로는 불합격) |
@@ -42,13 +43,13 @@ Actions 탭 → **Cloud A/B bench** → **Run workflow**에서 브랜치를 고�
 
 ```powershell
 gh workflow run ab-bench.yml --ref perf/my-change                          # main에서 갈라진 지점 대비, fill/wire/normal
-gh workflow run ab-bench.yml --ref perf/my-change -f modes=normal -f rounds=16
+gh workflow run ab-bench.yml --ref perf/my-change -f modes=normal -f rounds=60
 gh workflow run ab-bench.yml --ref main -f base=<커밋> -f head=<커밋> -f merge_base=false   # 임의의 두 커밋
 gh run watch                                                               # 진행 보기, 끝나면 요약에 표가 나온다
 ```
 
 입력: `base`(기본 main), `head`(비우면 고른 브랜치), `merge_base`(기본 true: base와 head가 갈라진 지점과 비교),
-`modes`(쉼표 구분), `rounds`(기본 10), `frames`(기본 600). 걸리는 시간은 빌드 2회 + 모드당 22회 실행이며 모드들은 동시에 돈다.
+`modes`(쉼표 구분), `rounds`(기본 30), `frames`(기본 200). 걸리는 시간은 빌드 2회 + 모드당 62회 실행(normal 기준 약 15~20분)이며 모드들은 동시에 돈다.
 
 ### 한계 (그래서 PC 벤치가 남는 이유)
 
@@ -56,7 +57,7 @@ gh run watch                                                               # 진
   따라 효과가 달라지는 변경(타일 크기, TBB 분할, 스레드 간 동기화)은 클라우드 결과가 PC로 그대로 옮겨지지 않는다.
   그래서 스레드 수에 민감한 변경은 PC A/B로 판단하고, 덜 민감한 변경(한 스레드 안의 SIMD·분기·메모리 배치 등)은 클라우드 A/B로 판단한다
   (구분 기준은 CLAUDE.md "성능 기준").
-- 이웃 VM 때문에 흔들림이 있다. 대략 3% 아래의 차이는 10라운드로는 "구분 불가"로 나오기 쉽다. 그럴 때는 `rounds`를 늘리거나 PC에서 잰다.
+- 이웃 VM 때문에 흔들림이 있다. 대략 3% 아래의 차이는 기본 라운드 수로는 "구분 불가"로 나오기 쉽다. 그럴 때는 `rounds`를 늘리거나 PC에서 잰다.
 - 실행마다 다른 VM(다른 CPU 모델일 수도 있다)에 배정된다. 서로 다른 실행의 절대 ms끼리는 비교하지 않는다. 비율만 본다.
 - GitHub Free 공개 저장소는 표준 runner job을 동시에 약 20개까지 무료로 쓴다. 더 큰 runner(코어 많은 VM)는 유료다.
 
