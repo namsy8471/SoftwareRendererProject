@@ -17,6 +17,7 @@ param(
     [Parameter(Mandatory)][string[]]$InputPath,
     [string]$SummaryPath = '',
     [string]$CommentPath = '',
+    [string]$ResultPath = '',
     [string]$Title = 'Cloud A/B bench',
     [string]$Context = '',
     [double]$AdoptPct = 2,
@@ -93,6 +94,7 @@ $md.Add('| mode | rounds | base mean / p95 ms | head mean / p95 ms | mean 변화
 $md.Add('|---|---|---|---|---|---|---|---|---|---|')
 
 $regressions = @()
+$results = [System.Collections.Generic.List[object]]::new()
 $machines = @()
 $order = @{ fill = 0; wire = 1; normal = 2; aabb = 3; fxaa = 4 }
 foreach ($group in ($rows | Group-Object mode | Sort-Object { $order[$_.Name] })) {
@@ -101,6 +103,7 @@ foreach ($group in ($rows | Group-Object mode | Sort-Object { $order[$_.Name] })
     if ($same.Count -gt 0) {
         $md.Add(('| {0} | - | - | - | 0 (측정 생략) | 0 (측정 생략) | - | - | 실행 폴더 바이트 동일 `{1}` | ➖ 바이너리 동일 |' -f $mode, $same[0].bundle_sha256.Substring(0, 12)))
         $machines += ('{0}: {1}, {2} logical cores, base·head 빌드 결과가 같아 측정하지 않음' -f $mode, $same[0].cpu, $same[0].logical_cores)
+        $results.Add([pscustomobject]@{ mode = $mode; verdict = 'identical'; rounds = 0 })
         continue
     }
     # 같은 라운드의 base·head만 짝짓는다(한쪽이 빠진 라운드는 버림).
@@ -137,6 +140,13 @@ foreach ($group in ($rows | Group-Object mode | Sort-Object { $order[$_.Name] })
             $mode, $pairs.Count, (Get-Median $bMean), (Get-Median $bP95), (Get-Median $hMean), (Get-Median $hP95),
             (Format-Change $meanChange), (Format-Change $p95Change), $p95Change.half, $cv, $hashText, $verdict))
 
+    $verdictKey = if (-not $sameHash) { 'screen-changed' } elseif ($improved -and $regressed) { 'mixed' } elseif ($improved) { 'improved' }
+                  elseif ($regressed) { 'regressed' } elseif ((& $within $meanChange) -and (& $within $p95Change)) { 'no-difference' } else { 'unknown' }
+    $results.Add([pscustomobject]@{
+            mode = $mode; verdict = $verdictKey; rounds = $pairs.Count; cv = $cv
+            mean_pct = $meanChange.pct; mean_lo = $meanChange.lo; mean_hi = $meanChange.hi; mean_sig = ($meanChange.faster -or $meanChange.slower)
+            p95_pct = $p95Change.pct; p95_lo = $p95Change.lo; p95_hi = $p95Change.hi; p95_sig = ($p95Change.faster -or $p95Change.slower)
+        })
     foreach ($c in @($meanChange, $p95Change)) {
         if ($FailOnRegressionPct -gt 0 -and $c.slower -and $c.pct -ge [math]::Max($FailOnRegressionPct, $AdoptPct)) { $regressions += $mode; break }
     }
@@ -160,6 +170,8 @@ $text = $md -join "`n"
 Write-Output $text
 if ($SummaryPath) { Add-Content -Path $SummaryPath -Value $text -Encoding utf8 }
 if ($CommentPath) { Set-Content -Path $CommentPath -Value $text -Encoding utf8 }
+# 기계가 읽는 모드별 결과(검증 실험 집계용, ab-calibrate.yml).
+if ($ResultPath) { ConvertTo-Json -InputObject @($results) -Depth 3 | Set-Content -Path $ResultPath -Encoding utf8 }
 
 if ($regressions.Count -gt 0) {
     throw ("significant regression > {0}%: {1}" -f $FailOnRegressionPct, ($regressions -join ', '))
