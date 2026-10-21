@@ -15,6 +15,7 @@
 #include <cstring>
 #include <numbers>
 #include <random>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -362,7 +363,8 @@ void sceneSkinnedRendering(const TestContext &context)
     auto animator = sr::anim::Animator::Create(loaded);
     check(animator.has_value(), "animator");
     const auto *skinned = loaded.nodes[0].object->GetSkinnedMesh();
-    check(skinned != nullptr, "Tube node owns the skinned mesh");
+    if (skinned == nullptr) // check() 안의 throw는 /analyze(C6011)가 따라가지 못한다.
+        throw std::runtime_error("Tube node owns the skinned mesh");
 
     Scene scene;
     check(scene.AddObject(loaded.root), "add root");
