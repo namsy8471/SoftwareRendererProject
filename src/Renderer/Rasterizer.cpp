@@ -363,53 +363,66 @@ template <bool Instrumented, RasterPass Pass> void Rasterizer::DrawTriangleImpl(
     auto depth = m_target.Depth();
     auto ids = m_target.PrimitiveIds();
     auto surface = m_target.Surface();
+    // edge 값이 이미 덮였다고 판정된 픽셀 하나를 처리한다. float 연산 순서는 기존과 같다.
+    const auto shadePixel = [&](int x, int y, std::int64_t w0, std::int64_t w1, std::int64_t w2) SR_FORCEINLINE_LAMBDA
+    {
+        const float f0 = static_cast<float>(w0) / 256.f;
+        const float f1 = static_cast<float>(w1) / 256.f;
+        const float f2 = static_cast<float>(w2) / 256.f;
+        const float total = f0 + f1 + f2;
+        if (std::isfinite(total) && total >= 1e-5f)
+        {
+            if constexpr (Instrumented)
+                ++m_stats->coveragePassed;
+            const float inverse = 1.f / total;
+            const float a = f0 * inverse, b = f1 * inverse, c = f2 * inverse;
+            float q = t.rv0.oneOverW * a;
+            q += t.rv1.oneOverW * b;
+            q += t.rv2.oneOverW * c;
+            const auto index = static_cast<std::size_t>(y) * m_target.Width() + x;
+            const bool finite = std::isfinite(q) && q > 0.f;
+            const bool visible =
+                Pass == RasterPass::ShadeVisible
+                    ? ids[index] == t.primitiveId && depth[index] == q
+                    : q > depth[index] || (q == depth[index] && t.primitiveId < ids[index]);
+            if (finite && visible)
+            {
+                if constexpr (Pass != RasterPass::ShadeVisible)
+                {
+                    depth[index] = q;
+                    ids[index] = t.primitiveId;
+                }
+                if constexpr (Pass != RasterPass::DepthOnly)
+                    if (t.sourceCommand && t.sourceCommand->material)
+                    {
+                        const auto sample = InterpolateSurface(t.rv0, t.rv1, t.rv2, a, b, c, 1.f / q);
+                        surface.pixels[static_cast<std::size_t>(y) * surface.stridePixels + x] =
+                            packColor(ShadeSurface(sample, *t.sourceCommand->material, m_frame));
+                        if constexpr (Instrumented)
+                            ++m_stats->shadedPixels;
+                    }
+            }
+            else if constexpr (Instrumented)
+                ++m_stats->depthRejected;
+        }
+    };
     for (int y = y0; y <= y1; ++y)
     {
         auto w0 = r0, w1 = r1, w2 = r2;
-        for (int x = x0; x <= x1; ++x)
+        int x = x0;
+        // 덮인 구간 앞의 빈 픽셀은 edge만 진행한다.
+        while (x <= x1 && (w0 | w1 | w2) < 0)
         {
-            if ((w0 | w1 | w2) >= 0)
-            {
-                const float f0 = static_cast<float>(w0) / 256.f;
-                const float f1 = static_cast<float>(w1) / 256.f;
-                const float f2 = static_cast<float>(w2) / 256.f;
-                const float total = f0 + f1 + f2;
-                if (std::isfinite(total) && total >= 1e-5f)
-                {
-                    if constexpr (Instrumented)
-                        ++m_stats->coveragePassed;
-                    const float inverse = 1.f / total;
-                    const float a = f0 * inverse, b = f1 * inverse, c = f2 * inverse;
-                    float q = t.rv0.oneOverW * a;
-                    q += t.rv1.oneOverW * b;
-                    q += t.rv2.oneOverW * c;
-                    const auto index = static_cast<std::size_t>(y) * m_target.Width() + x;
-                    const bool finite = std::isfinite(q) && q > 0.f;
-                    const bool visible =
-                        Pass == RasterPass::ShadeVisible
-                            ? ids[index] == t.primitiveId && depth[index] == q
-                            : q > depth[index] || (q == depth[index] && t.primitiveId < ids[index]);
-                    if (finite && visible)
-                    {
-                        if constexpr (Pass != RasterPass::ShadeVisible)
-                        {
-                            depth[index] = q;
-                            ids[index] = t.primitiveId;
-                        }
-                        if constexpr (Pass != RasterPass::DepthOnly)
-                            if (t.sourceCommand && t.sourceCommand->material)
-                            {
-                                const auto sample = InterpolateSurface(t.rv0, t.rv1, t.rv2, a, b, c, 1.f / q);
-                                surface.pixels[static_cast<std::size_t>(y) * surface.stridePixels + x] =
-                                    packColor(ShadeSurface(sample, *t.sourceCommand->material, m_frame));
-                                if constexpr (Instrumented)
-                                    ++m_stats->shadedPixels;
-                            }
-                    }
-                    else if constexpr (Instrumented)
-                        ++m_stats->depthRejected;
-                }
-            }
+            w0 += t.dy12Fixed;
+            w1 += t.dy20Fixed;
+            w2 += t.dy01Fixed;
+            ++x;
+        }
+        // 세 edge 함수는 x에 대해 정수 일차식이므로 행의 덮임 구간은 하나다.
+        // 구간을 벗어나면 그 행의 나머지 픽셀은 볼 필요가 없다.
+        for (; x <= x1 && (w0 | w1 | w2) >= 0; ++x)
+        {
+            shadePixel(x, y, w0, w1, w2);
             // 퇴화/zero-weight 픽셀도 반드시 edge를 진행한다.
             w0 += t.dy12Fixed;
             w1 += t.dy20Fixed;
