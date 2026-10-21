@@ -1,11 +1,21 @@
 #include "App/Win32App.h"
 #include "resource.h"
 #include "Core/DemoScene.h"
+#include "Graphics/Model.h"
+#include "Graphics/ModelLoader.h"
 #include "Renderer/Renderer.h"
+#include "Scene/GameObject.h"
+#include "Utils/AssetLoadError.h"
 #include "Utils/Utils.h"
+
+#include <commdlg.h>
+#include <shellapi.h>
 
 #include <algorithm>
 #include <array>
+#include <chrono>
+#include <cwctype>
+#include <expected>
 #include <numbers>
 #include <stdexcept>
 #include <string>
@@ -73,9 +83,17 @@ constexpr std::array renderOptionMenus{
     RenderOptionMenu{ID_RENDER_HIZ, &RenderOptions::hiZ, L"Hi-Z culling (experimental)"},
     RenderOptionMenu{ID_RENDER_HIDDEN_WIRE, &RenderOptions::hiddenWireframe,
                      L"Hidden-line wireframe (depth prepass)"}};
+// 프레임마다 로드 완료분을 장면에 넣는 데 쓰는 최대 시간. 넘치면 다음 프레임으로 미룬다.
+constexpr std::chrono::microseconds assetApplyBudget{500};
+// 새 모델은 카메라 앞 이 거리에, 가장 긴 변이 이 크기가 되도록 놓는다(월드 단위).
+constexpr float placementDistance = 5.f;
+constexpr float placementSize = 2.f;
 } // namespace
 
 Win32App::Win32App(HINSTANCE hInstance, int nCmdShow)
+    : m_loader(sr::io::BackgroundLoader::Options{
+          .onCompleted = {},
+          .onError = [this](const std::string &message) { m_pendingAssetErrors.push_back({message}); }})
 {
     initializeWindow(hInstance, nCmdShow);
     if (!resizeRenderTarget(m_hWnd))
@@ -132,6 +150,14 @@ void Win32App::initializeWindow(HINSTANCE hInstance, int nCmdShow)
         if (!AppendMenuW(algorithmsMenu, MF_STRING | MF_UNCHECKED, menu.commandId, menu.label))
             throw std::runtime_error("Failed to initialize rendering options menu");
 
+    // 파일 메뉴 맨 위에 모델 열기를 넣는다. 탐색기에서 창으로 끌어다 놓아도 같은 경로로 로드된다.
+    const HMENU fileMenu = GetSubMenu(GetMenu(m_hWnd), 0);
+    if (!fileMenu || !InsertMenuW(fileMenu, 0, MF_BYPOSITION | MF_STRING, ID_FILE_OPENMODEL,
+                                  L"\uBAA8\uB378 \uC5F4\uAE30(&O)...\tCtrl+O") ||
+        !InsertMenuW(fileMenu, 1, MF_BYPOSITION | MF_SEPARATOR, 0, nullptr))
+        throw std::runtime_error("Failed to initialize file menu");
+    DragAcceptFiles(m_hWnd, TRUE);
+
     ShowWindow(m_hWnd, nCmdShow);
     UpdateWindow(m_hWnd);
 }
@@ -146,6 +172,7 @@ void Win32App::initializeScene()
         throw std::runtime_error("Failed to initialize demo scene");
     }
     m_runner.SetScene(std::move(*loaded));
+    m_runner.SetFrameStartHook([this](FrameRunner &) { m_loader.DrainCompleted(assetApplyBudget); });
 }
 
 bool Win32App::resizeRenderTarget(HWND window)
@@ -183,6 +210,76 @@ void Win32App::showAssetError(const AssetLoadError &error) const
     MessageBoxW(m_hWnd, message.c_str(), L"GameObject Creation Error", MB_OK | MB_ICONERROR);
 }
 
+void Win32App::loadModelAsync(std::filesystem::path path)
+{
+    std::wstring extension = path.extension().wstring();
+    std::ranges::transform(extension, extension.begin(),
+                           [](wchar_t c) { return static_cast<wchar_t>(std::towlower(c)); });
+    if (extension != L".obj")
+    {
+        showAssetError({"Unsupported file type (only .obj for now)", path});
+        return;
+    }
+    using LoadResult = std::expected<std::unique_ptr<Model>, AssetLoadError>;
+    m_loader.Submit([path](std::stop_token) { return ModelLoader::LoadOBJ(path); },
+                    [this](LoadResult result)
+                    {
+                        if (!result)
+                            m_pendingAssetErrors.push_back(std::move(result.error()));
+                        else
+                            placeLoadedModel(std::move(*result));
+                    });
+}
+
+void Win32App::placeLoadedModel(std::unique_ptr<Model> model)
+{
+    // 모델 원점이 아니라 경계 상자 중심이 카메라 앞에 오도록 위치를 보정한다.
+    const AABB &bounds = model->GetLocalAABB();
+    const SRMath::vec3 extent = bounds.max - bounds.min;
+    const float longest = std::max({extent.x, extent.y, extent.z});
+    const float scale = longest > 0.f ? placementSize / longest : 1.f;
+    const Camera &camera = m_runner.GetScene().GetCamera();
+    const SRMath::vec3 position =
+        camera.GetCameraPos() + camera.GetCameraForward() * placementDistance - bounds.Center() * scale;
+
+    auto object = std::make_shared<GameObject>(position, SRMath::vec3(0.f, 0.f, 0.f),
+                                               SRMath::vec3(scale, scale, scale), std::move(model));
+    if (!m_runner.GetScene().AddObject(std::move(object)))
+        m_pendingAssetErrors.push_back({"Failed to add the model to the scene"});
+}
+
+void Win32App::showOpenModelDialog()
+{
+    std::array<wchar_t, 4096> fileName{};
+    OPENFILENAMEW dialog{};
+    dialog.lStructSize = sizeof(dialog);
+    dialog.hwndOwner = m_hWnd;
+    dialog.lpstrFilter = L"Wavefront OBJ (*.obj)\0*.obj\0All files (*.*)\0*.*\0";
+    dialog.lpstrFile = fileName.data();
+    dialog.nMaxFile = static_cast<DWORD>(fileName.size());
+    dialog.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR | OFN_EXPLORER;
+    const bool chosen = GetOpenFileNameW(&dialog) != FALSE;
+    // 모달 대화상자 동안의 WM_KEYUP은 이 창에 오지 않는다. 눌린 채 남은 키(Ctrl 등)를 지운다.
+    m_keys.fill(false);
+    if (chosen)
+        loadModelAsync(fileName.data());
+}
+
+void Win32App::handleDroppedFiles(WPARAM dropHandle)
+{
+    const auto drop = reinterpret_cast<HDROP>(dropHandle);
+    const UINT count = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
+    for (UINT index = 0; index < count; ++index)
+    {
+        const UINT length = DragQueryFileW(drop, index, nullptr, 0);
+        std::wstring path(static_cast<std::size_t>(length) + 1, L'\0');
+        DragQueryFileW(drop, index, path.data(), length + 1);
+        path.resize(length);
+        loadModelAsync(path);
+    }
+    DragFinish(drop);
+}
+
 void Win32App::Run()
 {
     MSG message{};
@@ -206,6 +303,15 @@ void Win32App::runFrame()
     updateFrame(m_perfAnalyzer.GetDeltaTime());
     renderFrame();
     presentFrame(m_hWnd);
+    showPendingAssetErrors();
+}
+
+void Win32App::showPendingAssetErrors()
+{
+    // 표시 중 다음 프레임이 새 오류를 넣을 수 있으므로 먼저 꺼낸다.
+    const auto errors = std::exchange(m_pendingAssetErrors, {});
+    for (const auto &error : errors)
+        showAssetError(error);
 }
 
 void Win32App::updateFrame(float deltaTime)
@@ -285,6 +391,10 @@ LRESULT Win32App::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
         handleMouseMove(lParam);
         break;
 
+    case WM_DROPFILES:
+        handleDroppedFiles(wParam);
+        break;
+
     case WM_DESTROY:
         PostQuitMessage(0);
         break;
@@ -340,6 +450,9 @@ bool Win32App::handleMenuCommand(int commandId)
         checkMenuItem(ID_ANTIALIASING_FXAA, fxaa);
         break;
     }
+    case ID_FILE_OPENMODEL:
+        showOpenModelDialog();
+        break;
     case IDM_ABOUT:
         DialogBox(m_hInstance, MAKEINTRESOURCE(IDD_ABOUTBOX), m_hWnd, Win32App::About);
         break;
@@ -388,6 +501,8 @@ void Win32App::handleKeyDown(WPARAM key, bool repeated)
         handleMenuCommand(ID_ANTIALIASING_NONE);
     else if (key == VK_F2)
         handleMenuCommand(ID_ANTIALIASING_FXAA);
+    else if (key == 'O' && (GetKeyState(VK_CONTROL) & 0x8000) != 0)
+        handleMenuCommand(ID_FILE_OPENMODEL);
 }
 
 void Win32App::checkMenuItem(int menuId, bool checked) const noexcept

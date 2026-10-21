@@ -2,13 +2,19 @@
 
 #include <array>
 #include <cstddef>
+#include <filesystem>
+#include <memory>
+#include <vector>
 #include "Core/FrameRunner.h"
+#include "IO/BackgroundLoader.h"
 #include "Platform/GdiPresenter.h"
 #include "Platform/Win32Headers.h"
 #include "Renderer/RenderTarget.h"
 #include "Utils/PerformanceAnalyzer.h"
 
-struct AssetLoadError;
+#include "Utils/AssetLoadError.h"
+
+class Model;
 
 // Win32 창·메뉴·입력·GDI 표시만 담당한다. 장면 갱신과 렌더 순서는 FrameRunner가,
 // 장면 구성은 DemoScene이 맡아 headless srcli와 같은 프레임을 그린다.
@@ -42,6 +48,8 @@ class Win32App
     sr::platform::GdiPresenter m_presenter;
     RenderTarget m_renderTarget;
     FrameRunner m_runner;
+    // runner보다 뒤에 선언해 먼저 파괴된다. 남은 apply(runner 장면 수정)는 실행되지 않고 버려진다.
+    sr::io::BackgroundLoader m_loader;
     PerformanceAnalyzer m_perfAnalyzer;
 
     std::array<bool, FrameRunner::keyCount> m_keys{};
@@ -49,6 +57,9 @@ class Win32App
     // 생성자가 끝나기 전(CreateWindow/ShowWindow 중) 오는 WM_SIZE·메뉴 명령은 무시한다.
     bool m_isInitialized = false;
     POINT m_lastMousePos{};
+    // 프레임 시작 훅(Update 도중)에서 MessageBox를 띄우면 그 안의 메시지 루프가 WM_SIZE로 Update를
+    // 다시 부른다. 로드 오류는 모아 두었다가 프레임을 다 그린 뒤 표시한다.
+    std::vector<AssetLoadError> m_pendingAssetErrors;
 
     void initializeWindow(HINSTANCE instance, int showCommand);
     void initializeScene();
@@ -63,4 +74,10 @@ class Win32App
     void handleKeyDown(WPARAM key, bool repeated);
     void checkMenuItem(int menuId, bool checked) const noexcept;
     void showAssetError(const AssetLoadError &error) const;
+    void showPendingAssetErrors();
+    // 드롭·열기 대화상자 공통 진입점. 파싱은 m_loader 작업 스레드, 장면 추가는 프레임 시작 훅에서 한다.
+    void loadModelAsync(std::filesystem::path path);
+    void placeLoadedModel(std::unique_ptr<Model> model);
+    void showOpenModelDialog();
+    void handleDroppedFiles(WPARAM dropHandle); // WM_DROPFILES의 HDROP
 };

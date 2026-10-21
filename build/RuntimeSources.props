@@ -89,4 +89,13 @@
     <ClInclude Include="src\Platform\Compiler.h" />
     <ClInclude Include="src\Modules\sr.math.h" />
   </ItemGroup>
+  <!-- 자체 JSON, 백그라운드 로드 큐, 파일 읽기/원자적 쓰기 -->
+  <ItemGroup>
+    <ClCompile Include="src\IO\Json.cpp" />
+    <ClCompile Include="src\IO\BackgroundLoader.cpp" />
+    <ClCompile Include="src\IO\FileIO.cpp" />
+    <ClInclude Include="src\IO\Json.h" />
+    <ClInclude Include="src\IO\BackgroundLoader.h" />
+    <ClInclude Include="src\IO\FileIO.h" />
+  </ItemGroup>
 </Project>

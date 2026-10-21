@@ -1,6 +1,9 @@
 #include "Core/HeadlessRunner.h"
 #include "Core/DemoScene.h"
 #include "Core/FrameRunner.h"
+#include "Graphics/Model.h"
+#include "Graphics/ModelLoader.h"
+#include "IO/BackgroundLoader.h"
 #include "Renderer/Renderer.h"
 #include "Renderer/RenderTarget.h"
 
@@ -52,6 +55,8 @@ std::expected<RunResult, std::string> Run(const RunConfig &config)
         return std::unexpected("invalid size");
     if (config.warmupFrames < 0 || config.measuredFrames <= 0)
         return std::unexpected("invalid frame count");
+    if (config.backgroundLoadInterval < 0)
+        return std::unexpected("invalid background load interval");
 
     std::optional<tbb::global_control> threadLimit;
     if (config.threads > 0)
@@ -89,11 +94,30 @@ std::expected<RunResult, std::string> Run(const RunConfig &config)
     const auto milliseconds = [](Clock::duration duration)
     { return std::chrono::duration<double, std::milli>(duration).count(); };
 
+    // Win32App과 같은 구조: 작업 스레드가 파싱하고 프레임 시작 훅이 0.5ms 예산 안에서 결과를 받는다.
+    // loader는 runner보다 늦게 만들어 먼저 파괴된다.
+    int loadsSubmitted = 0, loadsApplied = 0;
+    std::optional<sr::io::BackgroundLoader> loader;
+    if (config.backgroundLoadInterval > 0)
+    {
+        loader.emplace();
+        runner.SetFrameStartHook([&](FrameRunner &)
+                                 { loader->DrainCompleted(std::chrono::microseconds{500}); });
+    }
+    const auto loadPath = config.assetDirectory / "teapot.obj";
+
     std::vector<double> frameTimes;
     frameTimes.reserve(static_cast<std::size_t>(config.measuredFrames));
     double updateTotal = 0, renderTotal = 0;
     for (int frame = -config.warmupFrames; frame < config.measuredFrames; ++frame)
     {
+        if (loader && frame >= 0 && frame % config.backgroundLoadInterval == 0)
+        {
+            loader->Submit([&loadPath](std::stop_token) { return ModelLoader::LoadOBJ(loadPath); },
+                           [&loadsApplied](std::expected<std::unique_ptr<Model>, AssetLoadError> model)
+                           { loadsApplied += model.has_value() ? 1 : 0; });
+            ++loadsSubmitted;
+        }
         const auto begin = Clock::now();
         runner.Update(config.deltaTime, config.width, config.height);
         const auto updated = Clock::now();
@@ -122,6 +146,8 @@ std::expected<RunResult, std::string> Run(const RunConfig &config)
     result.stats = renderer.GetStats();
     result.lastFrame = sr::image::CopySurface(std::as_const(target).Surface());
     result.pixelHash = sr::image::HashPixels(result.lastFrame);
+    result.backgroundLoadsSubmitted = loadsSubmitted;
+    result.backgroundLoadsApplied = loadsApplied;
     result.threads = static_cast<int>(
         tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism));
     return result;

@@ -35,6 +35,7 @@ options:
   --dda               DDA lines instead of Bresenham
   --stats             collect renderer counters and pass timings (slower)
   --threads N         limit oneTBB parallelism (default: all cores)
+  --load-every N      bench: load teapot.obj in the background every N frames (results discarded)
   --assets DIR        asset folder (default: <exe dir>/assets, then repo assets/, then ./assets)
   --target-fps F      fps goal reported in output (default 100)
   --require-target    bench exits with 3 when mean fps < target
@@ -139,6 +140,8 @@ Options parseArguments(int argc, char **argv)
             config.options.collectStats = true;
         else if (argument == "--threads")
             config.threads = parseOrDie<int>(next(), "threads");
+        else if (argument == "--load-every")
+            config.backgroundLoadInterval = parseOrDie<int>(next(), "load interval");
         else if (argument == "--assets")
             config.assetDirectory = next();
         else if (argument == "--target-fps")
@@ -233,6 +236,10 @@ std::string toJson(const Options &options, const sr::headless::RunResult &result
         << ",\"target_fps\":" << options.targetFps
         << ",\"meets_target\":" << (fpsMean >= options.targetFps ? "true" : "false")
         << ",\"pixel_hash\":\"" << result.pixelHash << "\"";
+    if (config.backgroundLoadInterval > 0)
+        out << ",\"load_every\":" << config.backgroundLoadInterval
+            << ",\"loads_submitted\":" << result.backgroundLoadsSubmitted
+            << ",\"loads_applied\":" << result.backgroundLoadsApplied;
     if (options.outPath)
         out << ",\"png\":\"" << jsonEscape(options.outPath->generic_string()) << "\"";
     if (config.options.collectStats)

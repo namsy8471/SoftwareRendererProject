@@ -41,6 +41,9 @@ struct RunConfig
     ELineAlgorithm lineAlgorithm = ELineAlgorithm::Bresenham;
     // 0이면 oneTBB 기본값(모든 코어).
     int threads = 0;
+    // 0보다 크면 측정 중 이 프레임 간격마다 teapot.obj를 백그라운드로 로드한다. 결과는 장면에 넣지 않고
+    // 버리므로 픽셀은 같다. 로딩이 렌더 프레임 시간(p95)을 얼마나 흔드는지 재는 용도다.
+    int backgroundLoadInterval = 0;
 };
 
 struct FrameTimings
@@ -57,6 +60,8 @@ struct RunResult
     sr::image::Image lastFrame; // 마지막 측정 프레임
     std::uint64_t pixelHash = 0;
     int threads = 0;            // 실제 사용한 최대 병렬 수
+    int backgroundLoadsSubmitted = 0;
+    int backgroundLoadsApplied = 0; // 측정이 끝나기 전에 프레임 시작 훅까지 돌아온 로드 수
 };
 
 [[nodiscard]] std::expected<RunResult, std::string> Run(const RunConfig &config);
