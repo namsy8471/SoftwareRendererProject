@@ -116,7 +116,10 @@ constexpr std::array animationMenuItems{
 Win32App::Win32App(HINSTANCE hInstance, int nCmdShow)
     : m_loader(sr::io::BackgroundLoader::Options{
           .onCompleted = {},
-          .onError = [this](const std::string &message) { m_pendingAssetErrors.push_back({message}); }})
+          .onError = [this](const std::string &message) { m_pendingAssetErrors.push_back({message}); }}),
+      m_projectSession(
+          m_runner, m_loader, [this](AssetLoadError error) { m_pendingAssetErrors.push_back(std::move(error)); },
+          [this] { refreshWindowTitle(); })
 {
     initializeWindow(hInstance, nCmdShow);
     if (!resizeRenderTarget(m_hWnd))
@@ -165,6 +168,7 @@ void Win32App::initializeWindow(HINSTANCE hInstance, int nCmdShow)
     {
         throw std::runtime_error("Failed to create window");
     }
+    m_windowTitle = m_szTitle.data();
 
     // 정렬/Hi-Z와 숨은 와이어는 기본 비활성화다. 기본 와이어는 빠른 X-ray 표시다.
     const HMENU algorithmsMenu = GetSubMenu(GetMenu(m_hWnd), 1);
@@ -180,6 +184,7 @@ void Win32App::initializeWindow(HINSTANCE hInstance, int nCmdShow)
                                   L"\uBAA8\uB378 \uC5F4\uAE30(&O)...\tCtrl+O") ||
         !InsertMenuW(fileMenu, 1, MF_BYPOSITION | MF_SEPARATOR, 0, nullptr))
         throw std::runtime_error("Failed to initialize file menu");
+    initializeProjectMenu(fileMenu, 2);
     DragAcceptFiles(m_hWnd, TRUE);
     initializeAnimationMenu();
 
@@ -295,6 +300,13 @@ void Win32App::loadModelAsync(std::filesystem::path path)
         showAssetError({"Unsupported file type (.obj, .gltf, .glb)", path});
         return;
     }
+    // 프로젝트가 열려 있으면 Assets로 복사해 씬 파일에 저장될 수 있게 한다.
+    if (m_projectSession.HasProject())
+    {
+        m_projectSession.ImportModel(std::move(path), [this](std::unique_ptr<Model> model)
+                                     { return placeLoadedModel(std::move(model)); });
+        return;
+    }
     using LoadResult = std::expected<std::unique_ptr<Model>, AssetLoadError>;
     m_loader.Submit([path](std::stop_token) { return ModelLoader::LoadOBJ(path); },
                     [this](LoadResult result)
@@ -304,16 +316,19 @@ void Win32App::loadModelAsync(std::filesystem::path path)
                             m_pendingAssetErrors.push_back(std::move(result.error()));
                             return;
                         }
-                        const AABB bounds = (*result)->GetLocalAABB();
-                        placeLoadedObject(std::make_shared<GameObject>(SRMath::vec3(0.f, 0.f, 0.f),
-                                                                       SRMath::vec3(0.f, 0.f, 0.f),
-                                                                       SRMath::vec3(1.f, 1.f, 1.f),
-                                                                       std::move(*result)),
-                                          bounds);
+                        placeLoadedModel(std::move(*result));
                     });
 }
 
-bool Win32App::placeLoadedObject(std::shared_ptr<GameObject> object, const AABB &bounds)
+std::shared_ptr<GameObject> Win32App::placeLoadedModel(std::unique_ptr<Model> model)
+{
+    const AABB bounds = model->GetLocalAABB();
+    return placeLoadedObject(std::make_shared<GameObject>(SRMath::vec3(0.f, 0.f, 0.f), SRMath::vec3(0.f, 0.f, 0.f),
+                                                          SRMath::vec3(1.f, 1.f, 1.f), std::move(model)),
+                             bounds);
+}
+
+std::shared_ptr<GameObject> Win32App::placeLoadedObject(std::shared_ptr<GameObject> object, const AABB &bounds)
 {
     // 모델 원점이 아니라 경계 상자 중심이 카메라 앞에 오도록 위치를 보정한다.
     const SRMath::vec3 extent = bounds.IsValid() ? bounds.max - bounds.min : SRMath::vec3(0.f, 0.f, 0.f);
@@ -323,10 +338,12 @@ bool Win32App::placeLoadedObject(std::shared_ptr<GameObject> object, const AABB 
     const Camera &camera = m_runner.GetScene().GetCamera();
     object->SetPosition(camera.GetCameraPos() + camera.GetCameraForward() * placementDistance - center * scale);
     object->SetScale(SRMath::vec3(scale, scale, scale));
-    if (m_runner.GetScene().AddObject(std::move(object)))
-        return true;
-    m_pendingAssetErrors.push_back({"Failed to add the model to the scene"});
-    return false;
+    if (!m_runner.GetScene().AddObject(object))
+    {
+        m_pendingAssetErrors.push_back({"Failed to add the model to the scene"});
+        return nullptr;
+    }
+    return object;
 }
 
 void Win32App::initializeAnimationMenu()
@@ -448,7 +465,8 @@ void Win32App::handleDroppedFiles(WPARAM dropHandle)
         std::wstring path(static_cast<std::size_t>(length) + 1, L'\0');
         DragQueryFileW(drop, index, path.data(), length + 1);
         path.resize(length);
-        loadModelAsync(path);
+        if (!openProjectFile(path))
+            loadModelAsync(path);
     }
     DragFinish(drop);
 }
@@ -510,10 +528,7 @@ void Win32App::updateFrameTime()
     m_perfAnalyzer.Update();
     if (previousFps == m_perfAnalyzer.GetAvgFPSForSecond())
         return;
-    std::array<wchar_t, maxLoadString> title{};
-    swprintf_s(title.data(), title.size(), L"%s - AvgFPS: %d", m_szTitle.data(),
-               m_perfAnalyzer.GetAvgFPSForSecond());
-    SetWindowText(m_hWnd, title.data());
+    refreshWindowTitle();
 }
 
 LRESULT Win32App::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
@@ -568,6 +583,10 @@ LRESULT Win32App::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
         handleDroppedFiles(wParam);
         break;
 
+    case WM_CLOSE:
+        if (confirmDiscardChanges())
+            DestroyWindow(hWnd);
+        break;
     case WM_DESTROY:
         PostQuitMessage(0);
         break;
@@ -633,10 +652,11 @@ bool Win32App::handleMenuCommand(int commandId)
         DialogBox(m_hInstance, MAKEINTRESOURCE(IDD_ABOUTBOX), m_hWnd, Win32App::About);
         break;
     case IDM_EXIT:
-        DestroyWindow(m_hWnd);
+        if (confirmDiscardChanges())
+            DestroyWindow(m_hWnd);
         break;
     default:
-        return false;
+        return handleProjectCommand(commandId);
     }
     return true;
 }
@@ -677,8 +697,14 @@ void Win32App::handleKeyDown(WPARAM key, bool repeated)
         handleMenuCommand(ID_ANTIALIASING_NONE);
     else if (key == VK_F2)
         handleMenuCommand(ID_ANTIALIASING_FXAA);
-    else if (key == 'O' && (GetKeyState(VK_CONTROL) & 0x8000) != 0)
-        handleMenuCommand(ID_FILE_OPENMODEL);
+    else if ((GetKeyState(VK_CONTROL) & 0x8000) != 0)
+    {
+        const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+        if (key == 'O')
+            handleMenuCommand(shift ? ID_FILE_OPENPROJECT : ID_FILE_OPENMODEL);
+        else if (key == 'S')
+            handleMenuCommand(shift ? ID_FILE_SAVESCENEAS : ID_FILE_SAVESCENE);
+    }
     else if (key == 'P')
         handleMenuCommand(ID_ANIM_PLAYPAUSE);
     else if (key == 'L')

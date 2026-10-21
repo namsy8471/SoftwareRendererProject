@@ -4,18 +4,20 @@
 #include <cstddef>
 #include <filesystem>
 #include <memory>
+#include <string>
 #include <vector>
 #include "Core/FrameRunner.h"
 #include "IO/BackgroundLoader.h"
 #include "Platform/GdiPresenter.h"
+#include "Project/ProjectSession.h"
 #include "Platform/Win32Headers.h"
 #include "Renderer/RenderTarget.h"
 #include "Utils/PerformanceAnalyzer.h"
 
 #include "Utils/AssetLoadError.h"
 
-class Model;
 class GameObject;
+class Model;
 struct AABB;
 namespace sr::anim
 {
@@ -49,6 +51,8 @@ class Win32App
     HINSTANCE m_hInstance = nullptr;
     std::array<WCHAR, maxLoadString> m_szTitle{};
     std::array<WCHAR, maxLoadString> m_szWindowClass{};
+    // 리소스 제목 + 열린 프로젝트·씬 이름(저장 안 됨이면 *). FPS는 표시할 때 뒤에 붙인다.
+    std::wstring m_windowTitle;
 
     // 선언의 역순으로 파괴되어 runner/target이 먼저 사라지고 마지막에 DIB가 해제된다.
     sr::platform::GdiPresenter m_presenter;
@@ -56,6 +60,8 @@ class Win32App
     FrameRunner m_runner;
     // runner보다 뒤에 선언해 먼저 파괴된다. 남은 apply(runner 장면 수정)는 실행되지 않고 버려진다.
     sr::io::BackgroundLoader m_loader;
+    // loader보다 뒤에 선언해 먼저 파괴된다. 작업 스레드의 작업은 세션을 참조하지 않는다.
+    sr::project::ProjectSession m_projectSession;
     PerformanceAnalyzer m_perfAnalyzer;
 
     std::array<bool, FrameRunner::keyCount> m_keys{};
@@ -87,8 +93,10 @@ class Win32App
     // 드롭·열기 대화상자 공통 진입점. 파싱은 m_loader 작업 스레드, 장면 추가는 프레임 시작 훅에서 한다.
     void loadModelAsync(std::filesystem::path path);
     // 경계 상자 중심이 카메라 앞에 오고 가장 긴 변이 일정한 크기가 되도록 object의 위치·크기를 정해 장면에 넣는다.
-    // 장면에 넣지 못하면 오류를 쌓고 false.
-    bool placeLoadedObject(std::shared_ptr<GameObject> object, const AABB &bounds);
+    // 장면에 넣은 물체를 돌려준다. 실패하면 오류를 쌓고 null이다.
+    std::shared_ptr<GameObject> placeLoadedObject(std::shared_ptr<GameObject> object, const AABB &bounds);
+    // model 하나를 GameObject로 감싸 placeLoadedObject로 넣는다.
+    std::shared_ptr<GameObject> placeLoadedModel(std::unique_ptr<Model> model);
     void initializeAnimationMenu();
     // 재생/반복 체크, 클립 목록, 활성 여부를 m_activeAnimator 상태에 맞춘다.
     void refreshAnimationMenu();
@@ -96,4 +104,13 @@ class Win32App
     bool handleAnimationCommand(int commandId);
     void showOpenModelDialog();
     void handleDroppedFiles(WPARAM dropHandle); // WM_DROPFILES의 HDROP
+
+    // 프로젝트·씬 파일 (Win32AppProject.cpp). 읽기·쓰기는 m_projectSession이 m_loader로 보낸다.
+    void initializeProjectMenu(HMENU fileMenu, UINT position);
+    [[nodiscard]] bool handleProjectCommand(int commandId);
+    // .srproj/.srscene이면 열기를 시작하고 true. 그 밖의 파일은 false(모델로 처리).
+    [[nodiscard]] bool openProjectFile(const std::filesystem::path &path);
+    // 저장 안 된 변경이 있으면 묻는다. 예 = 저장 후 계속, 아니오 = 버리고 계속, 취소 = false.
+    [[nodiscard]] bool confirmDiscardChanges();
+    void refreshWindowTitle();
 };

@@ -76,7 +76,8 @@ file(GLOB_RECURSE SR_CORE_SOURCES CONFIGURE_DEPENDS
      "${CMAKE_SOURCE_DIR}/src/Core/*.cpp" "${CMAKE_SOURCE_DIR}/src/Graphics/*.cpp"
      "${CMAKE_SOURCE_DIR}/src/Math/*.cpp" "${CMAKE_SOURCE_DIR}/src/Renderer/*.cpp"
      "${CMAKE_SOURCE_DIR}/src/Scene/*.cpp" "${CMAKE_SOURCE_DIR}/src/Utils/*.cpp"
-     "${CMAKE_SOURCE_DIR}/src/IO/*.cpp" "${CMAKE_SOURCE_DIR}/src/Animation/*.cpp")
+     "${CMAKE_SOURCE_DIR}/src/IO/*.cpp" "${CMAKE_SOURCE_DIR}/src/Project/*.cpp"
+     "${CMAKE_SOURCE_DIR}/src/Animation/*.cpp")
 add_library(sr_core STATIC ${SR_CORE_SOURCES})
 target_link_libraries(sr_core PUBLIC sr_options ${SR_TBB_TARGET})
 # AVX 구현만 AVX로 컴파일한다(런타임 CPUID로 선택). 다른 파일에 AVX가 섞이지 않게 한다.

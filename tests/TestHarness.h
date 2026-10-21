@@ -61,6 +61,7 @@ void RegisterGoldenTests(TestRegistry &);
 void RegisterIOTests(TestRegistry &);
 void RegisterGltfTests(TestRegistry &);
 void RegisterAnimationTests(TestRegistry &);
+void RegisterProjectTests(TestRegistry &);
 #if SR_TEST_WIN32_APP
 void RegisterWin32AppTests(TestRegistry &);
 #endif

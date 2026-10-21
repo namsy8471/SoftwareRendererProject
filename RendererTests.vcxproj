@@ -48,10 +48,12 @@
     <ClCompile Include="tests\IOTests.cpp" />
     <ClCompile Include="tests\GltfTests.cpp" />
     <ClCompile Include="tests\AnimationTests.cpp" />
+    <ClCompile Include="tests\ProjectTests.cpp" />
     <ClCompile Include="tests\Win32AppTests.cpp" />
     <ClInclude Include="tests\TestHarness.h" />
     <ClInclude Include="tests\TestSupport.h" />
     <ClCompile Include="src\App\Win32App.cpp" />
+    <ClCompile Include="src\App\Win32AppProject.cpp" />
     <ResourceCompile Include="SoftrendererProject.rc" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

@@ -40,6 +40,7 @@
   <ItemGroup>
     <ClCompile Include="SoftrendererProject.cpp" />
     <ClCompile Include="src\App\Win32App.cpp" />
+    <ClCompile Include="src\App\Win32AppProject.cpp" />
     <ClInclude Include="src\App\Win32App.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

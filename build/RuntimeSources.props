@@ -118,4 +118,11 @@
     <ClInclude Include="src\Animation\Skinning.h" />
     <ClInclude Include="src\Math\Quaternion.h" />
   </ItemGroup>
+  <!-- 프로젝트 폴더(.srproj)와 씬 파일(.srscene), 열린 프로젝트 세션 -->
+  <ItemGroup>
+    <ClCompile Include="src\Project\ProjectFiles.cpp" />
+    <ClCompile Include="src\Project\ProjectSession.cpp" />
+    <ClInclude Include="src\Project\ProjectFiles.h" />
+    <ClInclude Include="src\Project\ProjectSession.h" />
+  </ItemGroup>
 </Project>
