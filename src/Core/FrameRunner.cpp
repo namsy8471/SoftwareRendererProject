@@ -34,6 +34,7 @@ void FrameRunner::Update(float deltaTime, int width, int height, std::span<const
 
 void FrameRunner::Render(RenderTarget &target)
 {
-    target.Clear();
-    m_renderer->RenderScene(target, m_renderQueue, m_scene.GetCamera().GetViewParams(), m_scene.GetLights());
+    // 지우기는 타일 래스터 작업이 타일별로 한다(별도 병렬 단계 없음).
+    m_renderer->ClearAndRenderScene(target, m_renderQueue, m_scene.GetCamera().GetViewParams(),
+                                    m_scene.GetLights());
 }
