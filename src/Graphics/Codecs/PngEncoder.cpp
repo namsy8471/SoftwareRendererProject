@@ -77,11 +77,15 @@ void writeMatch(BitWriter &writer, int length, int distance)
     int lengthSymbol = 28;
     while (lengthSymbol > 0 && lengthBase[lengthSymbol] > length)
         --lengthSymbol;
+    if (lengthSymbol >= static_cast<int>(lengthExtra.size())) // /analyze용 상한 명시
+        return;
     writeLiteral(writer, 257 + lengthSymbol);
     writer.write(static_cast<std::uint32_t>(length - lengthBase[lengthSymbol]), lengthExtra[lengthSymbol]);
     int distanceSymbol = 29;
     while (distanceSymbol > 0 && distanceBase[distanceSymbol] > distance)
         --distanceSymbol;
+    if (distanceSymbol >= static_cast<int>(distanceExtra.size())) // /analyze용 상한 명시
+        return;
     writer.writeCode(static_cast<std::uint32_t>(distanceSymbol), 5);
     writer.write(static_cast<std::uint32_t>(distance - distanceBase[distanceSymbol]),
                  distanceExtra[distanceSymbol]);
