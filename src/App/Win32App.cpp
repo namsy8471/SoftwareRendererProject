@@ -133,7 +133,8 @@ void Win32App::initializeWindow(HINSTANCE hInstance, int nCmdShow)
     wcex.lpszClassName = m_szWindowClass.data();
     wcex.hIconSm = LoadIcon(wcex.hInstance, MAKEINTRESOURCE(IDI_SMALL));
 
-    if (!RegisterClassExW(&wcex))
+    // 창 클래스는 프로세스 단위로 등록된다. 같은 프로세스의 두 번째 Win32App(테스트)은 기존 등록을 쓴다.
+    if (!RegisterClassExW(&wcex) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
     {
         throw std::runtime_error("Failed to register window class");
     }
