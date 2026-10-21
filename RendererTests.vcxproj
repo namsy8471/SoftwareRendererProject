@@ -50,7 +50,6 @@
     <ClCompile Include="tests\AnimationTests.cpp" />
     <ClCompile Include="tests\ProjectTests.cpp" />
     <ClCompile Include="tests\ImageCodecTests.cpp" />
-    <ClCompile Include="tests\StbImageOracle.cpp" />
     <ClCompile Include="tests\Win32AppTests.cpp" />
     <ClInclude Include="tests\TestHarness.h" />
     <ClInclude Include="tests\TestSupport.h" />

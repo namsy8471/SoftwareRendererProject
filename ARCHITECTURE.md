@@ -58,7 +58,7 @@ flowchart TB
     oneTBB[(oneTBB)] -. parallel tasks / TLS .-> Loader
     oneTBB -. parallel tasks / TLS .-> Queue
     oneTBB -. parallel tasks / TLS .-> Renderer
-    stb[(stb_image)] -. image decode .-> TextureLoader
+    Codecs["Graphics/Codecs<br/>in-house PNG · JPEG · BMP · TGA · DDS"] -->|image decode| TextureLoader
     WinAPI[(WinAPI)] -. window / input / GDI .-> Framework
     WinAPI -. present .-> GDI
 ```
@@ -128,7 +128,7 @@ sequenceDiagram
 | 제출 경계 | `RenderCommand.h`, `RenderQueue.h` | 장면 데이터와 렌더러 사이의 한 프레임짜리 명령 버퍼 제공 |
 | CPU 렌더러 | `src/Renderer` | 정점 변환, back-face culling, clipping, 타일 binning, 래스터화, 깊이 검사, Phong 조명, 디버그 선, FXAA |
 | 수학·공통 기반 | `src/Math`, `src/Utils` | 벡터/행렬, AABB/Frustum, SSE/AVX 선택, 고정 용량 버퍼, 구조화 오류, 성능 측정 |
-| 플랫폼·외부 코드 | `src/Platform`, `src/ThirdParty` | Win32 헤더 경계와 GDI 수명 관리, oneTBB 병렬 실행, stb_image 이미지 디코딩 |
+| 플랫폼·외부 코드 | `src/Platform`, `src/ThirdParty` | Win32 헤더 경계와 GDI 수명 관리, oneTBB 병렬 실행, 자체 이미지 코덱(PNG·JPEG·BMP·TGA·DDS, `src/Graphics/Codecs`) |
 
 ### 시작 시 자산이 장면이 되는 과정
 
@@ -198,7 +198,7 @@ This project does not delegate rasterization to a GPU API. It loads OBJ assets, 
 | Submission boundary | `RenderCommand.h`, `RenderQueue.h` | Provide a frame-scoped command buffer between scene data and the renderer |
 | CPU renderer | `src/Renderer` | Transform vertices; back-face cull; clip; bin into tiles; rasterize; depth test; apply Phong lighting; draw debug lines; run FXAA |
 | Math and utilities | `src/Math`, `src/Utils` | Supply vectors/matrices, AABB/Frustum math, SSE/AVX selection, fixed-capacity storage, structured errors, and timing |
-| Platform and vendors | `src/Platform`, `src/ThirdParty` | Centralize Win32 includes and GDI ownership; provide oneTBB tasking and stb_image decoding |
+| Platform and vendors | `src/Platform`, `src/ThirdParty` | Centralize Win32 includes and GDI ownership; provide oneTBB tasking; in-house image codecs (PNG/JPEG/BMP/TGA/DDS, `src/Graphics/Codecs`) |
 
 ### Startup asset path
 
@@ -268,7 +268,7 @@ This project does not delegate rasterization to a GPU API. It loads OBJ assets, 
 | 提出境界 | `RenderCommand.h`, `RenderQueue.h` | Scene dataとrendererの間にframe単位のcommand bufferを提供 |
 | CPUレンダラー | `src/Renderer` | 頂点変換、back-face culling、clipping、tile binning、rasterization、depth test、Phong lighting、debug line、FXAA |
 | 数学と共通基盤 | `src/Math`, `src/Utils` | Vector/matrix、AABB/Frustum、SSE/AVX選択、固定容量storage、構造化error、性能計測 |
-| プラットフォームと外部コード | `src/Platform`, `src/ThirdParty` | Win32 includeとGDI寿命管理の集約、oneTBB task、stb_image decoding |
+| プラットフォームと外部コード | `src/Platform`, `src/ThirdParty` | Win32 includeとGDI寿命管理の集約、oneTBB task、自前の画像コーデック（PNG/JPEG/BMP/TGA/DDS、`src/Graphics/Codecs`） |
 
 ### 起動時にアセットがシーンになるまで
 

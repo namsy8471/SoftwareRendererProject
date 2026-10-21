@@ -30,8 +30,7 @@ class Texture;
 //   - skin/animation은 데이터만 꺼내 둔다. 재생·스키닝은 sr::anim::Animator::Create(LoadedScene)가 붙인다.
 namespace sr::gltf
 {
-// 이미지 바이트를 RGBA Texture로 디코딩한다. 비어 있으면 기본 디코더(현재 stb_image, 3단계에서 자체 디코더로
-// 교체)를 쓴다.
+// 이미지 바이트를 RGBA Texture로 디코딩한다. 비어 있으면 기본 디코더(자체 코덱, src/Graphics/Codecs)를 쓴다.
 using ImageDecoder = std::function<std::expected<std::shared_ptr<::Texture>, AssetLoadError>(
     std::span<const std::byte> bytes, std::string_view mimeType)>;
 

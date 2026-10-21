@@ -100,6 +100,7 @@ tools/dev.sh render wire out.png
 | `src/Project/` | 프로젝트 폴더(`.srproj` + `Scenes/*.srscene` + `Assets/` + `Cache/`) 형식·읽기·쓰기(`ProjectFiles.*`), 열린 프로젝트의 비동기 열기·저장(`ProjectSession.*`, Win32 파일 메뉴는 `src/App/Win32AppProject.cpp`) |
 | `src/Animation/` | `Animator`(glTF 클립 재생: 재생/정지·속도·반복·클립 전환, 키프레임 → node 로컬 TRS), `AnimationSampling`(STEP/LINEAR/CUBICSPLINE, 회전 slerp), `Skinning`(CPU 선형 블렌드 스키닝, `SkinningAVX.cpp`만 AVX). 순서: `Scene::Update`가 포즈 → transform → 스킨. 스킨 메시는 월드 공간 변형 버퍼를 world=단위 행렬로 그리고, Octree 대신 변형 정점 AABB로 컬링한다. 쿼터니언은 `src/Math/Quaternion.h` |
 | `src/Math/` | SRMath(SSE), `SIMD_AVX.cpp`만 AVX로 컴파일. `Quaternion.h`(곱, slerp/nlerp, 행렬·축각 변환) |
+| `src/Graphics/Codecs/` | 자체 이미지 코덱(PNG/JPEG/BMP/TGA/DDS 디코더, zlib inflate, 골든용 PNG 인코더). 메모리 버퍼 → RGBA8. fixture와 기준 해시는 `tests/fixtures/images`(`tools/make_image_fixtures.py`) |
 | `tests/` | `TestMain.cpp` 실행기, 영역별 `*Tests.cpp`, `golden/`, `fixtures/` |
 
 ## 규칙

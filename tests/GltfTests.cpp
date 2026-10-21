@@ -406,7 +406,7 @@ void robustnessTests(const TestContext &context)
     const auto glb = readFixture(fixtures / "hierarchy.glb");
     const auto text = readFixture(fixtures / "hierarchy.gltf");
     gltf::SceneLoadOptions options;
-    // 바뀐 PNG를 stb에 넘기는 것은 이 테스트의 관심사가 아니다.
+    // 바뀐 PNG를 이미지 디코더에 넘기는 것은 이 테스트의 관심사가 아니다.
     options.decodeImage = [](std::span<const std::byte>,
                              std::string_view) -> std::expected<std::shared_ptr<Texture>, AssetLoadError>
     { return std::make_shared<Texture>(); };

@@ -16,21 +16,9 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
-#include <optional>
 #include <sstream>
 #include <string>
 #include <vector>
-
-namespace sr::test
-{
-struct OracleImage
-{
-    int width = 0;
-    int height = 0;
-    std::vector<std::uint8_t> rgba;
-};
-std::optional<OracleImage> DecodeWithStb(std::span<const std::uint8_t> bytes);
-} // namespace sr::test
 
 using namespace sr::test;
 
@@ -60,59 +48,6 @@ namespace
     return path.filename().string().find("unsupported") != std::string::npos;
 }
 
-// stb와 픽셀 단위로 같은지 본다. 다르면 첫 차이 위치와 최대 채널 차이를 알려 준다.
-void oracleTests(const TestContext &context)
-{
-    int compared = 0;
-    std::string failures;
-    auto paths = fixtureImages(context);
-    paths.push_back(context.root / "assets/teapot.png");
-    for (const auto &path : paths)
-    {
-        // stb는 TGA 기술자 bit 4(오른쪽→왼쪽)를 무시하므로 별도 테스트에서 기대 픽셀로 검사한다.
-        if (expectedUnsupported(path) || path.filename() == "tga-right-to-left.tga" ||
-            path.extension() == ".dds")
-            continue;
-        const auto bytes = readFile(path);
-        const auto ours = sr::codec::DecodeImage(bytes, path.extension().string());
-        const auto oracle = DecodeWithStb(bytes);
-        const std::string name = path.filename().string();
-        check(oracle.has_value(), name + ": oracle failed to decode");
-        if (!ours)
-        {
-            failures += "\n    " + name + ": " + ours.error();
-            continue;
-        }
-        if (ours->width != oracle->width || ours->height != oracle->height)
-        {
-            failures += "\n    " + name + ": size mismatch";
-            continue;
-        }
-        if (ours->rgba != oracle->rgba)
-        {
-            std::size_t different = 0;
-            std::size_t first = 0;
-            int maxDelta = 0;
-            for (std::size_t i = 0; i < ours->rgba.size(); ++i)
-                if (ours->rgba[i] != oracle->rgba[i])
-                {
-                    if (different++ == 0)
-                        first = i;
-                    maxDelta = std::max(maxDelta, std::abs(int(ours->rgba[i]) - int(oracle->rgba[i])));
-                }
-            const auto pixel = first / 4;
-            failures += "\n    " + name + ": " + std::to_string(different) +
-                        " channel values differ (first x=" + std::to_string(pixel % ours->width) +
-                        " y=" + std::to_string(pixel / ours->width) + " channel " +
-                        std::to_string(first % 4) + ", max delta " + std::to_string(maxDelta) + ")";
-            continue;
-        }
-        ++compared;
-    }
-    check(failures.empty(), "fixtures differ from stb_image:" + failures);
-    std::cout << "  " << compared << " fixtures match stb_image pixel for pixel\n";
-}
-
 [[nodiscard]] std::uint64_t hashBytes(std::span<const std::uint8_t> bytes) noexcept
 {
     std::uint64_t hash = 14695981039346656037ull;
@@ -121,13 +56,15 @@ void oracleTests(const TestContext &context)
     return hash;
 }
 
-// stb_image는 DDS를 모른다. 기준값은 tools/make_image_fixtures.py가 Pillow 디코더(BCn, Pillow가 쓴 비압축)나
-// 직접 계산(레거시 비트 마스크)으로 만든 dds-reference.txt의 RGBA 해시다.
-void ddsReferenceTests(const TestContext &context)
+// 기준 해시 표(이름 너비 높이 RGBA FNV-1a64)와 디코딩 결과를 비교한다.
+//  stb-reference.txt: PNG/JPEG/BMP/TGA. stb_image 2.30을 오라클로 픽셀 단위 비교해 모두 같았던 값을 기록했다.
+//  dds-reference.txt: DDS. tools/make_image_fixtures.py가 Pillow 디코더(BCn 등)나 직접 계산(비트 마스크)으로
+//  만든다.
+void referenceTests(const TestContext &context, const char *listName, int minimumEntries)
 {
     const auto directory = context.root / "tests/fixtures/images";
-    std::ifstream list(directory / "dds-reference.txt");
-    check(static_cast<bool>(list), "dds-reference.txt present");
+    std::ifstream list(directory / listName);
+    check(static_cast<bool>(list), std::string(listName) + " present");
     std::string line;
     int compared = 0;
     std::string failures;
@@ -140,8 +77,9 @@ void ddsReferenceTests(const TestContext &context)
         int width = 0, height = 0;
         std::string hashText;
         fields >> name >> width >> height >> hashText;
-        const auto bytes = readFile(directory / name);
-        const auto image = sr::codec::DecodeImage(bytes, ".dds");
+        const auto path = directory / name;
+        const auto bytes = readFile(path);
+        const auto image = sr::codec::DecodeImage(bytes, path.extension().string());
         if (!image)
             failures += "\n    " + name + ": " + image.error();
         else if (image->width != width || image->height != height ||
@@ -149,9 +87,28 @@ void ddsReferenceTests(const TestContext &context)
             failures += "\n    " + name + ": pixels differ from reference";
         ++compared;
     }
-    check(compared >= 25, "DDS reference entries");
-    check(failures.empty(), "DDS fixtures differ:" + failures);
-    std::cout << "  " << compared << " DDS fixtures match reference hashes\n";
+    check(compared >= minimumEntries, std::string(listName) + " entries");
+    check(failures.empty(), "fixtures differ from reference:" + failures);
+    std::cout << "  " << compared << " fixtures match " << listName << '\n';
+}
+
+// 표에 없는 fixture가 생기면(생성 스크립트만 고치고 표를 안 고친 경우) 알린다.
+void referenceCoverageTests(const TestContext &context)
+{
+    const auto directory = context.root / "tests/fixtures/images";
+    std::string listed;
+    for (const char *listName : {"stb-reference.txt", "dds-reference.txt"})
+    {
+        std::ifstream list(directory / listName);
+        listed.append(std::istreambuf_iterator<char>(list), std::istreambuf_iterator<char>());
+    }
+    for (const auto &path : fixtureImages(context))
+    {
+        const auto name = path.filename().string();
+        if (expectedUnsupported(path) || name == "tga-right-to-left.tga")
+            continue;
+        check(listed.find("\n" + name + " ") != std::string::npos, name + " has a reference hash");
+    }
 }
 
 void unsupportedTests(const TestContext &context)
@@ -274,9 +231,6 @@ void pngRoundTripTests()
                 check(decoded->rgba[p * 4] == rgb[p * 3] && decoded->rgba[p * 4 + 1] == rgb[p * 3 + 1] &&
                           decoded->rgba[p * 4 + 2] == rgb[p * 3 + 2] && decoded->rgba[p * 4 + 3] == 255,
                       "PNG round trip pixel");
-            // 같은 출력은 stb도 읽을 수 있어야 한다(다른 디코더와의 호환성).
-            const auto oracle = DecodeWithStb(png);
-            check(oracle && oracle->rgba == decoded->rgba, "encoded PNG readable by stb");
         }
     }
 }
@@ -284,7 +238,8 @@ void pngRoundTripTests()
 void textureLoaderTests(const TestContext &context)
 {
     const auto images = context.root / "tests/fixtures/images";
-    for (const char *name : {"png-rgba8.png", "jpeg-420.jpg", "bmp-rgb24.bmp", "tga-rgb24-rle.tga", "dds-dx10-bc7-random.dds"})
+    for (const char *name :
+         {"png-rgba8.png", "jpeg-420.jpg", "bmp-rgb24.bmp", "tga-rgb24-rle.tga", "dds-dx10-bc7-random.dds"})
     {
         const auto texture = TextureLoader::LoadImageFile(images / name);
         check(texture.has_value() && (*texture)->GetWidth() > 0,
@@ -348,8 +303,11 @@ void mtlTextureTests(const TestContext &context)
 
 void sr::test::RegisterImageCodecTests(TestRegistry &registry)
 {
-    registry.Add("codecs.stbOracle", oracleTests);
-    registry.Add("codecs.ddsReference", ddsReferenceTests);
+    registry.Add("codecs.stbReference",
+                 [](const TestContext &context) { referenceTests(context, "stb-reference.txt", 80); });
+    registry.Add("codecs.ddsReference",
+                 [](const TestContext &context) { referenceTests(context, "dds-reference.txt", 25); });
+    registry.Add("codecs.referenceCoverage", referenceCoverageTests);
     registry.Add("codecs.unsupported", unsupportedTests);
     registry.Add("codecs.tgaOrientation", tgaOrientationTests);
     registry.Add("codecs.corruption", corruptionTests);
