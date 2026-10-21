@@ -83,7 +83,9 @@ struct ParseError
 
 struct ParseOptions
 {
-    std::size_t maxDepth = 256;
+    // 파서는 중첩 한 단계마다 재귀한다. Win32 Debug(1MB 스택, 최적화 없음)에서는 깊이 수백이면 스택을
+    // 넘칠 수 있으므로 128 이하로 둔다. 씬 파일과 glTF는 10단계 안쪽이다.
+    std::size_t maxDepth = 64;
 };
 
 // 앞의 UTF-8 BOM은 건너뛴다. 잘못된 UTF-8, 중복 키, 제어 문자, 뒤에 남은 문자는 오류다.

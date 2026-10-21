@@ -68,10 +68,10 @@ void jsonErrorTests()
     errorAt("", 1, 1);
     errorAt("1e999", 1, 1);
 
-    std::string deep(300, '[');
-    deep.append(300, ']');
+    std::string deep(100, '[');
+    deep.append(100, ']');
     check(!sr::json::Parse(deep).has_value(), "depth limit");
-    check(sr::json::Parse(deep, {.maxDepth = 400}).has_value(), "depth limit option");
+    check(sr::json::Parse(deep, {.maxDepth = 128}).has_value(), "depth limit option");
 }
 
 void jsonWriteTests()
