@@ -72,6 +72,19 @@ void RenderTarget::clearRows(int firstRow, int lastRow) noexcept
     std::ranges::fill(std::span(m_primitiveIds).subspan(first, count), emptyOwner);
 }
 
+void RenderTarget::ClearRect(int minX, int minY, int maxX, int maxY) noexcept
+{
+    const auto width = static_cast<std::size_t>(maxX - minX);
+    for (int y = minY; y < maxY; ++y)
+    {
+        const auto row = static_cast<std::size_t>(y) * m_surface.stridePixels + minX;
+        std::ranges::fill(m_surface.pixels.subspan(row, width), 0u);
+        const auto first = static_cast<std::size_t>(y) * m_surface.width + minX;
+        std::ranges::fill(std::span(m_depth).subspan(first, width), emptyDepth);
+        std::ranges::fill(std::span(m_primitiveIds).subspan(first, width), emptyOwner);
+    }
+}
+
 void RenderTarget::Clear() noexcept
 {
     // 1280x720에서 색/깊이/ID 14.7MB를 main thread가 혼자 지우는 데 프레임당 약 0.66ms가

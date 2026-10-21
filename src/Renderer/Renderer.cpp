@@ -58,6 +58,18 @@ std::span<const PreparedDirectionalLight> Renderer::prepareLights(std::span<cons
 void Renderer::RenderScene(RenderTarget &target, const RenderQueue &queue, const ViewParams &view,
                            std::span<const DirectionalLight> lights)
 {
+    renderScene(target, queue, view, lights, false);
+}
+
+void Renderer::ClearAndRenderScene(RenderTarget &target, const RenderQueue &queue, const ViewParams &view,
+                                   std::span<const DirectionalLight> lights)
+{
+    renderScene(target, queue, view, lights, true);
+}
+
+void Renderer::renderScene(RenderTarget &target, const RenderQueue &queue, const ViewParams &view,
+                           std::span<const DirectionalLight> lights, bool clearTarget)
+{
     m_stats = {};
     if (target.Empty())
         return;
@@ -88,7 +100,7 @@ void Renderer::RenderScene(RenderTarget &target, const RenderQueue &queue, const
         std::ranges::any_of(queue.GetRenderCommands(), [](const auto &command)
                             { return command.rasterizeMode == ERasterizeMode::Wireframe; });
     stage = FrameClock::now();
-    renderTiles(target, frame, needsDepthPrepass);
+    renderTiles(target, frame, needsDepthPrepass, clearTarget);
     if (m_options.collectStats)
     {
         m_stats.rasterMs = elapsedMilliseconds(stage);
@@ -156,7 +168,8 @@ void Renderer::prepareTileReferences()
                       });
 }
 
-void Renderer::renderTiles(RenderTarget &target, const FrameContext &frame, bool needsDepthPrepass)
+void Renderer::renderTiles(RenderTarget &target, const FrameContext &frame, bool needsDepthPrepass,
+                           bool clearTiles)
 {
     // scatter join 뒤에만 각 타일의 span을 정렬/래스터한다.
     prepareTileReferences();
@@ -164,6 +177,8 @@ void Renderer::renderTiles(RenderTarget &target, const FrameContext &frame, bool
     {
         // 빈 X-ray 프레임에는 타일 작업을 만들지 않되 이전 통계는 지운다.
         std::ranges::fill(m_tileStats, RenderStats{});
+        if (clearTiles)
+            target.Clear();
         return;
     }
     tbb::parallel_for(
@@ -177,6 +192,11 @@ void Renderer::renderTiles(RenderTarget &target, const FrameContext &frame, bool
                         .subspan(m_tileOffsets[index], m_tileOffsets[index + 1] - m_tileOffsets[index]);
                 auto &stats = m_tileStats[index];
                 stats = {};
+                const int x = static_cast<int>(index % frame.tilesX) * tileSize;
+                const int y = static_cast<int>(index / frame.tilesX) * tileSize;
+                // 타일은 화면을 겹침 없이 덮는다. 래스터 직전에 지워 값이 캐시에 남은 채로 쓴다.
+                if (clearTiles)
+                    target.ClearRect(x, y, std::min(x + tileSize, m_width), std::min(y + tileSize, m_height));
                 if (bin.empty())
                     continue;
                 if (m_options.frontToBack)
@@ -187,8 +207,6 @@ void Renderer::renderTiles(RenderTarget &target, const FrameContext &frame, bool
                                       return a->maximumInverseW > b->maximumInverseW;
                                   return a->primitiveId < b->primitiveId;
                               });
-                const int x = static_cast<int>(index % frame.tilesX) * tileSize;
-                const int y = static_cast<int>(index / frame.tilesX) * tileSize;
                 Rasterizer rasterizer(target, frame, m_options.collectStats ? &stats : nullptr);
                 rasterizer.BeginTile(
                     {x, y, std::min(x + tileSize, m_width), std::min(y + tileSize, m_height)}, m_options.hiZ);

@@ -56,6 +56,8 @@ class RenderTarget
     void Detach() noexcept;
     // 색상 padding은 건드리지 않는다. 큰 1/w가 가까우며 같은 깊이는 작은 ID가 이긴다.
     void Clear() noexcept;
+    // [minX, maxX) × [minY, maxY) 사각형만 Clear와 같은 값으로 지운다. 범위는 호출자가 화면 안으로 맞춘다.
+    void ClearRect(int minX, int minY, int maxX, int maxY) noexcept;
 
     [[nodiscard]] PixelSurfaceView Surface() noexcept { return m_surface; }
     [[nodiscard]] ConstPixelSurfaceView Surface() const noexcept
