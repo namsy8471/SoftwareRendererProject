@@ -21,6 +21,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # CODEMAP.md(파일별 역할 표)가 소스 파일 추가·삭제를 따라가는지 확인한다. 빌드 전이라 몇 초 안에 끝난다.
+      - name: Check CODEMAP.md
+        run: python3 tools/ci/check_codemap.py "$GITHUB_WORKSPACE"
+
       - name: Install dependencies
         run: |
           sudo apt-get update

@@ -83,6 +83,8 @@ tools/dev.sh render wire out.png
 
 ## 코드 지도
 
+폴더 단위 요약이다. 파일 하나하나의 역할과 핵심 타입은 [CODEMAP.md](CODEMAP.md)에서 찾는다(파일을 열기 전에 먼저 본다).
+
 | 위치 | 내용 |
 | --- | --- |
 | `src/Renderer/Renderer.cpp` | 프레임 순서: prepareLights → prepareFrame → binCommands → renderTiles → renderLines → applyPostProcessing |
@@ -110,6 +112,7 @@ tools/dev.sh render wire out.png
 - MSVC `/W4 /WX`, GCC `-Wall -Wextra -Werror`. 경고 0을 유지한다. `src/ThirdParty`는 수정하지 않는다.
 - 컴파일러 전용 문법(`__forceinline`, intrinsic 탐지)은 `src/Platform/Compiler.h`나 `SIMD.cpp`처럼 한곳에 감싼다.
 - 새 `.cpp/.h`는 `build/RuntimeSources.props`(앱·테스트·srcli 공통)에 추가한다. CMake는 `src/` 아래 `.cpp`를 자동으로 모은다.
+  `CODEMAP.md`의 해당 폴더 표에도 한 줄 추가한다(파일 이동·삭제도 같이 반영). 빠지면 CI `Check CODEMAP.md`가 실패한다.
   새 테스트 파일은 `RendererTests.vcxproj`에도 추가하고, 테스트는 그 파일의 `Register...Tests`에 등록한다.
 - `src/Modules/sr.math.ixx`(MSBuild)와 `src/Modules/sr.math.h`(CMake, `SR_NO_MODULES`)는 같은 concept을 담는다. 함께 고친다.
 - 장면 구성을 바꾸면(`DemoScene.cpp`의 표) 벤치마크 기준과 골든이 바뀐다. 성능 작업과 섞지 않는다.

@@ -2,7 +2,7 @@
 
 | workflow | 어디서 | 하는 일 |
 | --- | --- | --- |
-| `.github/workflows/ci.yml` `linux` | GitHub 공용 Ubuntu | CMake+GCC 빌드, 단위·골든 테스트, 참고용 벤치 |
+| `.github/workflows/ci.yml` `linux` | GitHub 공용 Ubuntu | `CODEMAP.md` 누락 검사(`check_codemap.py`), CMake+GCC 빌드, 단위·골든 테스트, 참고용 벤치 |
 | `.github/workflows/ci.yml` `linux-sanitize` | GitHub 공용 Ubuntu | ASan+UBSan 빌드로 같은 테스트 + srcli 모드별 짧은 실행 |
 | `.github/workflows/windows.yml` `cloud` (3개 동시) | GitHub 공용 Windows (windows-2025, VS 2026) | Release x64 `RunTests.ps1 -Quick`, `/analyze` 빌드(`/p:SrAnalyze=true`)+테스트, Debug x64 ASan 빌드+테스트 |
 | `.github/workflows/windows.yml` `bench` | 사용자 PC (self-hosted) | main push·수동 실행 때만. `srcli`만 Release x64로 빌드, 1080p `Bench.ps1 -Runs 3`, 절대 기준(p95 <= 9ms)과 main 대비 비교표 |
