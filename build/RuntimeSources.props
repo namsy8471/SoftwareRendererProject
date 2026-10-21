@@ -105,6 +105,19 @@
     <ClInclude Include="src\IO\Gltf.h" />
     <ClInclude Include="src\Graphics\GltfLoader.h" />
   </ItemGroup>
+  <!-- 애니메이션: 쿼터니언, 키프레임 샘플링, 재생기, CPU 스키닝(AVX 커널만 /arch:AVX) -->
+  <ItemGroup>
+    <ClCompile Include="src\Animation\AnimationSampling.cpp" />
+    <ClCompile Include="src\Animation\Animator.cpp" />
+    <ClCompile Include="src\Animation\Skinning.cpp" />
+    <ClCompile Include="src\Animation\SkinningAVX.cpp">
+      <AdditionalOptions>/arch:AVX %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <ClInclude Include="src\Animation\AnimationSampling.h" />
+    <ClInclude Include="src\Animation\Animator.h" />
+    <ClInclude Include="src\Animation\Skinning.h" />
+    <ClInclude Include="src\Math\Quaternion.h" />
+  </ItemGroup>
   <!-- 프로젝트 폴더(.srproj)와 씬 파일(.srscene), 열린 프로젝트 세션 -->
   <ItemGroup>
     <ClCompile Include="src\Project\ProjectFiles.cpp" />

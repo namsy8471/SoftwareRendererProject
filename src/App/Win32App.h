@@ -19,6 +19,10 @@
 class GameObject;
 class Model;
 struct AABB;
+namespace sr::anim
+{
+class Animator;
+}
 
 // Win32 창·메뉴·입력·GDI 표시만 담당한다. 장면 갱신과 렌더 순서는 FrameRunner가,
 // 장면 구성은 DemoScene이 맡아 headless srcli와 같은 프레임을 그린다.
@@ -68,6 +72,9 @@ class Win32App
     // 프레임 시작 훅(Update 도중)에서 MessageBox를 띄우면 그 안의 메시지 루프가 WM_SIZE로 Update를
     // 다시 부른다. 로드 오류는 모아 두었다가 프레임을 다 그린 뒤 표시한다.
     std::vector<AssetLoadError> m_pendingAssetErrors;
+    // 애니메이션 메뉴·단축키가 조작하는 재생기: 마지막으로 연 클립 있는 glTF. 장면이 소유한다.
+    std::weak_ptr<sr::anim::Animator> m_activeAnimator;
+    HMENU m_animationMenu = nullptr; // 메뉴 막대가 소유한다(창과 함께 파괴)
 
     void initializeWindow(HINSTANCE instance, int showCommand);
     void initializeScene();
@@ -90,6 +97,11 @@ class Win32App
     std::shared_ptr<GameObject> placeLoadedObject(std::shared_ptr<GameObject> object, const AABB &bounds);
     // model 하나를 GameObject로 감싸 placeLoadedObject로 넣는다.
     std::shared_ptr<GameObject> placeLoadedModel(std::unique_ptr<Model> model);
+    void initializeAnimationMenu();
+    // 재생/반복 체크, 클립 목록, 활성 여부를 m_activeAnimator 상태에 맞춘다.
+    void refreshAnimationMenu();
+    // 애니메이션 명령이면 처리하고 true.
+    bool handleAnimationCommand(int commandId);
     void showOpenModelDialog();
     void handleDroppedFiles(WPARAM dropHandle); // WM_DROPFILES의 HDROP
 

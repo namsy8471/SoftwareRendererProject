@@ -9,6 +9,10 @@
 #include "Math/SRMath.h"
 
 class Model;
+namespace sr::anim
+{
+class SkinnedMesh;
+}
 
 // 씬 파일과 런타임 물체를 잇는 편집용 정보. 렌더링·갱신은 읽지 않는다.
 // 프로젝트 밖에서 만든 물체(데모 장면, 프로젝트 없이 드롭한 모델)는 id가 비어 있다.
@@ -25,6 +29,9 @@ class GameObject : public std::enable_shared_from_this<GameObject>
     SRMath::vec3 m_position;
     SRMath::vec3 m_rotation;
     SRMath::vec3 m_scale;
+    // 애니메이션이 쓰는 회전. m_useOrientation이면 m_rotation(축 * 각도) 대신 이 쿼터니언으로 행렬을 만든다.
+    SRMath::quat m_orientation;
+    bool m_useOrientation = false;
 
     SRMath::mat4 m_worldMatrix;  // 월드 변환 행렬
     SRMath::mat4 m_normalMatrix; // 법선 행렬 (역전치 행렬)
@@ -32,6 +39,8 @@ class GameObject : public std::enable_shared_from_this<GameObject>
     // Model
     std::unique_ptr<Model> m_model;
     AABB m_worldAABB; // 월드 공간에서의 AABB
+    // 스킨 메시면 렌더는 Model 정점 대신 이 변형 결과를 쓴다(SceneRenderCollector).
+    std::unique_ptr<sr::anim::SkinnedMesh> m_skinnedMesh;
 
     // Hierarchy
     std::weak_ptr<GameObject> m_parent;
@@ -59,9 +68,27 @@ class GameObject : public std::enable_shared_from_this<GameObject>
     [[nodiscard]] SRMath::vec3 GetScale() const noexcept { return m_scale; }
     // 로컬 값만 바꾼다. 행렬과 AABB는 다음 Update(Scene::Update)에서 다시 계산된다.
     void SetPosition(const SRMath::vec3 &position) noexcept { m_position = position; }
-    void SetRotation(const SRMath::vec3 &rotation) noexcept { m_rotation = rotation; }
+    void SetRotation(const SRMath::vec3 &rotation) noexcept
+    {
+        m_rotation = rotation;
+        m_useOrientation = false;
+    }
+    // 쿼터니언 회전(애니메이션). 다음 SetRotation까지 m_rotation과 데모 자동 회전보다 우선한다.
+    void SetOrientation(const SRMath::quat &orientation) noexcept
+    {
+        m_orientation = orientation;
+        m_useOrientation = true;
+    }
+    [[nodiscard]] SRMath::quat GetOrientation() const noexcept
+    {
+        return m_useOrientation ? m_orientation : SRMath::from_rotation_vector(m_rotation);
+    }
     void SetScale(const SRMath::vec3 &scale) noexcept { m_scale = scale; }
     [[nodiscard]] const Model *GetModel() const noexcept { return m_model.get(); }
+    // null이 아니면 스킨 메시다. 소유권은 이 물체에 있고 관절은 같은 계층의 다른 GameObject다.
+    [[nodiscard]] sr::anim::SkinnedMesh *GetSkinnedMesh() noexcept { return m_skinnedMesh.get(); }
+    [[nodiscard]] const sr::anim::SkinnedMesh *GetSkinnedMesh() const noexcept { return m_skinnedMesh.get(); }
+    void SetSkinnedMesh(std::unique_ptr<sr::anim::SkinnedMesh> skinnedMesh) noexcept;
     [[nodiscard]] const EntityInfo &GetEntityInfo() const noexcept { return m_entityInfo; }
     void SetEntityInfo(EntityInfo info) noexcept { m_entityInfo = std::move(info); }
     [[nodiscard]] const AABB &GetWorldAABB() const noexcept { return m_worldAABB; }

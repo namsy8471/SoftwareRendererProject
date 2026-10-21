@@ -6,6 +6,8 @@
 - hierarchy.gltf: 모든 버퍼가 data URI. node 계층(TRS/matrix/인스턴싱), 삼각형 strip, sparse accessor,
   normalized UV, skin(JOINTS_0/WEIGHTS_0), 애니메이션(LINEAR/STEP/CUBICSPLINE)
 - hierarchy.glb: 같은 내용 + bufferView에 넣은 PNG 텍스처를 GLB BIN 청크 하나에 담는다
+- skinned-tube.glb: 관절 2개(Base, Bend)로 휘는 원통(5단계 애니메이션 테스트·골든 anim.png).
+  클립 "Bend"(Bend 회전 LINEAR, Base 이동 STEP)와 "Twist"(Base 회전 CUBICSPLINE)
 """
 import base64
 import json
@@ -188,7 +190,86 @@ def write_glb():
     (HERE / "hierarchy.glb").write_bytes(struct.pack("<III", 0x46546C67, 2, 12 + len(chunks)) + chunks)
 
 
+def skinned_tube():
+    """y=0..2, 반지름 0.3인 뚜껑 없는 원통. y<=0.75는 Base, y>=1.25는 Bend에 붙고 그 사이는 선형으로 섞인다."""
+    b = Builder()
+    rings, segments, height, radius = 13, 16, 2.0, 0.3
+    positions, normals, joints, weights, indices = [], [], [], [], []
+    for r in range(rings):
+        y = height * r / (rings - 1)
+        bend = min(max((y - 0.75) / 0.5, 0.0), 1.0)
+        for k in range(segments):
+            angle = 2 * math.pi * k / segments
+            c, s = math.cos(angle), math.sin(angle)
+            positions.append((radius * c, y, radius * s))
+            normals.append((c, 0.0, s))
+            joints.append((0, 1, 0, 0))
+            weights.append((1.0 - bend, bend, 0.0, 0.0))
+    for r in range(rings - 1):
+        for k in range(segments):
+            a, b2 = r * segments + k, r * segments + (k + 1) % segments
+            c2, d = a + segments, b2 + segments
+            # glTF 앞면은 반시계(바깥에서 볼 때)
+            indices += [a, c2, b2, b2, c2, d]
+    pos = b.accessor("f", FLOAT, "VEC3", positions, minmax=True)
+    nrm = b.accessor("f", FLOAT, "VEC3", normals)
+    jnt = b.accessor("B", UBYTE, "VEC4", joints)
+    wgt = b.accessor("f", FLOAT, "VEC4", weights)
+    idx = b.accessor("H", USHORT, "SCALAR", indices)
+    inverse_bind = b.accessor("f", FLOAT, "MAT4", [
+        [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+        [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, -1, 0, 1]])
+    bend_times = b.accessor("f", FLOAT, "SCALAR", [0.0, 1.0, 2.0], minmax=True)
+    bend_values = b.accessor("f", FLOAT, "VEC4", [quat_axis_angle((0, 0, 1), 0), quat_axis_angle((0, 0, 1), math.pi / 2),
+                                                 quat_axis_angle((0, 0, 1), 0)])
+    step_times = b.accessor("f", FLOAT, "SCALAR", [0.0, 1.0], minmax=True)
+    step_values = b.accessor("f", FLOAT, "VEC3", [(0, 0, 0), (0.25, 0, 0)])
+    twist_times = b.accessor("f", FLOAT, "SCALAR", [0.0, 1.5], minmax=True)
+    zero = (0, 0, 0, 0)
+    twist_values = b.accessor("f", FLOAT, "VEC4", [zero, quat_axis_angle((0, 1, 0), 0), zero,
+                                                  zero, quat_axis_angle((0, 1, 0), math.pi / 2), zero])
+    doc = b.doc
+    doc.update({
+        "scene": 0,
+        "scenes": [{"nodes": [0, 1]}],
+        "nodes": [
+            {"name": "Tube", "mesh": 0, "skin": 0},
+            {"name": "Base", "children": [2]},
+            {"name": "Bend", "translation": [0, 1, 0]},
+        ],
+        "meshes": [{"name": "Tube", "primitives": [
+            {"attributes": {"POSITION": pos, "NORMAL": nrm, "JOINTS_0": jnt, "WEIGHTS_0": wgt}, "indices": idx,
+             "material": 0}]}],
+        "materials": [{"name": "Teal", "pbrMetallicRoughness": {"baseColorFactor": [0.2, 0.7, 0.8, 1.0],
+                                                                 "metallicFactor": 0.0}}],
+        "skins": [{"name": "Rig", "joints": [1, 2], "inverseBindMatrices": inverse_bind, "skeleton": 1}],
+        "animations": [
+            {"name": "Bend", "samplers": [
+                {"input": bend_times, "output": bend_values},
+                {"input": step_times, "output": step_values, "interpolation": "STEP"},
+            ], "channels": [
+                {"sampler": 0, "target": {"node": 2, "path": "rotation"}},
+                {"sampler": 1, "target": {"node": 1, "path": "translation"}},
+            ]},
+            {"name": "Twist", "samplers": [{"input": twist_times, "output": twist_values,
+                                            "interpolation": "CUBICSPLINE"}],
+             "channels": [{"sampler": 0, "target": {"node": 1, "path": "rotation"}}]},
+        ],
+    })
+    return doc, bytes(b.data)
+
+
+def write_glb_file(name, doc, data):
+    doc["buffers"] = [{"byteLength": len(data)}]
+    text = json.dumps(doc, separators=(",", ":")).encode()
+    text += b" " * (-len(text) % 4)
+    data += b"\x00" * (-len(data) % 4)
+    chunks = struct.pack("<II", len(text), 0x4E4F534A) + text + struct.pack("<II", len(data), 0x004E4942) + data
+    (HERE / name).write_bytes(struct.pack("<III", 0x46546C67, 2, 12 + len(chunks)) + chunks)
+
+
 if __name__ == "__main__":
     textured_quad()
     write_gltf_embedded()
     write_glb()
+    write_glb_file("skinned-tube.glb", *skinned_tube())

@@ -50,6 +50,11 @@ void FitCameraToScene(Scene &scene, float aspectRatio)
     AABB sceneBounds;
     for (const auto &object : scene.GetRootObjects())
         sceneBounds.Encapsulate(object->GetWorldAABB());
+    FitCameraToBounds(scene, sceneBounds, aspectRatio);
+}
+
+void FitCameraToBounds(Scene &scene, const AABB &sceneBounds, float aspectRatio)
+{
     const auto center = sceneBounds.Center();
     const auto halfSize = (sceneBounds.max - sceneBounds.min) * 0.5f;
     const float distance =

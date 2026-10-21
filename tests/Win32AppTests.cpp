@@ -2,6 +2,8 @@
 #include "TestHarness.h"
 #if SR_TEST_WIN32_APP
 #include "App/Win32App.h"
+#include "Animation/Animator.h"
+#include "Graphics/GltfLoader.h"
 #include "Core/DemoScene.h"
 #include "Renderer/Renderer.h"
 #include "resource.h"
@@ -17,6 +19,43 @@ using namespace sr::test;
 
 struct Win32AppTestAccess
 {
+    // 애니메이션 메뉴·단축키: 재생기가 없으면 무시하고, 있으면 재생/정지·클립 전환과 메뉴 체크가 맞는다.
+    static void animationMenu(const TestContext &context)
+    {
+        Win32App app(GetModuleHandleW(nullptr), SW_HIDE);
+        const auto keyPress = [&](WPARAM key)
+        {
+            app.HandleMessage(app.m_hWnd, WM_KEYDOWN, key, 0);
+            app.HandleMessage(app.m_hWnd, WM_KEYUP, key, 0);
+        };
+        keyPress('P'); // 재생기 없음: 아무 일 없음
+        check((GetMenuState(app.m_animationMenu, 0, MF_BYPOSITION) & MF_GRAYED) != 0, "menu disabled without clips");
+
+        auto scene = sr::gltf::LoadScene(context.root / "tests/fixtures/gltf/skinned-tube.glb");
+        check(scene.has_value(), "fixture");
+        auto animator = sr::anim::Animator::Create(*scene);
+        check(animator.has_value(), "animator");
+        check(app.placeLoadedObject(scene->root, (*animator)->GetBounds()) != nullptr, "place");
+        app.m_runner.GetScene().AddAnimator(*animator);
+        app.m_activeAnimator = *animator;
+        app.refreshAnimationMenu();
+        check((GetMenuState(app.m_animationMenu, 0, MF_BYPOSITION) & MF_CHECKED) != 0, "playing is checked");
+        // 고정 5개 + 구분선 + 클립 2개
+        check(GetMenuItemCount(app.m_animationMenu) == 8, "clip items listed");
+
+        keyPress('P');
+        check(!(*animator)->IsPlaying(), "P pauses");
+        check((GetMenuState(app.m_animationMenu, 0, MF_BYPOSITION) & MF_CHECKED) == 0, "pause unchecks");
+        keyPress(VK_OEM_6);
+        check((*animator)->GetClip() == 1, "] selects the next clip");
+        check((GetMenuState(app.m_animationMenu, 7, MF_BYPOSITION) & MF_CHECKED) != 0, "clip radio follows");
+        keyPress(VK_OEM_4);
+        check((*animator)->GetClip() == 0, "[ selects the previous clip");
+        keyPress('L');
+        check(!(*animator)->IsLooping(), "L toggles looping");
+        DestroyWindow(app.m_hWnd);
+    }
+
     static void benchmark(int frames, int width, int height, std::string_view mode,
                           std::string_view optimization, bool stats, bool hiddenWireframe);
     static void inputAndMenus()
@@ -181,6 +220,7 @@ void Win32AppTestAccess::benchmark(int frames, int width, int height, std::strin
 void sr::test::RegisterWin32AppTests(TestRegistry &registry)
 {
     registry.Add("win32app.inputAndMenus", Win32AppTestAccess::inputAndMenus);
+    registry.Add("win32app.animationMenu", Win32AppTestAccess::animationMenu);
     registry.Add("win32app.projectMenu", Win32AppTestAccess::projectMenu);
 }
 

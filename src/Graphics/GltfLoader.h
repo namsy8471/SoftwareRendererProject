@@ -27,7 +27,7 @@ class Texture;
 //   독점한다).
 //   - 삼각형만 그린다. points/lines primitive는 경고와 함께 건너뛴다.
 //   - 머티리얼은 baseColor(인자·텍스처)를 Phong 재질로 근사한다.
-//   - skin/animation은 데이터만 꺼내 둔다(5단계 애니메이션이 쓴다). 지금은 화면에 반영하지 않는다.
+//   - skin/animation은 데이터만 꺼내 둔다. 재생·스키닝은 sr::anim::Animator::Create(LoadedScene)가 붙인다.
 namespace sr::gltf
 {
 // 이미지 바이트를 RGBA Texture로 디코딩한다. 비어 있으면 기본 디코더(현재 stb_image, 3단계에서 자체 디코더로

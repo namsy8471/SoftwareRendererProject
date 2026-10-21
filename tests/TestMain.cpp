@@ -117,6 +117,7 @@ int main(int argc, char **argv)
         RegisterGoldenTests(registry);
         RegisterIOTests(registry);
         RegisterGltfTests(registry);
+        RegisterAnimationTests(registry);
         RegisterProjectTests(registry);
 #if SR_TEST_WIN32_APP
         RegisterWin32AppTests(registry);

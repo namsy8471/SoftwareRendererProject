@@ -1,6 +1,7 @@
 #include "App/Win32App.h"
 #include "resource.h"
 #include "Core/DemoScene.h"
+#include "Animation/Animator.h"
 #include "Graphics/GltfLoader.h"
 #include "Graphics/Model.h"
 #include "Graphics/ModelLoader.h"
@@ -89,6 +90,27 @@ constexpr std::chrono::microseconds assetApplyBudget{500};
 // 새 모델은 카메라 앞 이 거리에, 가장 긴 변이 이 크기가 되도록 놓는다(월드 단위).
 constexpr float placementDistance = 5.f;
 constexpr float placementSize = 2.f;
+
+// 애니메이션 메뉴는 리소스(.rc)에 없고 시작 시 메뉴 막대 끝에 만든다. ID는 resource.h의 명령 범위 뒤를 쓴다.
+constexpr int ID_ANIM_PLAYPAUSE = 32791;
+constexpr int ID_ANIM_RESTART = 32792;
+constexpr int ID_ANIM_LOOP = 32793;
+constexpr int ID_ANIM_PREVCLIP = 32794;
+constexpr int ID_ANIM_NEXTCLIP = 32795;
+// 클립 선택 항목: ID_ANIM_CLIP_FIRST + 클립 번호. 메뉴에는 앞쪽 maxClipMenuItems개만 보인다([ ]로는 전부 고를 수 있다).
+constexpr int ID_ANIM_CLIP_FIRST = 32800;
+constexpr int maxClipMenuItems = 64;
+struct AnimationMenuItem
+{
+    int commandId;
+    const wchar_t *label;
+};
+constexpr std::array animationMenuItems{
+    AnimationMenuItem{ID_ANIM_PLAYPAUSE, L"\uC7AC\uC0DD/\uC77C\uC2DC\uC815\uC9C0\tP"},
+    AnimationMenuItem{ID_ANIM_RESTART, L"\uCC98\uC74C\uBD80\uD130\tHome"},
+    AnimationMenuItem{ID_ANIM_LOOP, L"\uBC18\uBCF5\tL"},
+    AnimationMenuItem{ID_ANIM_PREVCLIP, L"\uC774\uC804 \uD074\uB9BD\t["},
+    AnimationMenuItem{ID_ANIM_NEXTCLIP, L"\uB2E4\uC74C \uD074\uB9BD\t]"}};
 } // namespace
 
 Win32App::Win32App(HINSTANCE hInstance, int nCmdShow)
@@ -164,6 +186,7 @@ void Win32App::initializeWindow(HINSTANCE hInstance, int nCmdShow)
         throw std::runtime_error("Failed to initialize file menu");
     initializeProjectMenu(fileMenu, 2);
     DragAcceptFiles(m_hWnd, TRUE);
+    initializeAnimationMenu();
 
     ShowWindow(m_hWnd, nCmdShow);
     UpdateWindow(m_hWnd);
@@ -224,25 +247,52 @@ void Win32App::loadModelAsync(std::filesystem::path path)
                            [](wchar_t c) { return static_cast<wchar_t>(std::towlower(c)); });
     if (extension == L".gltf" || extension == L".glb")
     {
-        using SceneResult = std::expected<sr::gltf::LoadedScene, AssetLoadError>;
-        m_loader.Submit([path](std::stop_token) { return sr::gltf::LoadScene(path); },
-                        [this, path](SceneResult result)
-                        {
-                            if (!result)
-                            {
-                                m_pendingAssetErrors.push_back(std::move(result.error()));
-                                return;
-                            }
-                            // skin·animation 데이터는 5단계(애니메이션)에서 쓴다. 지금은 계층과 메시만 장면에 넣는다.
-                            if (!result->warnings.empty())
-                            {
-                                std::string message = "Loaded with warnings:";
-                                for (const auto &warning : result->warnings)
-                                    message += "\n- " + warning;
-                                m_pendingAssetErrors.push_back({std::move(message), path});
-                            }
-                            placeLoadedObject(std::move(result->root), result->bounds);
-                        });
+        // 파싱과 스킨 준비(Animator::Create)는 작업 스레드에서, 장면·재생기 추가는 프레임 시작 훅에서 한다.
+        struct LoadedGltf
+        {
+            sr::gltf::LoadedScene scene;
+            std::shared_ptr<sr::anim::Animator> animator;
+        };
+        using SceneResult = std::expected<LoadedGltf, AssetLoadError>;
+        m_loader.Submit(
+            [path](std::stop_token) -> SceneResult
+            {
+                auto scene = sr::gltf::LoadScene(path);
+                if (!scene)
+                    return std::unexpected(std::move(scene.error()));
+                auto animator = sr::anim::Animator::Create(*scene);
+                if (!animator)
+                    return std::unexpected(AssetLoadError{"Animation setup failed: " + animator.error(), path});
+                return LoadedGltf{std::move(*scene), std::move(*animator)};
+            },
+            [this, path](SceneResult result)
+            {
+                if (!result)
+                {
+                    m_pendingAssetErrors.push_back(std::move(result.error()));
+                    return;
+                }
+                auto &[scene, animator] = *result;
+                std::vector<std::string> warnings = scene.warnings;
+                warnings.insert(warnings.end(), animator->GetWarnings().begin(), animator->GetWarnings().end());
+                if (!warnings.empty())
+                {
+                    std::string message = "Loaded with warnings:";
+                    for (const auto &warning : warnings)
+                        message += "\n- " + warning;
+                    m_pendingAssetErrors.push_back({std::move(message), path});
+                }
+                // 스킨 메시는 정적 AABB가 바인드 포즈 기준이라 실제 첫 포즈의 경계로 배치한다.
+                const AABB posedBounds = animator->GetBounds();
+                if (!placeLoadedObject(std::move(scene.root), posedBounds.IsValid() ? posedBounds : scene.bounds))
+                    return;
+                m_runner.GetScene().AddAnimator(animator);
+                if (animator->GetClipCount() > 0)
+                {
+                    m_activeAnimator = animator;
+                    refreshAnimationMenu();
+                }
+            });
         return;
     }
     if (extension != L".obj")
@@ -294,6 +344,96 @@ std::shared_ptr<GameObject> Win32App::placeLoadedObject(std::shared_ptr<GameObje
         return nullptr;
     }
     return object;
+}
+
+void Win32App::initializeAnimationMenu()
+{
+    m_animationMenu = CreatePopupMenu();
+    if (!m_animationMenu)
+        throw std::runtime_error("Failed to initialize animation menu");
+    for (const auto &item : animationMenuItems)
+        if (!AppendMenuW(m_animationMenu, MF_STRING, static_cast<UINT_PTR>(item.commandId), item.label))
+            throw std::runtime_error("Failed to initialize animation menu");
+    if (!AppendMenuW(m_animationMenu, MF_SEPARATOR, 0, nullptr) ||
+        !AppendMenuW(GetMenu(m_hWnd), MF_POPUP, reinterpret_cast<UINT_PTR>(m_animationMenu),
+                     L"\uC560\uB2C8\uBA54\uC774\uC158(&N)"))
+        throw std::runtime_error("Failed to initialize animation menu");
+    refreshAnimationMenu();
+}
+
+void Win32App::refreshAnimationMenu()
+{
+    if (!m_animationMenu)
+        return;
+    // 고정 항목 + 구분선 뒤의 클립 목록을 다시 만든다.
+    const int fixedItems = static_cast<int>(animationMenuItems.size()) + 1;
+    while (GetMenuItemCount(m_animationMenu) > fixedItems)
+        DeleteMenu(m_animationMenu, fixedItems, MF_BYPOSITION);
+
+    const auto animator = m_activeAnimator.lock();
+    const UINT enabled = animator ? MF_ENABLED : MF_GRAYED;
+    for (const auto &item : animationMenuItems)
+        EnableMenuItem(m_animationMenu, static_cast<UINT>(item.commandId), MF_BYCOMMAND | enabled);
+    checkMenuItem(ID_ANIM_PLAYPAUSE, animator && animator->IsPlaying());
+    checkMenuItem(ID_ANIM_LOOP, animator && animator->IsLooping());
+    if (!animator)
+    {
+        AppendMenuW(m_animationMenu, MF_STRING | MF_GRAYED, 0, L"(\uC560\uB2C8\uBA54\uC774\uC158\uC774 \uC788\uB294 glTF\uB97C \uC5EC\uC138\uC694)");
+        DrawMenuBar(m_hWnd);
+        return;
+    }
+    const std::size_t shown = std::min<std::size_t>(animator->GetClipCount(), maxClipMenuItems);
+    for (std::size_t clip = 0; clip < shown; ++clip)
+    {
+        std::wstring label = utf8ToWide(std::string(animator->GetClipName(clip)));
+        if (label.empty())
+            label = L"Clip " + std::to_wstring(clip);
+        AppendMenuW(m_animationMenu, MF_STRING, static_cast<UINT_PTR>(ID_ANIM_CLIP_FIRST + clip), label.c_str());
+    }
+    if (animator->GetClip() >= 0 && animator->GetClip() < maxClipMenuItems)
+        CheckMenuRadioItem(m_animationMenu, ID_ANIM_CLIP_FIRST,
+                           ID_ANIM_CLIP_FIRST + static_cast<UINT>(shown) - 1,
+                           ID_ANIM_CLIP_FIRST + static_cast<UINT>(animator->GetClip()), MF_BYCOMMAND);
+    DrawMenuBar(m_hWnd);
+}
+
+bool Win32App::handleAnimationCommand(int commandId)
+{
+    const bool clipItem = commandId >= ID_ANIM_CLIP_FIRST && commandId < ID_ANIM_CLIP_FIRST + maxClipMenuItems;
+    if (!clipItem && std::ranges::none_of(animationMenuItems, [&](const auto &item) { return item.commandId == commandId; }))
+        return false;
+    const auto animator = m_activeAnimator.lock();
+    if (!animator)
+        return true;
+    const std::size_t clipCount = animator->GetClipCount();
+    const std::size_t current = animator->GetClip() >= 0 ? static_cast<std::size_t>(animator->GetClip()) : 0;
+    switch (commandId)
+    {
+    case ID_ANIM_PLAYPAUSE:
+        animator->SetPlaying(!animator->IsPlaying());
+        break;
+    case ID_ANIM_RESTART:
+        animator->SetTime(0.f);
+        animator->SetPlaying(true);
+        break;
+    case ID_ANIM_LOOP:
+        animator->SetLooping(!animator->IsLooping());
+        break;
+    case ID_ANIM_PREVCLIP:
+        if (clipCount > 0)
+            animator->SetClip((current + clipCount - 1) % clipCount);
+        break;
+    case ID_ANIM_NEXTCLIP:
+        if (clipCount > 0)
+            animator->SetClip((current + 1) % clipCount);
+        break;
+    default:
+        animator->SetClip(static_cast<std::size_t>(commandId - ID_ANIM_CLIP_FIRST));
+        animator->SetPlaying(true);
+        break;
+    }
+    refreshAnimationMenu();
+    return true;
 }
 
 void Win32App::showOpenModelDialog()
@@ -482,6 +622,9 @@ bool Win32App::handleMenuCommand(int commandId)
         return true;
     }
 
+    if (handleAnimationCommand(commandId))
+        return true;
+
     switch (commandId)
     {
     case ID_LINEALGORITHM_BRESENHAM:
@@ -562,6 +705,16 @@ void Win32App::handleKeyDown(WPARAM key, bool repeated)
         else if (key == 'S')
             handleMenuCommand(shift ? ID_FILE_SAVESCENEAS : ID_FILE_SAVESCENE);
     }
+    else if (key == 'P')
+        handleMenuCommand(ID_ANIM_PLAYPAUSE);
+    else if (key == 'L')
+        handleMenuCommand(ID_ANIM_LOOP);
+    else if (key == VK_HOME)
+        handleMenuCommand(ID_ANIM_RESTART);
+    else if (key == VK_OEM_4) // [
+        handleMenuCommand(ID_ANIM_PREVCLIP);
+    else if (key == VK_OEM_6) // ]
+        handleMenuCommand(ID_ANIM_NEXTCLIP);
 }
 
 void Win32App::checkMenuItem(int menuId, bool checked) const noexcept

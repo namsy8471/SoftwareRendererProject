@@ -9,6 +9,10 @@
 #include "Scene/Camera.h"
 
 class GameObject;
+namespace sr::anim
+{
+class Animator;
+}
 
 // 창·입력·렌더러와 무관한 장면 데이터: 루트 물체 목록, 광원, 카메라.
 // DemoScene 표, 이후의 프로젝트/씬 파일 로더가 모두 AddObject/AddLight로 같은 Scene을 채운다.
@@ -32,8 +36,10 @@ class Scene
                                  const std::shared_ptr<GameObject> &parent = nullptr);
     void AddLight(const DirectionalLight &light) { m_lights.push_back(light); }
     void SetCamera(const Camera &camera) noexcept { m_camera = camera; }
+    // 재생기의 node들은 이 장면에 넣은 물체여야 한다(보통 같은 glTF root). null은 무시한다.
+    void AddAnimator(std::shared_ptr<sr::anim::Animator> animator);
 
-    // 카메라(입력·종횡비)와 루트부터 전위 순서로 물체 transform을 갱신한다.
+    // 카메라(입력·종횡비) → 애니메이션 포즈 → 루트부터 전위 순서로 물체 transform → 스킨 변형 순서로 갱신한다.
     // keys는 Win32 virtual-key 순번이다. aspectRatio는 0보다 커야 한다.
     void Update(float deltaTime, float aspectRatio, std::span<const bool, keyCount> keys);
 
@@ -44,6 +50,10 @@ class Scene
     {
         return m_rootObjects;
     }
+    [[nodiscard]] std::span<const std::shared_ptr<sr::anim::Animator>> GetAnimators() const noexcept
+    {
+        return m_animators;
+    }
     // 데모의 Y축 자동 회전(초당 0.4 rad). 애니메이션 컴포넌트가 생기면 그쪽으로 옮긴다.
     [[nodiscard]] bool IsRotateMode() const noexcept { return m_isRotateMode; }
     void SetRotateMode(bool rotate) noexcept { m_isRotateMode = rotate; }
@@ -51,6 +61,7 @@ class Scene
   private:
     std::vector<std::shared_ptr<GameObject>> m_rootObjects;
     std::vector<DirectionalLight> m_lights;
+    std::vector<std::shared_ptr<sr::anim::Animator>> m_animators;
     Camera m_camera;
     bool m_isRotateMode = true;
 };

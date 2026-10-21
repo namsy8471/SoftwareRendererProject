@@ -36,6 +36,8 @@ options:
   --stats             collect renderer counters and pass timings (slower)
   --threads N         limit oneTBB parallelism (default: all cores)
   --load-every N      bench: load teapot.obj in the background every N frames (results discarded)
+  --scene FILE        render this .gltf/.glb instead of the demo scene and play its animation
+  --clip N            animation clip index for --scene (default 0)
   --assets DIR        asset folder (default: <exe dir>/assets, then repo assets/, then ./assets)
   --target-fps F      fps goal reported in output (default 100)
   --require-target    bench exits with 3 when mean fps < target
@@ -142,6 +144,10 @@ Options parseArguments(int argc, char **argv)
             config.threads = parseOrDie<int>(next(), "threads");
         else if (argument == "--load-every")
             config.backgroundLoadInterval = parseOrDie<int>(next(), "load interval");
+        else if (argument == "--scene")
+            config.scenePath = std::filesystem::path(next());
+        else if (argument == "--clip")
+            config.clip = parseOrDie<int>(next(), "clip");
         else if (argument == "--assets")
             config.assetDirectory = next();
         else if (argument == "--target-fps")
@@ -240,6 +246,11 @@ std::string toJson(const Options &options, const sr::headless::RunResult &result
         out << ",\"load_every\":" << config.backgroundLoadInterval
             << ",\"loads_submitted\":" << result.backgroundLoadsSubmitted
             << ",\"loads_applied\":" << result.backgroundLoadsApplied;
+    if (!config.scenePath.empty())
+        out << ",\"scene\":\"" << jsonEscape(config.scenePath.generic_string()) << "\""
+            << ",\"clip\":\"" << jsonEscape(result.clipName) << "\""
+            << ",\"skinned_vertices\":" << result.skinnedVertices << ",\"joints\":" << result.skinJoints
+            << ",\"anim_ms\":" << timing.animationMeanMs;
     if (options.outPath)
         out << ",\"png\":\"" << jsonEscape(options.outPath->generic_string()) << "\"";
     if (config.options.collectStats)
