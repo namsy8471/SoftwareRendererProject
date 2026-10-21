@@ -145,7 +145,7 @@ class Renderer
     static void clipPolygonAgainstPlane(ClipBuffer &, const ClipBuffer &, const __m128 &);
     static void clipTriangle(ClipBuffer &, const ShadedVertex &, const ShadedVertex &, const ShadedVertex &,
                              ClipBuffer &, ClipBuffer &);
-    void renderTiles(RenderTarget &, const FrameContext &, bool needsDepthPrepass);
+    void renderTiles(RenderTarget &, const FrameContext &, bool needsDepthPrepass, bool clearTiles = false);
     void renderLines(RenderTarget &, const RenderQueue &, const FrameContext &);
     void renderDepthTestedLines(RenderTarget &, const RenderQueue &, const FrameContext &);
     void applyPostProcessing(RenderTarget &);
@@ -165,4 +165,12 @@ class Renderer
     // 같은 Renderer/target을 동시에 호출하지 않는다. 빈 target은 안전한 no-op이다.
     void RenderScene(RenderTarget &target, const RenderQueue &queue, const ViewParams &view,
                      std::span<const DirectionalLight> lights);
+    // target.Clear()를 따로 부르지 않고 각 타일 작업이 래스터 직전에 자기 타일을 지운다.
+    // 결과는 Clear 후 RenderScene과 같다. 전체를 한 번 더 도는 병렬 단계와 그 동기화가 사라진다.
+    void ClearAndRenderScene(RenderTarget &target, const RenderQueue &queue, const ViewParams &view,
+                             std::span<const DirectionalLight> lights);
+
+  private:
+    void renderScene(RenderTarget &, const RenderQueue &, const ViewParams &, std::span<const DirectionalLight>,
+                     bool clearTarget);
 };
