@@ -44,6 +44,11 @@ class Rasterizer
                                                    const ShadedVertex &, int width, int height,
                                                    std::uint64_t primitiveId,
                                                    const MeshRenderCommand *command);
+    // Prepare에서 화면 정점 변환 뒤의 부분. 이미 변환한 정점을 받는다(정점 공유 캐시용).
+    static std::optional<PreparedTriangle> PrepareRaster(const RasterizerVertex &, const RasterizerVertex &,
+                                                         const RasterizerVertex &, int width, int height,
+                                                         std::uint64_t primitiveId,
+                                                         const MeshRenderCommand *command);
     void BeginTile(TileBounds bounds, bool hiZ);
     // 선의 픽셀 위상을 바꾸지 않고 담당 행만 그린다. Bresenham은 원래
     // 정수 오차 상태를 복원해 건너뛰며 DDA는 순차 누적을 유지한다. 서로 겹치지 않는

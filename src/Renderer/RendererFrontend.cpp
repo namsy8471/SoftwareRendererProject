@@ -40,6 +40,7 @@ void Renderer::WorkerScratch::BeginCommand(std::size_t vertexCount)
     if (++commandStamp == 0)
     {
         std::ranges::fill(vertexStamps, 0);
+        std::ranges::fill(setupStamps, 0);
         commandStamp = 1;
     }
     // 두 resize 사이에 할당 실패가 나도 다음 호출에서 각각 부족한 저장소를
@@ -48,6 +49,10 @@ void Renderer::WorkerScratch::BeginCommand(std::size_t vertexCount)
         shadedVertices.resize(vertexCount);
     if (vertexStamps.size() < vertexCount)
         vertexStamps.resize(vertexCount, 0);
+    if (vertexSetups.size() < vertexCount)
+        vertexSetups.resize(vertexCount);
+    if (setupStamps.size() < vertexCount)
+        setupStamps.resize(vertexCount, 0);
 }
 bool Renderer::WorkerScratch::BeginCachedCommand(const MeshRenderCommand &command,
                                                  const SRMath::mat4 &viewProjection)
@@ -70,7 +75,8 @@ bool Renderer::WorkerScratch::BeginCachedCommand(const MeshRenderCommand &comman
             key.viewProjectionBits[index] = std::bit_cast<std::uint32_t>(viewProjection.cols[column][row]);
         }
     if (transformCacheValid && transformCacheKey == key &&
-        shadedVertices.size() >= key.vertexCount && vertexStamps.size() >= key.vertexCount)
+        shadedVertices.size() >= key.vertexCount && vertexStamps.size() >= key.vertexCount &&
+        vertexSetups.size() >= key.vertexCount && setupStamps.size() >= key.vertexCount)
         return true;
 
     // Octree의 index 부분집합과 material은 정점 변환에 영향을 주지 않는다.
@@ -122,6 +128,22 @@ const ShadedVertex &Renderer::cachedVertex(unsigned int index, const MeshRenderC
         scratch.vertexStamps[index] = scratch.commandStamp;
     }
     return scratch.shadedVertices[index];
+}
+const Renderer::WorkerScratch::VertexSetup &Renderer::vertexSetup(unsigned int index, const ShadedVertex &vertex,
+                                                                  WorkerScratch &scratch) const
+{
+    auto &setup = scratch.vertexSetups[index];
+    if (scratch.setupStamps[index] != scratch.commandStamp)
+    {
+        // processCommand와 Rasterizer::Prepare가 꼭짓점마다 하던 계산을 같은 식 그대로 옮겼다.
+        setup.finiteClip = std::isfinite(vertex.posClip.x) && std::isfinite(vertex.posClip.y) &&
+                           std::isfinite(vertex.posClip.z) && std::isfinite(vertex.posClip.w);
+        setup.outcode = computeOutcode(vertex.posClip);
+        setup.ndc = SRMath::vec3(vertex.posClip) / vertex.posClip.w;
+        setup.raster = Rasterizer::ToRasterizerVertex(vertex, m_width, m_height);
+        scratch.setupStamps[index] = scratch.commandStamp;
+    }
+    return setup;
 }
 void Renderer::prepareFrame()
 {
@@ -192,22 +214,21 @@ void Renderer::processCommand(const MeshRenderCommand &cmd, const FrameContext &
         const auto &sv0 = cachedVertex(i0, cmd, mvp, inverseTransposeWorld, scratch);
         const auto &sv1 = cachedVertex(i1, cmd, mvp, inverseTransposeWorld, scratch);
         const auto &sv2 = cachedVertex(i2, cmd, mvp, inverseTransposeWorld, scratch);
-
-        const SRMath::vec4 &v0Clip = sv0.posClip;
-        const SRMath::vec4 &v1Clip = sv1.posClip;
-        const SRMath::vec4 &v2Clip = sv2.posClip;
+        const auto &setup0 = vertexSetup(i0, sv0, scratch);
+        const auto &setup1 = vertexSetup(i1, sv1, scratch);
+        const auto &setup2 = vertexSetup(i2, sv2, scratch);
 
         const auto finiteClip = [](const SRMath::vec4 &clip)
         {
             return std::isfinite(clip.x) && std::isfinite(clip.y) && std::isfinite(clip.z) &&
                    std::isfinite(clip.w);
         };
-        if (!finiteClip(v0Clip) || !finiteClip(v1Clip) || !finiteClip(v2Clip))
+        if (!setup0.finiteClip || !setup1.finiteClip || !setup2.finiteClip)
             continue;
 
-        const auto outcode0 = computeOutcode(v0Clip);
-        const auto outcode1 = computeOutcode(v1Clip);
-        const auto outcode2 = computeOutcode(v2Clip);
+        const auto outcode0 = setup0.outcode;
+        const auto outcode1 = setup1.outcode;
+        const auto outcode2 = setup2.outcode;
 
         // 같은 clip 평면 밖에 있는 삼각형은 교차 계산 없이 기각할 수 있다.
         if ((outcode0 & outcode1 & outcode2) != 0)
@@ -239,16 +260,25 @@ void Renderer::processCommand(const MeshRenderCommand &cmd, const FrameContext &
                  (!finiteClip(a.posClip) || !finiteClip(b.posClip) || !finiteClip(c.posClip))) ||
                 a.posClip.w <= 0.f || b.posClip.w <= 0.f || c.posClip.w <= 0.f)
                 continue;
-            const auto aNdc = SRMath::vec3(a.posClip) / a.posClip.w;
-            const auto bNdc = SRMath::vec3(b.posClip) / b.posClip.w;
-            const auto cNdc = SRMath::vec3(c.posClip) / c.posClip.w;
+            const auto aNdc = triviallyAccepted ? setup0.ndc : SRMath::vec3(a.posClip) / a.posClip.w;
+            const auto bNdc = triviallyAccepted ? setup1.ndc : SRMath::vec3(b.posClip) / b.posClip.w;
+            const auto cNdc = triviallyAccepted ? setup2.ndc : SRMath::vec3(c.posClip) / c.posClip.w;
             const float area = (bNdc.x - aNdc.x) * (cNdc.y - aNdc.y) - (bNdc.y - aNdc.y) * (cNdc.x - aNdc.x);
             // 기존 좌표계에서 앞면은 NDC의 CW(음수 면적)다.
             if (!std::isfinite(area) || area >= 0.f)
                 continue;
             const auto primitiveId =
                 (triangleBase + static_cast<std::uint64_t>(i / 3)) * 16 + static_cast<std::uint64_t>(fan);
-            binTriangle(cmd, a, b, c, frame, scratch, primitiveId);
+            if (triviallyAccepted)
+            {
+                // 세 정점은 위에서 유한하고 w > 0임을 확인했다(Prepare의 첫 검사와 같다).
+                const auto prepared = Rasterizer::PrepareRaster(setup0.raster, setup1.raster, setup2.raster,
+                                                                m_width, m_height, primitiveId, &cmd);
+                if (prepared)
+                    binPrepared(cmd, *prepared, frame, scratch);
+            }
+            else
+                binTriangle(cmd, a, b, c, frame, scratch, primitiveId);
         }
     }
 }
@@ -257,12 +287,15 @@ void Renderer::binTriangle(const MeshRenderCommand &cmd, const ShadedVertex &v0,
                            std::uint64_t primitiveId)
 {
     const auto prepared = Rasterizer::Prepare(v0, v1, v2, m_width, m_height, primitiveId, &cmd);
-    if (!prepared)
-        return;
-
+    if (prepared)
+        binPrepared(cmd, *prepared, frame, scratch);
+}
+void Renderer::binPrepared(const MeshRenderCommand &cmd, const PreparedTriangle &prepared, const FrameContext &frame,
+                           WorkerScratch &scratch)
+{
     // 숨은 선 모드에서는 같은 준비 결과를 depth-only 면 패스에도 전달한다. 병렬로
     // 늘어나는 concurrent_vector는 기존 요소를 옮기지 않아 bin 포인터가 유효하다.
-    auto it = scratch.triangles.emplace_back(*prepared);
+    auto it = scratch.triangles.emplace_back(prepared);
     TriangleRef *finalTri = &(*it);
 
     if (cmd.rasterizeMode == ERasterizeMode::Wireframe)

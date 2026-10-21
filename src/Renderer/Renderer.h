@@ -107,6 +107,18 @@ class Renderer
         ClipBuffer clipInput, clipOutput, clippedVertices;
         std::vector<ShadedVertex> shadedVertices;
         std::vector<std::uint64_t> vertexStamps;
+        // 정점 하나는 평균 여섯 삼각형이 공유한다. clip 검사, NDC, 화면 정점(1/w, 원근 보정 속성)을
+        // 삼각형 꼭짓점마다가 아니라 정점마다 한 번만 계산해 둔다. 같은 함수에 같은 입력이라 값은 같다.
+        // setupStamps가 commandStamp와 같을 때만 유효하다(shadedVertices와 같은 세대 규칙).
+        struct VertexSetup
+        {
+            RasterizerVertex raster;
+            SRMath::vec3 ndc;
+            std::uint8_t outcode = 0;
+            bool finiteClip = false;
+        };
+        std::vector<VertexSetup> vertexSetups;
+        std::vector<std::uint64_t> setupStamps;
         std::uint64_t commandStamp = 0;
         // 한 worker의 현재 프레임에서 마지막으로 처리한 키 하나만 재사용한다.
         // 포인터는 queue와 같은 수명 계약으로 빌리며 프레임 밖으로 재사용하지 않는다.
@@ -136,6 +148,8 @@ class Renderer
     void binTriangle(const MeshRenderCommand &, const ShadedVertex &, const ShadedVertex &,
                      const ShadedVertex &, const FrameContext &, WorkerScratch &,
                      std::uint64_t primitiveId = 0);
+    void binPrepared(const MeshRenderCommand &, const PreparedTriangle &, const FrameContext &, WorkerScratch &);
+    const WorkerScratch::VertexSetup &vertexSetup(unsigned int, const ShadedVertex &, WorkerScratch &) const;
     static ShadedVertex shadeVertex(const Vertex &, const SRMath::mat4 &, const SRMath::mat4 &,
                                     const SRMath::mat4 &);
     static const ShadedVertex &cachedVertex(unsigned int, const MeshRenderCommand &, const SRMath::mat4 &,

@@ -173,12 +173,23 @@ std::optional<PreparedTriangle> Rasterizer::Prepare(const ShadedVertex &a, const
     for (const auto *v : {&a, &b, &c})
         if (!finiteClip(v->posClip) || !(v->posClip.w > 0.f))
             return std::nullopt;
+    return PrepareRaster(ToRasterizerVertex(a, width, height), ToRasterizerVertex(b, width, height),
+                         ToRasterizerVertex(c, width, height), width, height, primitiveId, command);
+}
+
+std::optional<PreparedTriangle> Rasterizer::PrepareRaster(const RasterizerVertex &a, const RasterizerVertex &b,
+                                                          const RasterizerVertex &c, int width, int height,
+                                                          std::uint64_t primitiveId,
+                                                          const MeshRenderCommand *command)
+{
+    if (width <= 0 || height <= 0 || primitiveId == noPrimitive)
+        return std::nullopt;
     PreparedTriangle t{};
     t.sourceCommand = command;
     t.primitiveId = primitiveId;
-    t.rv0 = ToRasterizerVertex(a, width, height);
-    t.rv1 = ToRasterizerVertex(b, width, height);
-    t.rv2 = ToRasterizerVertex(c, width, height);
+    t.rv0 = a;
+    t.rv1 = b;
+    t.rv2 = c;
     for (const auto *v : {&t.rv0, &t.rv1, &t.rv2})
         if (!std::isfinite(v->screenPos.x) || !std::isfinite(v->screenPos.y) || !std::isfinite(v->oneOverW) ||
             !(v->oneOverW > 0.f) ||
