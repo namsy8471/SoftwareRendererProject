@@ -4,6 +4,7 @@
 #include "Platform/Compiler.h"
 #include <algorithm>
 #include <cmath>
+#include <smmintrin.h>
 #include <limits>
 #include <utility>
 
@@ -19,9 +20,18 @@ bool finiteClip(const SRMath::vec4 &p)
 
 std::uint32_t packColor(const SRMath::vec3 &c)
 {
-    const auto channel = [](float value) -> std::uint32_t
-    { return std::isfinite(value) ? static_cast<std::uint32_t>(std::clamp(value, 0.f, 1.f) * 255.f) : 0u; };
-    return (channel(c.x) << 16) | (channel(c.y) << 8) | channel(c.z);
+    // 채널마다 "isfinite(v) ? uint32(clamp(v, 0, 1) * 255) : 0"을 세 채널 한 번에 계산한다.
+    // 유한한 v에서 max(min(v, 1), 0)은 std::clamp와 값이 같다(-0만 다르지만 * 255 후 절삭하면 둘 다 0).
+    // NaN/inf 채널은 |v| < inf 마스크로 0이 된다. 모든 2^32 float에서 기존 식과 같음을 확인했다.
+    const __m128 finite = _mm_cmplt_ps(_mm_andnot_ps(_mm_set1_ps(-0.f), c.m128),
+                                       _mm_set1_ps(std::numeric_limits<float>::infinity()));
+    const __m128 clamped = _mm_max_ps(_mm_min_ps(c.m128, _mm_set1_ps(1.f)), _mm_setzero_ps());
+    const __m128i channels =
+        _mm_and_si128(_mm_cvttps_epi32(_mm_mul_ps(clamped, _mm_set1_ps(255.f))), _mm_castps_si128(finite));
+    // [r, g, b, w] → [b, g, r, w]로 바꿔 바이트로 줄이면 하위 3바이트가 b | g << 8 | r << 16이다.
+    const __m128i bgr = _mm_shuffle_epi32(channels, _MM_SHUFFLE(3, 0, 1, 2));
+    const __m128i bytes = _mm_packus_epi16(_mm_packus_epi32(bgr, bgr), _mm_setzero_si128());
+    return static_cast<std::uint32_t>(_mm_cvtsi128_si32(bytes)) & 0x00FFFFFFu;
 }
 
 // 큰 화면에서도 고정소수점 signed overflow를 만들지 않는다. 2^60 여유는
