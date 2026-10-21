@@ -44,6 +44,8 @@ struct Huffman
                     return false;
                 sizes[symbol++] = static_cast<std::uint8_t>(length);
             }
+        if (symbol >= static_cast<int>(sizes.size()))
+            return false;
         sizes[symbol] = 0;
 
         std::uint32_t code = 0;

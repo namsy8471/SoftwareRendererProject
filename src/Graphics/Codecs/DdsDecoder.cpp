@@ -96,7 +96,12 @@ void decodeChannelBlock(const std::uint8_t *src, int channel, Block &block) noex
     for (int i = 0; i < 6; ++i)
         bits |= std::uint64_t{src[2 + i]} << (8 * i);
     for (int i = 0; i < 16; ++i)
-        block[i][channel] = values[(bits >> (3 * i)) & 7];
+    {
+        // /analyze가 & 7의 범위를 증명하지 못해 명시적으로 확인한다.
+        const auto code = static_cast<std::size_t>((bits >> (3 * i)) & 7u);
+        if (code < values.size())
+            block[i][channel] = values[code];
+    }
 }
 
 // ---- BC7 (BPTC) ----

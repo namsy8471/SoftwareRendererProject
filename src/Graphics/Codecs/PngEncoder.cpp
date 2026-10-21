@@ -75,12 +75,12 @@ void writeLiteral(BitWriter &writer, int symbol)
 void writeMatch(BitWriter &writer, int length, int distance)
 {
     int lengthSymbol = 28;
-    while (lengthBase[lengthSymbol] > length)
+    while (lengthSymbol > 0 && lengthBase[lengthSymbol] > length)
         --lengthSymbol;
     writeLiteral(writer, 257 + lengthSymbol);
     writer.write(static_cast<std::uint32_t>(length - lengthBase[lengthSymbol]), lengthExtra[lengthSymbol]);
     int distanceSymbol = 29;
-    while (distanceBase[distanceSymbol] > distance)
+    while (distanceSymbol > 0 && distanceBase[distanceSymbol] > distance)
         --distanceSymbol;
     writer.writeCode(static_cast<std::uint32_t>(distanceSymbol), 5);
     writer.write(static_cast<std::uint32_t>(distance - distanceBase[distanceSymbol]),
