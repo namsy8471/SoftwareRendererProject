@@ -9,11 +9,23 @@ CPU 소프트웨어 렌더러(C++23/26, oneTBB, SSE/AVX). 목표는 **기본 데
 - 역할 구분: `srcli bench`는 합격/불합격을 가르는 **판정용 숫자**, VTune·VS CPU Usage(`tests/CaptureCpuProfiles.ps1`)는 **어디가 느린지 찾는 진단용**이다.
   프로파일러는 측정 자체에 오버헤드가 있어 그 수치(ms)로 판정하지 않는다. 사용 순서는 아래 "최적화 작업 흐름" 2단계.
 - 한 프레임 = `FrameRunner::Update`(Scene 갱신 + 가시성 수집) + `FrameRunner::Render`(`RenderTarget::Clear` + `Renderer::RenderScene`). GDI 표시는 제외.
-- 판정: Windows PC의 MSVC **Release x64** 빌드에서 `fill`, `wire`, `normal` 세 모드 모두 **`p95_ms <= 9`**.
+- **상대 비교**(이 변경이 이전 코드보다 빠른가)는 변경의 종류에 따라 측정 장소를 고른다.
+  - 스레드 수에 덜 민감한 변경 → **클라우드 A/B 벤치**(`.github/workflows/ab-bench.yml`).
+    예: 한 스레드 안의 계산(SIMD, 분기 제거, 인라인, 메모리 배치, 수학 함수, 클리핑·셰이딩 식).
+    같은 VM에서 base·head를 번갈아 재서 변화율과 95% 구간을 낸다. PR마다 자동으로 돌고, PR 없이도
+    `gh workflow run ab-bench.yml --ref <브랜치>`로 돌린다. PC를 쓰지 않는다. 읽는 법은 `tools/ci/README.md`.
+  - 스레드 수에 민감한 변경 → **PC A/B**(`./tests/Bench.ps1 -Runs 3`로 변경 전후, PC 순서를 받아서).
+    예: 타일 크기, TBB 분할·grain size, 작업 분배, 스레드 간 동기화·공유 데이터, 스레드별 버퍼, 병렬 단계 순서.
+    클라우드는 4 vCPU라 24코어 PC와 결과가 다를 수 있다. 애매하면 클라우드로 먼저 보고 PC에서 확인한다.
+- **절대 기준**(아래 p95 <= 9ms)은 PC 벤치로만 판정한다. 변경마다 재지 않고 마일스톤에서만 잰다
+  (main 병합 뒤 자동 실행, 기준 근처의 최적화를 마무리할 때).
+- 절대 기준 판정: Windows PC의 MSVC **Release x64** 빌드에서 `fill`, `wire`, `normal` 세 모드 모두 **`p95_ms <= 9`**.
   10ms(100fps)에서 GDI 표시 비용 여유 1ms를 뺀 값이다. `mean_ms`는 참고용이다.
-- 잡음: 모드마다 3회 실행해 p95의 중앙값으로 판정한다(`./tests/Bench.ps1 -Runs 3`). 개선은 같은 조건에서 2% 이상 줄었을 때만 인정한다.
+- 잡음: PC는 모드마다 3회 실행해 p95의 중앙값으로 판정한다(`./tests/Bench.ps1 -Runs 3`). 개선은 같은 조건에서 2% 이상 줄었을 때만 인정한다.
+  클라우드 A/B는 95% 구간이 0을 넘지 않고(유의) 2% 이상 줄었을 때만 개선으로 본다(표의 ✅).
 - 가끔 표시 포함 경로(`tests\bin\x64\Release\RendererTests.exe . --benchmark 600 1920 1080 fill none`)로 교차 확인한다.
-- Linux/GCC나 클라우드 수치는 경향 확인용이고 판정에 쓰지 않는다.
+- 클라우드의 절대 ms(Linux/GCC CI, A/B 표의 ms)는 PC와 다르므로 절대 기준 판정에 쓰지 않는다. 클라우드는 비율만 본다.
+- 클라우드 A/B의 한계: 약 3%보다 작은 차이는 "구분 불가"로 나오기 쉽다. 이때는 `rounds`를 늘려 다시 재거나 PC에서 확인한다.
 - 성능 변경은 화면을 바꾸면 안 된다. 골든 테스트 통과 + 같은 설정의 `pixel_hash`가 변경 전후 같아야 한다
   (의도적인 화면 변경은 별도 작업으로 분리하고 골든을 갱신한다).
 
@@ -46,13 +58,16 @@ tools/dev.sh render wire out.png
 
 한 번에 한 가지 변경만 하고, 아래 순서를 지킨다.
 
-1. 기준 측정: `./tests/Bench.ps1 -Runs 3 -Label before-<주제>` (pixel_hash와 p95 기록).
+1. 기준 측정: 클라우드 A/B가 base를 직접 빌드해 재므로 따로 기록하지 않아도 된다. PC로 잴 때만 `./tests/Bench.ps1 -Runs 3 -Label before-<주제>`.
 2. 프로파일: `tests/CaptureCpuProfiles.ps1`(VS CPU Usage/VTune)로 핫스팟 함수를 찾고, 필요하면 해당 함수의 어셈블리(`/FAs` 또는 디스어셈블리)를 본다.
 3. 수정: 핫스팟만 고친다. 어셈블리 수준(인라인 여부, 분기, SIMD 사용, 메모리 접근)까지 확인한다.
 4. 테스트: `./tests/RunTests.ps1 -Quick` 전부 통과(골든 포함).
-5. 재측정: `./tests/Bench.ps1 -Runs 3 -Label after-<주제>`.
-6. 채택 조건: 같은 설정의 `pixel_hash`가 변경 전과 같고, p95 또는 mean이 2% 이상 줄었을 때만 남긴다. 아니면 되돌린다.
-7. 커밋·푸시: 마무리 전 `./tests/RunTests.ps1 -Rebuild`(4개 구성) 통과 후, 커밋 메시지에 모드별 전후 mean/p95(ms)와 pixel_hash 동일 여부를 적고 푸시한다.
+5. 재측정: 브랜치를 푸시하고 `gh workflow run ab-bench.yml --ref <브랜치>`(PR이 있으면 자동)로 클라우드 A/B 표를 받는다.
+   PC로 확인할 때는 `./tests/Bench.ps1 -Runs 3 -Label after-<주제>`.
+6. 채택 조건: A/B 표에서 `pixel_hash`가 같고 판정이 ✅ 개선일 때만 남긴다. ❌ 느려짐이면 되돌린다.
+   ➖ 구분 불가면 `-f rounds=20`으로 다시 재고, 그래도 구분 불가면 PC에서 잰다. 스레드에 민감한 변경은 처음부터 PC A/B로 판단한다.
+7. 커밋·푸시: 마무리 전 `./tests/RunTests.ps1 -Rebuild`(4개 구성) 통과 후, 커밋 메시지에 모드별 A/B 변화율(95% 구간)과
+   pixel_hash 동일 여부를 적고 푸시한다. PC에서 쟀다면 PC 전후 mean/p95(ms)도 적는다.
 
 ## 화면 확인
 
@@ -126,8 +141,8 @@ tools/dev.sh render wire out.png
 
 ## CI와 PC 러너
 
-- 빌드·테스트·`/analyze`·ASan은 GitHub 클라우드(Linux, Windows)에서 돈다. PC(self-hosted runner, 라벨 `renderer-pc`)는
-  `windows.yml`의 `bench` job만 맡는다. 구성 설명과 등록 방법은 `tools/ci/README.md`.
+- 빌드·테스트·`/analyze`·ASan·A/B 벤치는 GitHub 클라우드(Linux, Windows)에서 돈다. PC(self-hosted runner, 라벨 `renderer-pc`)는
+  `windows.yml`의 `bench` job(절대 기준)만 맡고, main push와 수동 실행 때만 돈다(PR마다 돌지 않는다). 구성 설명과 등록 방법은 `tools/ci/README.md`.
 - PC 벤치 job이 필요하거나 대기 중인데 러너가 꺼져 있으면, 사용자에게 묻지 말고 러너를 켠다.
   끄는 것은 사용자가 요청할 때만 한다.
   ```powershell

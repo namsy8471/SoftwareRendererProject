@@ -1,0 +1,188 @@
+# 클라우드 A/B 벤치: "이 변경이 이전 코드보다 몇 % 빠른가"를 PC 없이 잰다.
+# - 같은 Windows VM에서 기준(base)과 변경(head)의 srcli를 MSVC Release x64로 각각 빌드하고, 1080p로 번갈아(ABBA...) 실행한다.
+#   절대 수치는 PC와 다르지만 같은 VM에서 짝지어 잰 비율은 비교할 수 있다. 분석은 tools/ci/AB-Report.ps1.
+# - 모드(fill/wire/normal)마다 별도 VM(job)에서 동시에 돈다. 한 모드의 A/B 쌍은 항상 한 VM 안에서만 잰다.
+# - PR: base = PR 브랜치가 갈라진 지점(merge-base), head = PR의 마지막 커밋. 결과는 job 요약과 PR 댓글(하나를 계속 갱신)에 남는다.
+# - 수동: Actions → Cloud A/B bench → Run workflow 또는
+#     gh workflow run ab-bench.yml --ref <브랜치> -f base=main -f modes=normal -f rounds=12
+# 절대 기준(p95 <= 9ms)은 여기서 판정하지 않는다. 그것은 PC 벤치(windows.yml bench)의 몫이다.
+name: Cloud A/B bench
+
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'tools/srcli/**'
+      - 'assets/**'
+      - 'build/**'
+      - '*.vcxproj'
+      - 'tools/ci/AB-*.ps1'
+      - '.github/workflows/ab-bench.yml'
+  workflow_dispatch:
+    inputs:
+      base:
+        description: 기준 ref (브랜치, 태그, 커밋)
+        default: main
+      head:
+        description: 비교할 ref. 비우면 Run workflow에서 고른 브랜치
+        default: ''
+      merge_base:
+        description: base 대신 base와 head가 갈라진 지점을 기준으로 쓴다 (그 브랜치 자체의 변화만 본다)
+        type: boolean
+        default: true
+      modes:
+        description: 쉼표로 구분한 모드 (fill,wire,normal,aabb,fxaa)
+        default: fill,wire,normal
+      rounds:
+        description: 모드마다 base/head 쌍을 몇 번 잴지 (많을수록 감지 한계가 작아진다)
+        default: '10'
+      frames:
+        description: 실행 한 번의 측정 프레임 수
+        default: '600'
+
+concurrency:
+  group: ab-bench-${{ github.event.pull_request.number || github.ref }}-${{ inputs.base }}-${{ inputs.head }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: pwsh
+
+jobs:
+  plan:
+    name: Resolve base/head
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      base: ${{ steps.refs.outputs.base }}
+      head: ${{ steps.refs.outputs.head }}
+      modes: ${{ steps.refs.outputs.modes }}
+      context: ${{ steps.refs.outputs.context }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: refs
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          IN_BASE: ${{ inputs.base }}
+          IN_HEAD: ${{ inputs.head }}
+          IN_MERGE_BASE: ${{ inputs.merge_base }}
+          IN_MODES: ${{ inputs.modes }}
+        run: |
+          function Resolve([string]$ref) {
+            foreach ($candidate in @($ref, "origin/$ref")) {
+              $sha = git rev-parse --verify --quiet "$candidate^{commit}"
+              if ($LASTEXITCODE -eq 0 -and $sha) { return $sha.Trim() }
+            }
+            throw "ref not found: $ref"
+          }
+          if ($env:EVENT -eq 'pull_request') {
+            $head = $env:PR_HEAD
+            $base = (git merge-base $env:PR_BASE $env:PR_HEAD).Trim()
+            $modes = 'fill,wire,normal'
+          } else {
+            $head = Resolve $(if ($env:IN_HEAD) { $env:IN_HEAD } else { $env:GITHUB_SHA })
+            $base = Resolve $env:IN_BASE
+            if ($env:IN_MERGE_BASE -eq 'true') { $base = (git merge-base $base $head).Trim() }
+            $modes = $env:IN_MODES
+          }
+          if ($base -eq $head) { throw "base와 head가 같은 커밋이다: $head" }
+          $modeList = @($modes -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+          $context = 'base `{0}` {1} → head `{2}` {3}' -f $base.Substring(0, 9), (git log -1 --format=%s $base), $head.Substring(0, 9), (git log -1 --format=%s $head)
+          "base=$base" >> $env:GITHUB_OUTPUT
+          "head=$head" >> $env:GITHUB_OUTPUT
+          "modes=$(ConvertTo-Json -Compress @($modeList))" >> $env:GITHUB_OUTPUT
+          "context=$context" >> $env:GITHUB_OUTPUT
+          Write-Output $context
+
+  bench:
+    name: A/B ${{ matrix.mode }} 1920x1080 (cloud)
+    needs: plan
+    runs-on: windows-2025
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: ${{ fromJSON(needs.plan.outputs.modes) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.plan.outputs.head }}
+          fetch-depth: 0
+
+      # base는 같은 저장소의 별도 worktree에 꺼낸다. 두 빌드는 같은 VM·같은 컴파일러로 만들어진다.
+      - name: Checkout base
+        run: git worktree add --detach "$env:RUNNER_TEMP/base" ${{ needs.plan.outputs.base }}
+
+      - name: Build srcli (Release x64, base and head)
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe" -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          $msbuild = Join-Path $vs 'MSBuild/Current/Bin/MSBuild.exe'
+          foreach ($dir in @("$env:RUNNER_TEMP/base", "$PWD")) {
+            $dir = (Resolve-Path $dir).Path
+            & $msbuild (Join-Path $dir 'SrCli.vcxproj') /m /nologo /v:minimal /p:Configuration=Release /p:Platform=x64 "/p:SolutionDir=$dir\"
+            if ($LASTEXITCODE -ne 0) { throw "srcli build failed: $dir" }
+          }
+
+      # 실행 스크립트는 head 쪽 것을 쓴다(base 커밋에 AB-Bench.ps1이 없어도 된다).
+      - name: A/B benchmark
+        run: >
+          ./tools/ci/AB-Bench.ps1 -Mode ${{ matrix.mode }}
+          -Base "$env:RUNNER_TEMP/base/tools/bin/x64/Release/srcli.exe"
+          -Head tools/bin/x64/Release/srcli.exe
+          -Rounds ${{ inputs.rounds || '10' }} -Frames ${{ inputs.frames || '600' }}
+          -Out ab/${{ matrix.mode }}.jsonl
+
+      # 커밋 제목은 PR 작성자가 정하는 문자열이라 명령줄에 직접 넣지 않고 환경 변수로 넘긴다.
+      - name: Report (this mode)
+        env:
+          AB_CONTEXT: ${{ needs.plan.outputs.context }}
+        run: ./tools/ci/AB-Report.ps1 -InputPath ab/${{ matrix.mode }}.jsonl -Title 'A/B ${{ matrix.mode }}' -Context $env:AB_CONTEXT
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ab-${{ matrix.mode }}
+          path: ab/${{ matrix.mode }}.jsonl
+          retention-days: 30
+
+  report:
+    name: A/B report
+    needs: [plan, bench]
+    if: ${{ !cancelled() && needs.plan.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write # PR 댓글. fork에서 온 PR은 토큰이 읽기 전용이라 댓글 없이 요약만 남는다.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ab-*
+          path: ab
+          merge-multiple: true
+
+      - name: Summary
+        env:
+          AB_CONTEXT: ${{ needs.plan.outputs.context }}
+        run: ./tools/ci/AB-Report.ps1 -InputPath 'ab/*.jsonl' -SummaryPath $env:GITHUB_STEP_SUMMARY -CommentPath comment.md -Context $env:AB_CONTEXT
+
+      # 같은 PR에는 댓글 하나만 두고 새 결과로 고쳐 쓴다(표식: <!-- sr-ab-bench -->).
+      - name: PR comment
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          $run = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+          Add-Content comment.md "`n[실행 기록]($run)"
+          $id = gh api "repos/$env:GITHUB_REPOSITORY/issues/$env:PR/comments" --paginate --jq '.[] | select(.body | startswith("<!-- sr-ab-bench -->")) | .id' | Select-Object -First 1
+          if ($id) { gh api -X PATCH "repos/$env:GITHUB_REPOSITORY/issues/comments/$id" -F body=@comment.md | Out-Null }
+          else { gh pr comment $env:PR --repo $env:GITHUB_REPOSITORY --body-file comment.md }

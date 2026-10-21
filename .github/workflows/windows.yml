@@ -1,7 +1,8 @@
 # Windows CI.
 # - 빌드·테스트·/analyze·ASan: GitHub 클라우드 Windows(windows-2025, VS 2026 = v145)에서 job마다 동시에 돈다.
-# - 벤치: 사용자 PC(self-hosted runner, 라벨 renderer-pc)에서 srcli만 빌드해 1080p로 잰다.
-#   성능 판정 기준(CLAUDE.md)은 이 PC의 Release x64 수치라서, 벤치만은 클라우드로 옮길 수 없다.
+# - 벤치: 사용자 PC(self-hosted runner, 라벨 renderer-pc)에서 srcli만 빌드해 1080p로 잰다(main push·수동 실행만).
+#   절대 기준(CLAUDE.md, p95 <= 9ms)은 이 PC의 Release x64 수치라서 클라우드로 옮길 수 없다.
+#   변경 전후 상대 비교는 클라우드 A/B 벤치(ab-bench.yml)가 PR마다 한다.
 #
 # 보안: 공개 저장소라 남의 fork에서 온 PR이 PC에서 코드를 실행하면 안 된다.
 # 그래서 PC job은 같은 저장소 브랜치에서 온 PR만 받는다(if 조건). 클라우드 job은 제한이 없다.
@@ -67,9 +68,11 @@ jobs:
             tests/bin/logs/
           if-no-files-found: ignore
 
+  # 절대 기준(p95 <= 9ms) 판정용. PR마다 PC를 쓰지 않도록 main push와 수동 실행 때만 돈다.
+  # PR의 "이전 코드 대비 몇 %"는 클라우드 A/B 벤치(ab-bench.yml)가 맡는다. fork PR도 이 조건으로 PC에서 돌지 않는다.
   bench:
     name: Bench 1920x1080 (PC)
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name != 'pull_request'
     runs-on: [self-hosted, Windows, X64, renderer-pc]
     timeout-minutes: 30
     steps:
