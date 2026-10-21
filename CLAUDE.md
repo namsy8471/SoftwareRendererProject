@@ -57,13 +57,28 @@ tools/dev.sh render wire out.png
 `anim_ms`(포즈 + 계층 transform + 스키닝 한 번의 평균, 측정 프레임 뒤 따로 잼)가 붙는다. 데모 장면 판정 수치와 섞지 않는다.
 `--stats`는 패스별 시간(`prepare/bin/raster/line/post_ms`)과 카운터를 JSON에 넣지만 측정을 느리게 하므로 최종 수치에는 쓰지 않는다.
 
+## 어셈블리 수준 최적화 원칙
+
+**모든 코드는 실제 코드보다 어셈블리 단에서 최적화가 이루어진 코드여야 한다.**
+
+적용 방법:
+- 바꾼 함수는 생성된 어셈블리를 직접 본다. MSVC는 `/FAs`(소스가 섞인 .asm)나 `dumpbin /disasm`,
+  GCC는 `-S -fverbose-asm`이나 `objdump -d -C --no-show-raw-insn`을 쓴다.
+- 소스 수준의 추측("이렇게 쓰면 빠르겠지")이 아니라 어셈블리에 보이는 것을 근거로 고친다:
+  인라인 여부, 분기와 cmov, SIMD 폭과 명령, 불필요한 load/store와 레지스터 spill, 호출 오버헤드, 루프 벡터화.
+- 커밋 메시지나 PR 설명에 바뀐 코드의 어셈블리 전/후 발췌(핵심 명령과 명령 수 변화)를 적는다.
+  채택 여부는 아래 6단계처럼 측정 수치(A/B 판정, pixel_hash 동일)로 정한다.
+
+> 적용 범위 메모 (사용자 확인 대기, 원칙을 대신하지 않음): 테스트(`tests/`), 도구(`tools/`), 시작 시 한 번 도는
+> 파일 I/O·파서처럼 프레임 시간에 들어가지 않는 코드에도 같은 확인을 할지는 사용자가 정한다.
+
 ## 최적화 작업 흐름
 
 한 번에 한 가지 변경만 하고, 아래 순서를 지킨다.
 
 1. 기준 측정: 클라우드 A/B가 base를 직접 빌드해 재므로 따로 기록하지 않아도 된다. PC로 잴 때만 `./tests/Bench.ps1 -Runs 3 -Label before-<주제>`.
-2. 프로파일: `tests/CaptureCpuProfiles.ps1`(VS CPU Usage/VTune)로 핫스팟 함수를 찾고, 필요하면 해당 함수의 어셈블리(`/FAs` 또는 디스어셈블리)를 본다.
-3. 수정: 핫스팟만 고친다. 어셈블리 수준(인라인 여부, 분기, SIMD 사용, 메모리 접근)까지 확인한다.
+2. 프로파일: `tests/CaptureCpuProfiles.ps1`(VS CPU Usage/VTune)로 핫스팟 함수를 찾고, 해당 함수의 어셈블리(`/FAs` 또는 디스어셈블리)를 본다.
+3. 수정: 핫스팟만 고친다. 위 "어셈블리 수준 최적화 원칙"에 따라 어셈블리(인라인 여부, 분기, SIMD 사용, 메모리 접근)를 보고 고친다.
 4. 테스트: `./tests/RunTests.ps1 -Quick` 전부 통과(골든 포함).
 5. 재측정: 브랜치를 푸시하고 `gh workflow run ab-bench.yml --ref <브랜치>`(PR이 있으면 자동)로 클라우드 A/B 표를 받는다.
    PC로 확인할 때는 `./tests/Bench.ps1 -Runs 3 -Label after-<주제>`.
