@@ -11,7 +11,7 @@ class Octree;
 struct Vertex
 {
     SRMath::vec3 position; // v
-    SRMath::vec2 texcoord; // vt
+    SRMath::vec2 texcoord; // vt. 왼쪽 위 원점(이미지 첫 행이 v = 0)
     SRMath::vec3 normal;   // vn
 };
 

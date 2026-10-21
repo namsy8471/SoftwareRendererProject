@@ -11,7 +11,7 @@ enum class TextureWrap : unsigned char
     MirroredRepeat
 };
 
-// RGBA8 픽셀을 값으로 소유하는 이미지다. 어떤 디코더(stb, 자체 파서)가 만들었는지 모른다.
+// RGBA8 픽셀을 값으로 소유하는 이미지다. 어떤 디코더(src/Graphics/Codecs)가 만들었는지 모른다.
 class Texture
 {
   private:

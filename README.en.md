@@ -81,7 +81,7 @@ The performance images were captured on 2025-08-27. Results vary with the CPU, r
 - Triangle rasterization using fixed-point edge functions
 - Perspective-correct attribute interpolation
 - Directional-light Phong illumination
-- OBJ/MTL loading and a separate image-decoding API (no automatic `map_Kd` connection)
+- OBJ/MTL loading with automatic MTL `map_Kd` textures and in-house image decoders (PNG, JPEG, BMP, TGA, DDS)
 - Bresenham/DDA line drawing and FXAA
 
 ### Systems and optimization
@@ -338,7 +338,7 @@ New regression coverage uses memory targets for stride/padding, invalid and zero
 - The `Desktop development with C++` workload and a Windows SDK
 - Support for the latest C++ standard and standard-library modules
 
-oneTBB 2023.1.0 and stb_image are included under `src/ThirdParty`, so no separate package installation is required.
+oneTBB 2023.1.0 is included under `src/ThirdParty`, so no separate package installation is required.
 
 ### Visual Studio
 
@@ -391,7 +391,7 @@ SoftwareRendererProject/
 │  ├─ Platform/           # Win32 boundary header and GDI back-buffer RAII
 │  ├─ Renderer/           # RenderQueue, clipping, tile rasterizer, FXAA
 │  ├─ Scene/              # Camera and GameObject
-│  ├─ ThirdParty/         # oneTBB and stb_image
+│  ├─ ThirdParty/         # oneTBB
 │  └─ Utils/              # Error types, fixed-capacity storage, timing
 ├─ ARCHITECTURE.md
 ├─ CLAUDE.md              # AI-facing summary (commands, rules, performance bar)
@@ -416,9 +416,8 @@ SoftwareRendererProject/
 - The scope is CPU rendering-pipeline study and optimization; a GPU API backend and a general-purpose scene editor are intentionally outside it.
 - `sr.math` is a partial module adoption, not a full migration of the codebase to named modules or `import std;`.
 - The renderer core and headless tools (`srcli`, tests) also build with GCC through CMake, but the windowed app and Win32App/GDI tests remain Windows/MSVC only. No new Job System is added.
-- MTL parses colors and shininess, but does not automatically connect `map_Kd`. Image decoding is exposed separately through `LoadImageFile`.
+- MTL parses colors, shininess and `map_Kd` (options, paths with spaces or backslashes). Images are read by the in-house decoders in `src/Graphics/Codecs`: PNG (all color types and bit depths, interlaced), baseline JPEG, BMP (1-32 bpp, no RLE), TGA (including RLE) and DDS (uncompressed, BC1-BC5, BC7). Progressive JPEG is not supported.
 
 ## Third-party libraries
 
 - [oneTBB 2023.1.0](https://github.com/uxlfoundation/oneTBB): task-based parallelism
-- [stb_image](https://github.com/nothings/stb): image decoding

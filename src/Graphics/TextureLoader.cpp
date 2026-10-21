@@ -1,8 +1,11 @@
 #include "TextureLoader.h"
 
+#include <algorithm>
 #include <charconv>
 #include <concepts>
+#include <cstdint>
 #include <fstream>
+#include <iterator>
 #include <memory>
 #include <vector>
 #include <string_view>
@@ -11,10 +14,7 @@
 #include "Texture.h"
 #include "Graphics/AssetParsing.h"
 
-// stb_image는 C 헤더 기반 단일 구현 라이브러리이므로 이 매크로는 정확히 한
-// 번역 단위에만 둔다. 자체 헤더/API로 전파하지 않는 것이 모듈 경계에도 안전하다.
-#define STB_IMAGE_IMPLEMENTATION
-#include "ThirdParty/stb_image/stb_image.h"
+#include "Graphics/Codecs/ImageCodecs.h"
 
 namespace
 {
@@ -40,6 +40,31 @@ template <class Number> [[nodiscard]] auto takeNumber(std::string_view &input) n
     return SRMath::vec3{*x, *y, *z};
 }
 
+// map_Kd [옵션...] 파일 이름. 옵션(-o 1 1 1, -bm 0.5, -clamp on 등)을 건너뛰고 나머지 전체를 경로로 본다.
+// 경로에 공백이 있을 수 있으므로 마지막 토큰만 쓰지 않는다.
+[[nodiscard]] std::string_view textureMapPath(std::string_view arguments) noexcept
+{
+    arguments = trimLeft(arguments);
+    while (arguments.starts_with('-'))
+    {
+        const auto option = sr::asset::takeToken(arguments);
+        // 옵션마다 받을 수 있는 값의 최대 개수. 숫자나 on/off만 값으로 소비한다.
+        const int maxValues = option == "-o" || option == "-s" || option == "-t" ? 3 : option == "-mm" ? 2 : 1;
+        for (int i = 0; i < maxValues; ++i)
+        {
+            auto peek = arguments;
+            const auto value = sr::asset::takeToken(peek);
+            if (value.empty() || !(value == "on" || value == "off" || sr::asset::parseNumber<float>(value)))
+                break;
+            arguments = peek;
+        }
+        arguments = trimLeft(arguments);
+    }
+    while (!arguments.empty() && (arguments.back() == ' ' || arguments.back() == '\t'))
+        arguments.remove_suffix(1);
+    return arguments;
+}
+
 [[nodiscard]] AssetLoadError malformedMtl(const std::filesystem::path &path, std::size_t line,
                                           std::string_view command)
 {
@@ -50,25 +75,17 @@ template <class Number> [[nodiscard]] auto takeNumber(std::string_view &input) n
 std::expected<std::shared_ptr<Texture>, AssetLoadError> TextureLoader::LoadImageFile(
     const std::filesystem::path &filepath)
 {
-    int width = 0;
-    int height = 0;
-    int channels = 0;
-    const auto nativePath = filepath.string();
-    // stb 버퍼는 이 함수 안에서만 산다. Texture는 디코더를 모르도록 값으로 복사해 받는다.
-    const std::unique_ptr<unsigned char, decltype(&stbi_image_free)> pixels{
-        stbi_load(nativePath.c_str(), &width, &height, &channels, 4), &stbi_image_free};
+    std::ifstream file(filepath, std::ios::binary);
+    if (!file)
+        return std::unexpected(AssetLoadError{"Unable to open image: " + filepath.string(), filepath});
+    const std::vector<std::uint8_t> bytes{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
 
-    if (!pixels)
-    {
-        const char *reason = stbi_failure_reason();
-        return std::unexpected(AssetLoadError{"Unable to load image: " + nativePath +
-                                                  (reason ? " (" + std::string(reason) + ")" : ""),
-                                              filepath});
-    }
-
-    const std::size_t byteCount = static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4;
-    return std::make_shared<Texture>(width, height,
-                                     std::vector<unsigned char>(pixels.get(), pixels.get() + byteCount));
+    // 형식은 시그니처로 고르고, 시그니처가 없는 TGA만 확장자를 본다.
+    auto decoded = sr::codec::DecodeImage(bytes, filepath.extension().string());
+    if (!decoded)
+        return std::unexpected(
+            AssetLoadError{"Unable to load image: " + filepath.string() + " (" + decoded.error() + ")", filepath});
+    return std::make_shared<Texture>(decoded->width, decoded->height, std::move(decoded->rgba));
 }
 
 std::expected<std::unordered_map<std::string, Material>, AssetLoadError> TextureLoader::LoadMTLFile(
@@ -83,6 +100,8 @@ std::expected<std::unordered_map<std::string, Material>, AssetLoadError> Texture
     std::unordered_map<std::string, Material> materials;
     materials.reserve(100);
 
+    // 같은 이미지를 참조하는 머티리얼은 Texture 하나를 공유한다. 실패한 경로도 기억해 다시 읽지 않는다.
+    std::unordered_map<std::string, std::shared_ptr<Texture>> textureCache;
     Material *currentMaterial = nullptr;
     std::string line;
     std::size_t lineNumber = 0;
@@ -137,6 +156,23 @@ std::expected<std::unordered_map<std::string, Material>, AssetLoadError> Texture
                 currentMaterial->shininess = *value;
             else
                 currentMaterial->opacity = *value;
+        }
+        else if (command == "map_Kd")
+        {
+            const auto name = textureMapPath(arguments);
+            if (name.empty())
+                return std::unexpected(malformedMtl(filepath, lineNumber, command));
+            // Windows에서 만든 MTL은 역슬래시 구분자를 쓴다. 모든 플랫폼에서 같은 파일을 찾도록 /로 바꾼다.
+            std::string relative(name);
+            std::ranges::replace(relative, '\\', '/');
+            const auto texturePath = (filepath.parent_path() / std::filesystem::path(relative)).lexically_normal();
+            auto [cached, inserted] = textureCache.try_emplace(texturePath.generic_string());
+            if (inserted)
+            {
+                if (auto texture = LoadImageFile(texturePath))
+                    cached->second = std::move(*texture);
+            }
+            currentMaterial->diffuseTexture = cached->second;
         }
         else if (command == "illum")
         {

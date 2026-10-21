@@ -7,15 +7,13 @@
 #include "Scene/GameObject.h"
 
 #include <algorithm>
-#include <climits>
 #include <iterator>
 #include <cmath>
 #include <numeric>
 #include <optional>
 #include <utility>
 
-// 기본 이미지 디코더용 선언만 쓴다(구현은 TextureLoader.cpp 한 곳). 3단계 자체 디코더가 들어오면 바꾼다.
-#include "ThirdParty/stb_image/stb_image.h"
+#include "Graphics/Codecs/ImageCodecs.h"
 
 namespace sr::gltf
 {
@@ -36,25 +34,15 @@ float finiteOrZero(float value) noexcept
     return std::isfinite(value) ? value : 0.f;
 }
 
-std::expected<std::shared_ptr<::Texture>, AssetLoadError> decodeWithStb(std::span<const std::byte> bytes,
-                                                                        std::string_view)
+// glTF 이미지는 PNG/JPEG이고 시그니처로 판별되므로 mimeType은 쓰지 않는다.
+std::expected<std::shared_ptr<::Texture>, AssetLoadError> decodeWithCodecs(std::span<const std::byte> bytes,
+                                                                           std::string_view)
 {
-    if (bytes.size() > static_cast<std::size_t>(INT_MAX))
-        return std::unexpected(AssetLoadError{"Image is too large"});
-    int width = 0, height = 0, channels = 0;
-    const std::unique_ptr<unsigned char, decltype(&stbi_image_free)> pixels{
-        stbi_load_from_memory(reinterpret_cast<const stbi_uc *>(bytes.data()), static_cast<int>(bytes.size()),
-                              &width, &height, &channels, 4),
-        &stbi_image_free};
-    if (!pixels)
-    {
-        const char *reason = stbi_failure_reason();
-        return std::unexpected(AssetLoadError{std::string("Unable to decode image") +
-                                              (reason ? std::string(" (") + reason + ")" : std::string{})});
-    }
-    const std::size_t byteCount = static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4;
-    return std::make_shared<::Texture>(width, height,
-                                       std::vector<unsigned char>(pixels.get(), pixels.get() + byteCount));
+    auto image = sr::codec::DecodeImage(
+        std::span<const std::uint8_t>(reinterpret_cast<const std::uint8_t *>(bytes.data()), bytes.size()));
+    if (!image)
+        return std::unexpected(AssetLoadError{"Unable to decode image (" + image.error() + ")"});
+    return std::make_shared<::Texture>(image->width, image->height, std::move(image->rgba));
 }
 
 // 렌더러는 Phong이다. metallic-roughness를 보기 좋은 쪽으로 근사한다:
@@ -97,7 +85,7 @@ class SceneBuilder
   public:
     SceneBuilder(const Document &document, const SceneLoadOptions &options)
         : m_document(document), m_options(options),
-          m_decode(options.decodeImage ? options.decodeImage : ImageDecoder{decodeWithStb})
+          m_decode(options.decodeImage ? options.decodeImage : ImageDecoder{decodeWithCodecs})
     {
         m_meshSources.resize(document.meshes.size());
         m_textures.resize(document.images.size());

@@ -81,7 +81,7 @@ DirectX 11を使用する中で抽象的に感じていたレンダリングパ�
 - 固定小数点edge functionによるtriangle rasterization
 - Perspective-correct attribute interpolation
 - Directional lightを用いたPhong illumination
-- OBJ/MTL読み込みと別の画像decode API（`map_Kd`自動接続は未対応）
+- OBJ/MTL読み込み、MTL `map_Kd`テクスチャの自動接続、自前の画像デコーダ（PNG, JPEG, BMP, TGA, DDS）
 - Bresenham/DDA line drawingとFXAA
 
 ### システム設計と最適化
@@ -338,7 +338,7 @@ Benchmarkは60フレーム準備後に指定フレーム数を測定します。
 - `Desktop development with C++` workloadとWindows SDK
 - 最新C++標準と標準ライブラリmoduleのサポート
 
-oneTBB 2023.1.0とstb_imageは`src/ThirdParty`に含まれているため、別途packageをインストールする必要はありません。
+oneTBB 2023.1.0は`src/ThirdParty`に含まれているため、別途packageをインストールする必要はありません。
 
 ### Visual Studio
 
@@ -391,7 +391,7 @@ SoftwareRendererProject/
 │  ├─ Platform/           # Win32 boundary headerとGDI back buffer RAII
 │  ├─ Renderer/           # RenderQueue、clipping、tile rasterizer、FXAA
 │  ├─ Scene/              # CameraとGameObject
-│  ├─ ThirdParty/         # oneTBBとstb_image
+│  ├─ ThirdParty/         # oneTBB
 │  └─ Utils/              # Error type、fixed-capacity storage、timing
 ├─ ARCHITECTURE.md
 ├─ CLAUDE.md              # AI作業向け要約(コマンド、規則、性能基準)
@@ -416,9 +416,8 @@ SoftwareRendererProject/
 - CPU rendering pipelineの学習と最適化に焦点を当てており、GPU API backendや汎用scene editorは対象外です。
 - `sr.math`はmoduleの部分導入です。コード全体をnamed moduleや`import std;`へ移行した状態ではありません。
 - Renderer coreとheadlessツール(`srcli`、テスト)はCMakeでGCCでもビルドできますが、windowアプリとFramework/GDIテストはWindows/MSVC専用です。新しいJob Systemは追加していません。
-- MTLは色・光沢を解析しますが、`map_Kd`は自動接続しません。画像decodeは別の`LoadImageFile` APIです。
+- MTLは色・光沢と`map_Kd`（オプション、空白・バックスラッシュを含むパス）を解析します。画像は`src/Graphics/Codecs`の自前デコーダが読みます: PNG（全カラー形式・ビット深度、インターレース）、ベースラインJPEG、BMP（1〜32ビット、RLE除く）、TGA（RLE含む）、DDS（非圧縮、BC1〜BC5、BC7）。プログレッシブJPEGは未対応です。
 
 ## 外部ライブラリ
 
 - [oneTBB 2023.1.0](https://github.com/uxlfoundation/oneTBB): task-based parallelism
-- [stb_image](https://github.com/nothings/stb): image decoding

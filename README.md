@@ -81,7 +81,7 @@ DirectX 11을 사용하며 부족하다고 느꼈던 렌더링 파이프라인�
 - 고정소수점 edge function 기반 triangle rasterization
 - 원근 보정 attribute interpolation
 - Directional light 기반 Phong illumination
-- OBJ/MTL 로딩과 별도 이미지 디코딩 API (`map_Kd` 자동 연결은 미지원)
+- OBJ/MTL 로딩과 MTL `map_Kd` 텍스처 자동 연결, 자체 이미지 디코더(PNG, JPEG, BMP, TGA, DDS)
 - Bresenham/DDA line drawing과 FXAA
 
 ### 시스템·최적화
@@ -338,7 +338,7 @@ flowchart LR
 - `Desktop development with C++` workload와 Windows SDK
 - 최신 C++ 표준과 표준 라이브러리 module 지원
 
-oneTBB 2023.1.0과 stb_image는 `src/ThirdParty`에 포함돼 있어 별도 package 설치가 필요하지 않습니다.
+oneTBB 2023.1.0은 `src/ThirdParty`에 포함돼 있어 별도 package 설치가 필요하지 않습니다.
 
 ### Visual Studio
 
@@ -391,7 +391,7 @@ SoftwareRendererProject/
 │  ├─ Platform/           # Win32 boundary header와 GDI 백버퍼 RAII
 │  ├─ Renderer/           # RenderQueue, clipping, tile rasterizer, FXAA
 │  ├─ Scene/              # Camera와 GameObject
-│  ├─ ThirdParty/         # oneTBB와 stb_image
+│  ├─ ThirdParty/         # oneTBB
 │  └─ Utils/              # error type, fixed-capacity storage, timing
 ├─ ARCHITECTURE.md
 ├─ CLAUDE.md              # AI 작업용 요약(명령, 규칙, 성능 기준)
@@ -416,9 +416,8 @@ SoftwareRendererProject/
 - 현재 구조는 CPU rendering pipeline 학습과 최적화에 집중하며 GPU API backend나 범용 scene editor는 범위에 포함하지 않습니다.
 - `sr.math`는 부분적으로 도입한 module입니다. 전체 소스를 named module이나 `import std;`로 전환한 상태는 아닙니다.
 - 렌더 코어와 headless 도구(`srcli`, 테스트)는 CMake로 GCC에서도 빌드되지만, 창 앱과 Win32App/GDI 테스트는 Windows/MSVC 전용입니다. 새로운 Job System은 추가하지 않았습니다.
-- MTL은 색상·광택 값을 해석하며 `map_Kd`를 자동 연결하지 않습니다. 이미지 디코딩은 별도의 `LoadImageFile` API입니다.
+- MTL은 색상·광택 값과 `map_Kd`(옵션, 공백·역슬래시 경로 포함)를 해석합니다. 이미지는 `src/Graphics/Codecs`의 자체 디코더가 읽습니다: PNG(모든 색 형식·비트 깊이, 인터레이스), 베이스라인 JPEG, BMP(1~32비트, RLE 제외), TGA(RLE 포함), DDS(비압축, BC1~BC5, BC7). 프로그레시브 JPEG는 미지원입니다.
 
 ## 외부 라이브러리
 
 - [oneTBB 2023.1.0](https://github.com/uxlfoundation/oneTBB): task-based parallelism
-- [stb_image](https://github.com/nothings/stb): image decoding
