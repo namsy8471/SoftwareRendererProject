@@ -4,7 +4,6 @@
 #include <cstdint>
 #include <span>
 #include <optional>
-#include <tbb/concurrent_vector.h>
 #include <tbb/enumerable_thread_specific.h>
 #include "Math/SRMath.h"
 #include "Graphics/Mesh.h"
@@ -96,7 +95,7 @@ class Renderer
     };
     struct WorkerScratch
     {
-        tbb::concurrent_vector<TriangleRef> triangles;
+        TrianglePool triangles;
         // worker만 삽입하고 frontend join 뒤 해당 band 작업들이 읽기만 한다.
         // 삼각형 풀의 주소는 안정적이며 프레임 초기화 때 벡터 용량을 재사용한다.
         std::array<std::vector<TriangleRef *>, maximumLineBands> wireBins;
@@ -119,8 +118,6 @@ class Renderer
             bool finiteClip = false;
         };
         std::vector<VertexSetup> vertexSetups;
-        // 자명하게 수락된 삼각형을 준비하는 자리. 풀에 넣을 때 한 번만 복사한다.
-        PreparedTriangle stagingTriangle;
         std::uint64_t commandStamp = 0;
         // 한 worker의 현재 프레임에서 마지막으로 처리한 키 하나만 재사용한다.
         // 포인터는 queue와 같은 수명 계약으로 빌리며 프레임 밖으로 재사용하지 않는다.
@@ -150,8 +147,7 @@ class Renderer
     void binTriangle(const MeshRenderCommand &, const ShadedVertex &, const ShadedVertex &,
                      const ShadedVertex &, const FrameContext &, WorkerScratch &,
                      std::uint64_t primitiveId = 0);
-    void binPrepared(const MeshRenderCommand &, const PreparedTriangle &, const FrameContext &,
-                     WorkerScratch &);
+    void binPrepared(const MeshRenderCommand &, TriangleRef *, const FrameContext &, WorkerScratch &);
     static ShadedVertex shadeVertex(const Vertex &, const SRMath::mat4 &, const SRMath::mat4 &,
                                     const SRMath::mat4 &);
     // 정점의 약 80%는 이미 이 명령에서 계산됐다. hit는 stamp 비교 하나로 끝내도록 인라인하고,

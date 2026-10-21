@@ -254,10 +254,10 @@ void Renderer::processCommand(const MeshRenderCommand &cmd, const FrameContext &
             if (triviallyAccepted)
             {
                 // 세 정점은 위에서 유한하고 w > 0임을 확인했다(Prepare의 첫 검사와 같다).
-                auto &staging = scratch.stagingTriangle;
-                if (Rasterizer::PrepareRasterInto(staging, setup0.raster, setup1.raster, setup2.raster,
-                                                  m_width, m_height, primitiveId, &cmd))
-                    binPrepared(cmd, staging, frame, scratch);
+                // 풀의 다음 자리에 바로 준비하고, 성공했을 때만 확정한다(복사 없음).
+                if (Rasterizer::PrepareRasterInto(scratch.triangles.Slot(), setup0.raster, setup1.raster,
+                                                  setup2.raster, m_width, m_height, primitiveId, &cmd))
+                    binPrepared(cmd, scratch.triangles.Commit(), frame, scratch);
             }
             else
                 binTriangle(cmd, a, b, c, frame, scratch, primitiveId);
@@ -270,16 +270,13 @@ void Renderer::binTriangle(const MeshRenderCommand &cmd, const ShadedVertex &v0,
 {
     const auto prepared = Rasterizer::Prepare(v0, v1, v2, m_width, m_height, primitiveId, &cmd);
     if (prepared)
-        binPrepared(cmd, *prepared, frame, scratch);
+        binPrepared(cmd, &scratch.triangles.emplace_back(*prepared), frame, scratch);
 }
-void Renderer::binPrepared(const MeshRenderCommand &cmd, const PreparedTriangle &prepared,
-                           const FrameContext &frame, WorkerScratch &scratch)
+void Renderer::binPrepared(const MeshRenderCommand &cmd, TriangleRef *finalTri, const FrameContext &frame,
+                           WorkerScratch &scratch)
 {
-    // 숨은 선 모드에서는 같은 준비 결과를 depth-only 면 패스에도 전달한다. 병렬로
-    // 늘어나는 concurrent_vector는 기존 요소를 옮기지 않아 bin 포인터가 유효하다.
-    auto it = scratch.triangles.emplace_back(prepared);
-    TriangleRef *finalTri = &(*it);
-
+    // 숨은 선 모드에서는 같은 준비 결과를 depth-only 면 패스에도 전달한다.
+    // finalTri는 worker 풀에 확정된 자리라 프레임 끝까지 주소가 유효하다.
     if (cmd.rasterizeMode == ERasterizeMode::Wireframe)
     {
         // 행 worker가 매번 전체 삼각형 풀을 훑지 않도록 겹치는 band만 기록한다.
