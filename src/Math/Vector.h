@@ -101,7 +101,8 @@ template <> struct alignas(16) Vector<2>
         __m128 cmp = _mm_cmpeq_ps(this->m128, other.m128);
 
         // Check if all components are equal
-        return _mm_movemask_ps(cmp) == 0x3; // All bits set means all components are equal
+        // x, y lane만 본다. padding lane(z, w)은 비교 대상이 아니다.
+        return (_mm_movemask_ps(cmp) & 0x3) == 0x3;
     }
 
     [[nodiscard]] bool operator!=(const Vector<2> &other) const noexcept { return !(*this == other); }
@@ -189,7 +190,8 @@ template <> struct alignas(16) Vector<3>
         __m128 cmp = _mm_cmpeq_ps(this->m128, other.m128);
 
         // Check if all components are equal
-        return _mm_movemask_ps(cmp) == 0x7; // All bits set means all components are equal
+        // x, y, z lane만 본다. padding lane(w)은 비교 대상이 아니다.
+        return (_mm_movemask_ps(cmp) & 0x7) == 0x7;
     }
 
     [[nodiscard]] bool operator!=(const Vector &other) const noexcept { return !(*this == other); }

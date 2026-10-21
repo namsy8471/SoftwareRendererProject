@@ -241,8 +241,33 @@ void mathTests()
 }
 } // namespace
 
+namespace
+{
+// padding lane은 값과 무관해야 한다. 예전 구현은 movemask를 정확히 0x3/0x7과 비교해, padding이 같으면(보통 둘 다 0)
+// 같은 벡터를 다르다고 판단했다.
+void vectorEqualityTests()
+{
+    check(SRMath::vec2(1.f, 2.f) == SRMath::vec2(1.f, 2.f), "equal vec2");
+    check(!(SRMath::vec2(1.f, 2.f) != SRMath::vec2(1.f, 2.f)), "equal vec2 is not unequal");
+    check(SRMath::vec2(1.f, 2.f) != SRMath::vec2(1.f, 3.f), "different vec2 y");
+    check(SRMath::vec3(1.f, 2.f, 3.f) == SRMath::vec3(1.f, 2.f, 3.f), "equal vec3");
+    check(!(SRMath::vec3(1.f, 2.f, 3.f) != SRMath::vec3(1.f, 2.f, 3.f)), "equal vec3 is not unequal");
+    check(SRMath::vec3(1.f, 2.f, 3.f) != SRMath::vec3(1.f, 2.f, 4.f), "different vec3 z");
+    check(SRMath::vec3(1.f, 2.f, 3.f) != SRMath::vec3(0.f, 2.f, 3.f), "different vec3 x");
+    // padding lane에 다른 값이 있어도 x, y, z가 같으면 같다.
+    SRMath::vec3 padded(_mm_set_ps(9.f, 3.f, 2.f, 1.f));
+    check(padded == SRMath::vec3(1.f, 2.f, 3.f), "vec3 ignores the padding lane");
+    SRMath::vec2 padded2(_mm_set_ps(7.f, 8.f, 2.f, 1.f));
+    check(padded2 == SRMath::vec2(1.f, 2.f), "vec2 ignores the padding lanes");
+    check(SRMath::vec4(1.f, 2.f, 3.f, 4.f) == SRMath::vec4(1.f, 2.f, 3.f, 4.f), "equal vec4");
+    check(SRMath::vec4(1.f, 2.f, 3.f, 4.f) != SRMath::vec4(1.f, 2.f, 3.f, 5.f), "vec4 compares w");
+    check(SRMath::vec3(std::nanf(""), 0.f, 0.f) != SRMath::vec3(std::nanf(""), 0.f, 0.f), "NaN is never equal");
+}
+} // namespace
+
 void sr::test::RegisterMathTests(TestRegistry &registry)
 {
     registry.Add("math.core", mathTests);
+    registry.Add("math.vectorEquality", vectorEqualityTests);
     registry.Add("math.frustumSelection", frustumSelectionTests);
 }
