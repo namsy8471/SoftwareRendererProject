@@ -7,6 +7,7 @@
 #include "resource.h"
 #include <algorithm>
 #include <chrono>
+#include <filesystem>
 #include <iostream>
 #include <string_view>
 #include <vector>
@@ -54,6 +55,37 @@ struct Win32AppTestAccess
         app.HandleMessage(app.m_hWnd, WM_COMMAND, ID_DEBUG_NORMALVECTOR, 0);
         check(app.m_runner.GetDebugFlags().bShowNormal, "debug menu state");
         DestroyWindow(app.m_hWnd);
+    }
+    static void projectMenu()
+    {
+        Win32App app(GetModuleHandleW(nullptr), SW_HIDE);
+        for (const int command : {ID_FILE_NEWPROJECT, ID_FILE_OPENPROJECT, ID_FILE_NEWSCENE, ID_FILE_OPENSCENE,
+                                  ID_FILE_SAVESCENE, ID_FILE_SAVESCENEAS})
+            check(GetMenuState(GetMenu(app.m_hWnd), command, MF_BYCOMMAND) != static_cast<UINT>(-1),
+                  "project menu item exists");
+        // 프로젝트 없이 저장하면 대화상자 대신 오류가 쌓인다(프레임 뒤에 표시).
+        app.HandleMessage(app.m_hWnd, WM_COMMAND, ID_FILE_SAVESCENE, 0);
+        check(app.m_pendingAssetErrors.size() == 1, "save without project reports error");
+        app.m_pendingAssetErrors.clear();
+
+        // 메뉴가 부르는 세션 흐름: 만들기 → 프레임 시작 훅에서 반영 → 제목에 프로젝트·씬 이름.
+        const auto directory = std::filesystem::temp_directory_path() / L"sr-win32app-project-test";
+        std::error_code ignored;
+        std::filesystem::remove_all(directory, ignored);
+        app.m_projectSession.CreateProject(directory / L"Demo" / L"Demo.srproj");
+        for (int frame = 0; frame < 2000 && app.m_projectSession.IsBusy(); ++frame)
+        {
+            app.updateFrame(0.f);
+            Sleep(1);
+        }
+        check(app.m_pendingAssetErrors.empty() && app.m_projectSession.HasProject(), "project created");
+        check(app.m_windowTitle.find(L"Demo - Main") != std::wstring::npos, "title shows project and scene");
+        check(app.m_runner.GetScene().GetRootObjects().empty(), "startup scene replaced demo scene");
+        app.m_projectSession.MarkDirty();
+        check(app.m_windowTitle.back() == L'*', "dirty mark in title");
+        check(app.m_projectSession.SaveSceneNow().has_value() && app.m_windowTitle.back() != L'*', "saved");
+        DestroyWindow(app.m_hWnd);
+        std::filesystem::remove_all(directory, ignored);
     }
 };
 
@@ -149,6 +181,7 @@ void Win32AppTestAccess::benchmark(int frames, int width, int height, std::strin
 void sr::test::RegisterWin32AppTests(TestRegistry &registry)
 {
     registry.Add("win32app.inputAndMenus", Win32AppTestAccess::inputAndMenus);
+    registry.Add("win32app.projectMenu", Win32AppTestAccess::projectMenu);
 }
 
 void RunWin32AppBenchmark(int frames, int width, int height, std::string_view mode, std::string_view optimization,

@@ -3,10 +3,21 @@
 #include <vector>
 #include <memory>
 #include <span>
+#include <string>
+#include <utility>
 #include "Math/AABB.h"
 #include "Math/SRMath.h"
 
 class Model;
+
+// 씬 파일과 런타임 물체를 잇는 편집용 정보. 렌더링·갱신은 읽지 않는다.
+// 프로젝트 밖에서 만든 물체(데모 장면, 프로젝트 없이 드롭한 모델)는 id가 비어 있다.
+struct EntityInfo
+{
+    std::string id;        // 씬 안에서 고유. 부모 참조와 이후 애니메이션 대상 지정에 쓴다
+    std::string name;      // 사람이 읽는 이름. 고유하지 않아도 된다
+    std::string meshAsset; // 프로젝트 에셋 표의 id. 모델 없는 그룹 노드는 빈 문자열
+};
 
 class GameObject : public std::enable_shared_from_this<GameObject>
 {
@@ -25,6 +36,8 @@ class GameObject : public std::enable_shared_from_this<GameObject>
     // Hierarchy
     std::weak_ptr<GameObject> m_parent;
     std::vector<std::shared_ptr<GameObject>> m_children;
+
+    EntityInfo m_entityInfo;
 
   public:
     // model이 null이면 그리지 않는 변환 노드다(프로젝트 파일의 그룹 엔티티 등).
@@ -49,6 +62,8 @@ class GameObject : public std::enable_shared_from_this<GameObject>
     void SetRotation(const SRMath::vec3 &rotation) noexcept { m_rotation = rotation; }
     void SetScale(const SRMath::vec3 &scale) noexcept { m_scale = scale; }
     [[nodiscard]] const Model *GetModel() const noexcept { return m_model.get(); }
+    [[nodiscard]] const EntityInfo &GetEntityInfo() const noexcept { return m_entityInfo; }
+    void SetEntityInfo(EntityInfo info) noexcept { m_entityInfo = std::move(info); }
     [[nodiscard]] const AABB &GetWorldAABB() const noexcept { return m_worldAABB; }
     // 열벡터 규약의 world = parentWorld * T * R * S. normal은 그 역전치(특이하면 단위 행렬)다.
     [[nodiscard]] const SRMath::mat4 &GetWorldMatrix() const noexcept { return m_worldMatrix; }
