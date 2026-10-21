@@ -177,18 +177,25 @@ void writeMatch(BitWriter &writer, int length, int distance)
     static const auto table = []
     {
         std::array<std::uint32_t, 256> values{};
-        for (std::uint32_t n = 0; n < 256; ++n)
+        // 첨자 없이 채운다. /analyze가 람다 안 루프의 values[n] 범위를 증명하지 못한다(C28020).
+        std::uint32_t n = 0;
+        for (auto &entry : values)
         {
-            std::uint32_t c = n;
+            std::uint32_t c = n++;
             for (int k = 0; k < 8; ++k)
                 c = (c & 1) ? 0xEDB88320u ^ (c >> 1) : c >> 1;
-            values[n] = c;
+            entry = c;
         }
         return values;
     }();
     crc = ~crc;
     for (const auto byte : data)
-        crc = table[(crc ^ byte) & 0xFF] ^ (crc >> 8);
+    {
+        // /analyze가 & 0xFF의 범위를 증명하지 못해 명시적으로 확인한다.
+        const auto index = static_cast<std::size_t>((crc ^ byte) & 0xFFu);
+        if (index < table.size())
+            crc = table[index] ^ (crc >> 8);
+    }
     return ~crc;
 }
 
