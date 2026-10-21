@@ -172,7 +172,8 @@ class ObjParser
             auto texcoord = parseVec2(arguments);
             if (!texcoord)
                 return std::unexpected(malformedObj(m_filename, m_lineNumber, texcoord.error()));
-            m_texcoords.emplace_back(*texcoord);
+            // OBJ의 v는 아래에서 위로 증가한다. Texture 행은 위에서 아래 순서이므로 왼쪽 위 원점으로 바꿔 둔다.
+            m_texcoords.emplace_back(texcoord->x, 1.0f - texcoord->y);
         }
 
         // 법선 벡터(vn)

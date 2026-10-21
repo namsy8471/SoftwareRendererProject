@@ -2,13 +2,10 @@
 
 #include <algorithm>
 #include <cstdlib>
-#include <memory>
+#include <fstream>
+#include <iterator>
 
-// stb_image 구현은 TextureLoader.cpp에 한 번만 있다. 여기서는 선언만 쓴다.
-#include <stb_image/stb_image.h>
-#define STB_IMAGE_WRITE_IMPLEMENTATION
-#define STBI_MSC_SECURE_CRT
-#include <stb_image/stb_image_write.h>
+#include "Graphics/Codecs/ImageCodecs.h"
 
 namespace sr::image
 {
@@ -50,24 +47,30 @@ std::expected<void, std::string> WritePng(const std::filesystem::path &path, con
     std::error_code error;
     if (path.has_parent_path())
         std::filesystem::create_directories(path.parent_path(), error);
-    if (!stbi_write_png(path.string().c_str(), image.width, image.height, 3, rgb.data(), image.width * 3))
+    const auto png = sr::codec::EncodePngRgb(image.width, image.height, rgb);
+    std::ofstream file(path, std::ios::binary);
+    file.write(reinterpret_cast<const char *>(png.data()), static_cast<std::streamsize>(png.size()));
+    if (!file)
         return std::unexpected("failed to write PNG: " + path.string());
     return {};
 }
 
 std::expected<Image, std::string> ReadPng(const std::filesystem::path &path)
 {
-    int width = 0, height = 0, components = 0;
-    const std::unique_ptr<unsigned char, decltype(&stbi_image_free)> data(
-        stbi_load(path.string().c_str(), &width, &height, &components, 3), &stbi_image_free);
-    if (!data)
+    std::ifstream file(path, std::ios::binary);
+    if (!file)
         return std::unexpected("failed to read PNG: " + path.string());
-    Image image{width, height, std::vector<std::uint32_t>(static_cast<std::size_t>(width) * height)};
+    const std::vector<std::uint8_t> bytes{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
+    const auto decoded = sr::codec::DecodePng(bytes);
+    if (!decoded)
+        return std::unexpected("failed to read PNG: " + path.string() + " (" + decoded.error() + ")");
+    // 알파는 버린다. 골든 비교는 RGB만 본다.
+    Image image{decoded->width, decoded->height, std::vector<std::uint32_t>(static_cast<std::size_t>(decoded->width) * decoded->height)};
     for (std::size_t index = 0; index < image.pixels.size(); ++index)
     {
-        const unsigned char *rgb = data.get() + index * 3;
-        image.pixels[index] = (static_cast<std::uint32_t>(rgb[0]) << 16) |
-                              (static_cast<std::uint32_t>(rgb[1]) << 8) | static_cast<std::uint32_t>(rgb[2]);
+        const std::uint8_t *rgba = decoded->rgba.data() + index * 4;
+        image.pixels[index] = (static_cast<std::uint32_t>(rgba[0]) << 16) |
+                              (static_cast<std::uint32_t>(rgba[1]) << 8) | static_cast<std::uint32_t>(rgba[2]);
     }
     return image;
 }

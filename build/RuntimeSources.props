@@ -125,4 +125,17 @@
     <ClInclude Include="src\Project\ProjectFiles.h" />
     <ClInclude Include="src\Project\ProjectSession.h" />
   </ItemGroup>
+  <!-- 자체 이미지 코덱(PNG/JPEG/BMP/TGA/DDS 디코더, zlib inflate, PNG 인코더). 외부 라이브러리 없이 메모리 버퍼만 다룬다. -->
+  <ItemGroup>
+    <ClCompile Include="src\Graphics\Codecs\BmpDecoder.cpp" />
+    <ClCompile Include="src\Graphics\Codecs\DdsDecoder.cpp" />
+    <ClCompile Include="src\Graphics\Codecs\ImageCodecs.cpp" />
+    <ClCompile Include="src\Graphics\Codecs\Inflate.cpp" />
+    <ClCompile Include="src\Graphics\Codecs\JpegDecoder.cpp" />
+    <ClCompile Include="src\Graphics\Codecs\PngDecoder.cpp" />
+    <ClCompile Include="src\Graphics\Codecs\PngEncoder.cpp" />
+    <ClCompile Include="src\Graphics\Codecs\TgaDecoder.cpp" />
+    <ClInclude Include="src\Graphics\Codecs\CodecSupport.h" />
+    <ClInclude Include="src\Graphics\Codecs\ImageCodecs.h" />
+  </ItemGroup>
 </Project>

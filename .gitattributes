@@ -12,3 +12,5 @@
 # glTF 테스트 표본의 바이너리 버퍼(GltfTests.cpp가 바이트 단위로 읽는다)
 *.glb binary
 /tests/fixtures/gltf/*.bin binary
+# 이미지 디코더 fixture는 바이트 단위로 비교하므로 줄바꿈 변환을 막는다(TGA/BMP/DDS는 NUL이 없으면 텍스트로 오인될 수 있다).
+/tests/fixtures/images/** binary

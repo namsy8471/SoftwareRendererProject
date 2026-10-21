@@ -111,6 +111,7 @@ int main(int argc, char **argv)
         TestRegistry registry;
         RegisterMathTests(registry);
         RegisterAssetTests(registry);
+        RegisterImageCodecTests(registry);
         RegisterRenderTargetTests(registry);
         RegisterVisibilityTests(registry);
         RegisterRendererTests(registry);

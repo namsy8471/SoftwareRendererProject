@@ -1,0 +1,17 @@
+# teapot.obj가 참조하는 재질 라이브러리(mtllib default.mtl).
+# 이 파일이 없던 때는 기본 Material(Ka/Kd/Ks 0.5, Ns 32)로 그려졌다. Ka·Ks·Ns는 그 값을 유지하고,
+# Kd는 1로 두어 teapot.png 색이 그대로 보이게 한다(최종 색 = 텍스처 × Kd).
+# teapot.obj는 "default"와 "Default" 두 이름을 쓴다.
+newmtl default
+Ka 0.1 0.1 0.1
+Kd 1.0 1.0 1.0
+Ks 0.3 0.3 0.3
+Ns 32
+map_Kd teapot.png
+
+newmtl Default
+Ka 0.1 0.1 0.1
+Kd 1.0 1.0 1.0
+Ks 0.3 0.3 0.3
+Ns 32
+map_Kd teapot.png
