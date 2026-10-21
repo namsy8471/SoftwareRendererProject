@@ -8,6 +8,7 @@
 #include "Renderer/RenderQueue.h"
 #include "Scene/GameObject.h"
 
+#include <algorithm>
 #include <utility>
 #include <tbb/blocked_range.h>
 #include <tbb/parallel_for.h>
@@ -109,8 +110,28 @@ void SceneRenderCollector::collectMeshCommands(const GameObject &object, const M
     const SRMath::mat4 &world = object.GetWorldMatrix();
     const ERasterizeMode rasterizeMode = flags.bShowWireframe ? ERasterizeMode::Wireframe : ERasterizeMode::Fill;
 
-    if (mesh.octree)
+    // 보이는 삼각형을 이 개수씩 명령 하나로 묶는다. 옥트리 노드(최대 16개)마다 명령을 내면 1080p 데모에서
+    // 프레임당 명령이 약 1만 1천 개가 되고, 명령마다 renderer 작업 하나와 변환 캐시 키 비교가 붙는다.
+    // 삼각형 순서와 primitive ID는 명령을 어떻게 나누든 같다(ID는 제출 순서의 누적 삼각형 번호).
+    // 너무 크면 큰 메시 하나가 한 worker를 오래 잡아 분류 단계 부하가 한쪽으로 쏠린다.
+    constexpr std::size_t commandTriangleBudget = 256;
+    const auto submitRange = [&](std::span<const unsigned int> indices)
     {
+        constexpr std::size_t chunk = commandTriangleBudget * 3;
+        for (std::size_t first = 0; first < indices.size(); first += chunk)
+            batch.commands.push_back(
+                MeshRenderCommand{.sourceMesh = &mesh,
+                                  .indicesToDraw = indices.subspan(first, std::min(chunk, indices.size() - first)),
+                                  .worldTransform = world,
+                                  .material = &mesh.material,
+                                  .rasterizeMode = rasterizeMode});
+    };
+
+    if (mesh.octree && !flags.bShowAABB)
+        mesh.octree->ForEachVisibleRange(frustum, world, submitRange);
+    else if (mesh.octree)
+    {
+        // AABB 표시는 보이는 노드마다 상자를 그려야 하므로 노드 단위로 돈다.
         mesh.octree->ForEachVisibleNode(
             frustum, world,
             [&](std::span<const unsigned int> indices, const AABB &worldBounds)
@@ -126,13 +147,7 @@ void SceneRenderCollector::collectMeshCommands(const GameObject &object, const M
             });
     }
     else
-    {
-        batch.commands.push_back(MeshRenderCommand{.sourceMesh = &mesh,
-                                                   .indicesToDraw = mesh.indices,
-                                                   .worldTransform = world,
-                                                   .material = &mesh.material,
-                                                   .rasterizeMode = rasterizeMode});
-    }
+        submitRange(mesh.indices);
 
     if (flags.bShowNormal)
     {

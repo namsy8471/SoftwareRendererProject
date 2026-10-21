@@ -1,6 +1,9 @@
 #include "Octree.h"
 #include <vector>
 #include <array>
+#include <cstdint>
+#include <limits>
+#include <stdexcept>
 #include "Math/SRMath.h"
 #include "Graphics/Mesh.h"
 #include "Math/AABB.h"
@@ -94,11 +97,36 @@ void Octree::Build(const Mesh &mesh)
 {
     AABB rootBounds = ComputeLocalAABB(mesh); // 메시 전체를 감싸는 AABB
 
-    m_root = std::make_unique<Node>(rootBounds); // 루트 노드 생성
+    const auto root = std::make_unique<Node>(rootBounds); // 루트 노드 생성
 
     // 메시의 모든 삼각형을 루트로부터 삽입
     for (size_t i = 0; i < mesh.indices.size(); i += 3)
     {
-        insert(m_root.get(), mesh, mesh.indices[i], mesh.indices[i + 1], mesh.indices[i + 2]);
+        insert(root.get(), mesh, mesh.indices[i], mesh.indices[i + 1], mesh.indices[i + 2]);
     }
+
+    // FlatNode는 32비트 번호를 쓴다. 인덱스가 이보다 많은 메시는 지원하지 않는다.
+    if (mesh.indices.size() > std::numeric_limits<std::uint32_t>::max())
+        throw std::length_error("Octree index count exceeded");
+    m_nodes.clear();
+    m_indices.clear();
+    m_indices.reserve(mesh.indices.size());
+    flatten(*root);
+}
+
+// 전위 순서(자기 → children[0..7])로 노드와 인덱스를 옮긴다. ForEachVisibleNode의 방문 순서와 같다.
+void Octree::flatten(const Node &node)
+{
+    const auto self = m_nodes.size();
+    FlatNode flat;
+    flat.bounds = node.bounds;
+    flat.indexBegin = static_cast<std::uint32_t>(m_indices.size());
+    m_indices.insert(m_indices.end(), node.triangleIndices.begin(), node.triangleIndices.end());
+    flat.indexEnd = static_cast<std::uint32_t>(m_indices.size());
+    m_nodes.push_back(flat);
+    for (const auto &child : node.children)
+        if (child)
+            flatten(*child);
+    m_nodes[self].subtreeIndexEnd = static_cast<std::uint32_t>(m_indices.size());
+    m_nodes[self].subtreeEnd = static_cast<std::uint32_t>(m_nodes.size());
 }

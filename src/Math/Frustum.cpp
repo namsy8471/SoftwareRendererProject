@@ -1,5 +1,7 @@
 ﻿#include "Frustum.h"
 
+#include <cmath>
+
 void Frustum::Update(const SRMath::mat4 &vpMatrix) noexcept
 {
     // View-Projection 행렬에서 각 평면의 방정식을 추출합니다.
@@ -75,4 +77,39 @@ bool Frustum::IsAABBInFrustum(const AABB &aabb) const noexcept
 
     // 모든 평면 검사를 통과했다면, AABB는 절두체 안에 있거나 걸쳐 있습니다.
     return true;
+}
+
+FrustumTest Frustum::ClassifyAABB(const AABB &aabb) const noexcept
+{
+    // 거리 항의 크기에 대한 상대 여유. float 반올림(약 6e-8)보다 충분히 커서, 부모 상자 안의
+    // 자식 상자를 따로 변환하고 검사해도 결과가 뒤집히지 않는다.
+    constexpr float insideMargin = 1e-4f;
+    const auto zero = _mm_setzero_ps();
+    const auto signMask = _mm_set1_ps(-0.0f);
+    const auto absMin = _mm_andnot_ps(signMask, aabb.min.m128);
+    const auto absMax = _mm_andnot_ps(signMask, aabb.max.m128);
+    SRMath::vec3 largest;
+    largest.m128 = _mm_max_ps(absMin, absMax);
+    bool inside = true;
+    for (const auto &plane : planes)
+    {
+        // IsAABBInFrustum과 같은 P-vertex 선택과 같은 거리 계산이다.
+        const auto normalXYZ = _mm_blend_ps(plane.normal.m128, zero, 0b1000);
+        const auto useMaximum = _mm_cmpge_ps(normalXYZ, zero);
+        SRMath::vec3 positiveVertex;
+        positiveVertex.m128 = _mm_blendv_ps(aabb.min.m128, aabb.max.m128, useMaximum);
+        if (plane.SignedDistanceTo(positiveVertex) < 0)
+            return FrustumTest::Outside;
+        // N-vertex(평면 쪽으로 가장 나온 꼭짓점)까지 안쪽이면 상자 전체가 안쪽이다. 앞 평면에서 이미
+        // Inside가 아니어도 분기하지 않고 계산한다(blend 1번, dot 2번). 분기를 두면 GCC가 6개 평면을
+        // 풀면서 경우마다 코드를 복제해 분기가 12개가 됐다.
+        SRMath::vec3 negativeVertex;
+        negativeVertex.m128 = _mm_blendv_ps(aabb.max.m128, aabb.min.m128, useMaximum);
+        SRMath::vec3 absNormal;
+        absNormal.m128 = _mm_andnot_ps(signMask, normalXYZ);
+        const float scale = SRMath::dot(absNormal, largest) + std::abs(plane.distance);
+        // NaN이면 비교가 false라 Intersects로 남아 노드별 검사로 내려간다.
+        inside &= plane.SignedDistanceTo(negativeVertex) >= scale * insideMargin;
+    }
+    return inside ? FrustumTest::Inside : FrustumTest::Intersects;
 }
