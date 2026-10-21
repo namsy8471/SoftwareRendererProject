@@ -6,6 +6,7 @@
 그 흔들림이 양쪽에 비슷하게 들어가서 "몇 % 빨라졌나"는 비교할 수 있다.
 - 라운드마다 순서를 바꾼다(0: base→head, 1: head→base, ...). 시간에 따라 느려지는/빨라지는 추세가 한쪽에만 쌓이지 않게 하기 위해서다.
 - 맨 앞 한 쌍은 예열(캐시·클럭 안정)로 기록만 하고 분석에서 뺀다(round = -1).
+- base·head 실행 폴더(exe, dll, assets)가 바이트까지 같으면 측정하지 않는다(-Force로 강제 가능).
 - 분석·표 작성은 tools/ci/AB-Report.ps1이 한다. Windows·Linux 둘 다 동작한다.
 .EXAMPLE
 ./tools/ci/AB-Bench.ps1 -Base ../base/tools/bin/x64/Release/srcli.exe -Head tools/bin/x64/Release/srcli.exe -Mode normal -Out ab/normal.jsonl
@@ -22,7 +23,8 @@ param(
     [string]$Size = '1920x1080',
     [string]$BaseLabel = 'base',
     [string]$HeadLabel = 'head',
-    [string[]]$ExtraArgs = @()
+    [string[]]$ExtraArgs = @(),
+    [switch]$Force
 )
 $ErrorActionPreference = 'Stop'
 foreach ($exe in @($Base, $Head)) {
@@ -35,6 +37,18 @@ function Get-CpuName {
         $line = Get-Content /proc/cpuinfo | Where-Object { $_ -like 'model name*' } | Select-Object -First 1
         return ($line -split ':', 2)[1].Trim()
     } catch { return 'unknown' }
+}
+
+# 실행에 쓰이는 폴더 전체(exe, dll, assets)의 내용 해시. 상대 경로와 파일 해시를 함께 묶는다.
+function Get-BundleHash([string]$exe) {
+    $root = (Resolve-Path (Split-Path $exe -Parent)).Path
+    $lines = Get-ChildItem $root -Recurse -File | Where-Object { $_.Extension -notin '.pdb', '.ilk', '.exp', '.lib' } |
+        Sort-Object FullName | ForEach-Object {
+            $rel = [IO.Path]::GetRelativePath($root, $_.FullName).Replace('\', '/')
+            '{0} {1}' -f $rel, (Get-FileHash $_.FullName -Algorithm SHA256).Hash
+        }
+    $bytes = [Text.Encoding]::UTF8.GetBytes(($lines -join "`n"))
+    return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes))
 }
 
 $cpu = Get-CpuName
@@ -56,6 +70,19 @@ function Invoke-Side([string]$side, [int]$round) {
     $row | Add-Member logical_cores $cores
     Add-Content -Path $Out -Value ($row | ConvertTo-Json -Compress)
     Write-Output ('round {0,2} {1,-4} mean {2,8:0.000} ms  p95 {3,8:0.000} ms  hash {4}' -f $round, $side, [double]$row.mean_ms, [double]$row.p95_ms, $row.pixel_hash)
+}
+
+# 같은 소스를 같은 경로에서 /Brepro로 빌드하면 바이트까지 같은 결과가 나온다. 그때는 재 봐야 잡음뿐이므로
+# 측정 대신 "동일" 한 줄만 남긴다(AB-Report.ps1이 "변화 없음"으로 표시). -Force면 그래도 잰다(A/A 잡음 확인용).
+$baseHash = Get-BundleHash $Base
+$headHash = Get-BundleHash $Head
+Write-Output "bundle sha256: base $baseHash, head $headHash"
+if ($baseHash -eq $headHash -and -not $Force) {
+    $row = [pscustomobject]@{ mode = $Mode; identical = $true; bundle_sha256 = $headHash; cpu = $cpu; logical_cores = $cores; round = 0 }
+    Add-Content -Path $Out -Value ($row | ConvertTo-Json -Compress)
+    Write-Output "base and head builds are byte-identical: skipped measurement"
+    Write-Output "saved: $Out"
+    return
 }
 
 Write-Output "A/B $Mode $Size, $Rounds rounds x $Frames frames (warmup $Warmup), $cpu, $cores logical cores"
