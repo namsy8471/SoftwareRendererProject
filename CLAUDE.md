@@ -57,13 +57,31 @@ tools/dev.sh render wire out.png
 `anim_ms`(포즈 + 계층 transform + 스키닝 한 번의 평균, 측정 프레임 뒤 따로 잼)가 붙는다. 데모 장면 판정 수치와 섞지 않는다.
 `--stats`는 패스별 시간(`prepare/bin/raster/line/post_ms`)과 카운터를 JSON에 넣지만 측정을 느리게 하므로 최종 수치에는 쓰지 않는다.
 
+## 어셈블리 수준 최적화 원칙
+
+**모든 코드는 실제 코드보다 어셈블리 단에서 최적화가 이루어진 코드여야 한다.**
+
+적용 방법:
+- 바꾼 함수는 생성된 어셈블리를 직접 본다. MSVC는 `/FAs`(소스가 섞인 .asm)나 `dumpbin /disasm`,
+  GCC는 `-S -fverbose-asm`이나 `objdump -d -C --no-show-raw-insn`을 쓴다.
+- 소스 수준의 추측("이렇게 쓰면 빠르겠지")이 아니라 어셈블리에 보이는 것을 근거로 고친다:
+  인라인 여부, 분기와 cmov, SIMD 폭과 명령, 불필요한 load/store와 레지스터 spill, 호출 오버헤드, 루프 벡터화.
+- 커밋 메시지나 PR 설명에 바뀐 코드의 어셈블리 전/후 발췌(핵심 명령과 명령 수 변화)를 적는다.
+  채택 여부는 아래 6단계처럼 측정 수치(A/B 판정, pixel_hash 동일)로 정한다.
+
+적용 범위 (사용자 결정, 2026-10-21):
+- 적용: 프레임마다 도는 코드. 래스터화, 정점 변환, 타일 binning/scatter, 선 그리기, 후처리(FXAA),
+  애니메이션 샘플링·스키닝, 장면 갱신·가시성 수집 등 프레임 경로 전부.
+- 적용: 로드 시점 코드. 이미지 디코더(PNG/JPEG/BMP/TGA/DDS, inflate), glTF·JSON·OBJ/MTL 파서와 모델 후처리.
+- 제외: `tests/`, `tools/`처럼 배포되지 않는 코드.
+
 ## 최적화 작업 흐름
 
 한 번에 한 가지 변경만 하고, 아래 순서를 지킨다.
 
 1. 기준 측정: 클라우드 A/B가 base를 직접 빌드해 재므로 따로 기록하지 않아도 된다. PC로 잴 때만 `./tests/Bench.ps1 -Runs 3 -Label before-<주제>`.
-2. 프로파일: `tests/CaptureCpuProfiles.ps1`(VS CPU Usage/VTune)로 핫스팟 함수를 찾고, 필요하면 해당 함수의 어셈블리(`/FAs` 또는 디스어셈블리)를 본다.
-3. 수정: 핫스팟만 고친다. 어셈블리 수준(인라인 여부, 분기, SIMD 사용, 메모리 접근)까지 확인한다.
+2. 프로파일: `tests/CaptureCpuProfiles.ps1`(VS CPU Usage/VTune)로 핫스팟 함수를 찾고, 해당 함수의 어셈블리(`/FAs` 또는 디스어셈블리)를 본다.
+3. 수정: 핫스팟만 고친다. 위 "어셈블리 수준 최적화 원칙"에 따라 어셈블리(인라인 여부, 분기, SIMD 사용, 메모리 접근)를 보고 고친다.
 4. 테스트: `./tests/RunTests.ps1 -Quick` 전부 통과(골든 포함).
 5. 재측정: 브랜치를 푸시하고 `gh workflow run ab-bench.yml --ref <브랜치>`(PR이 있으면 자동)로 클라우드 A/B 표를 받는다.
    PC로 확인할 때는 `./tests/Bench.ps1 -Runs 3 -Label after-<주제>`.
@@ -82,6 +100,8 @@ tools/dev.sh render wire out.png
   `-UpdateGolden`(Windows) 또는 `tools/dev.sh golden`으로 갱신하고 PNG를 같이 커밋한다.
 
 ## 코드 지도
+
+폴더 단위 요약이다. 파일 하나하나의 역할과 핵심 타입은 [CODEMAP.md](CODEMAP.md)에서 찾는다(파일을 열기 전에 먼저 본다).
 
 | 위치 | 내용 |
 | --- | --- |
@@ -110,6 +130,7 @@ tools/dev.sh render wire out.png
 - MSVC `/W4 /WX`, GCC `-Wall -Wextra -Werror`. 경고 0을 유지한다. `src/ThirdParty`는 수정하지 않는다.
 - 컴파일러 전용 문법(`__forceinline`, intrinsic 탐지)은 `src/Platform/Compiler.h`나 `SIMD.cpp`처럼 한곳에 감싼다.
 - 새 `.cpp/.h`는 `build/RuntimeSources.props`(앱·테스트·srcli 공통)에 추가한다. CMake는 `src/` 아래 `.cpp`를 자동으로 모은다.
+  `CODEMAP.md`의 해당 폴더 표에도 한 줄 추가한다(파일 이동·삭제도 같이 반영). 빠지면 CI `Check CODEMAP.md`가 실패한다.
   새 테스트 파일은 `RendererTests.vcxproj`에도 추가하고, 테스트는 그 파일의 `Register...Tests`에 등록한다.
 - `src/Modules/sr.math.ixx`(MSBuild)와 `src/Modules/sr.math.h`(CMake, `SR_NO_MODULES`)는 같은 concept을 담는다. 함께 고친다.
 - 장면 구성을 바꾸면(`DemoScene.cpp`의 표) 벤치마크 기준과 골든이 바뀐다. 성능 작업과 섞지 않는다.
