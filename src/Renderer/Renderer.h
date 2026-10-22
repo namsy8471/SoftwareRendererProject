@@ -1,6 +1,7 @@
 #pragma once
 #include <vector>
 #include <array>
+#include <atomic>
 #include <bit>
 #include <cstdint>
 #include <span>
@@ -91,6 +92,14 @@ class Renderer
         Parallel
     };
     DebugLinePlan m_debugLinePlan = DebugLinePlan::Serial;
+    // 선 밀도로 정한 band 경계 [start[b], start[b+1]). 타일 작업 안에서 그렸으면 m_debugLinesDrawn이다.
+    std::array<int, debugLineBandCount + 1> m_debugLineBandStart{};
+    int m_debugLineBands = 0;
+    bool m_debugLinesDrawn = false;
+    // Renderer를 스택에 만드는 테스트가 있어 큰 배열은 힙에 둔다(MSVC C6262: 스택 16KB 초과).
+    std::vector<RenderStats> m_debugLineBandStats = std::vector<RenderStats>(maximumLineBands);
+    // 타일 행마다 아직 끝나지 않은 타일 조각 수. 0이 되면 그 행을 덮는 선 band의 대기 수를 줄인다.
+    std::vector<std::atomic<std::uint32_t>> m_tileRowRemaining;
 
     struct CommandCacheKey
     {
@@ -202,12 +211,19 @@ class Renderer
     static void clipPolygonAgainstPlane(ClipBuffer &, const ClipBuffer &, const __m128 &);
     static void clipTriangle(ClipBuffer &, const ShadedVertex &, const ShadedVertex &, const ShadedVertex &,
                              ClipBuffer &, ClipBuffer &);
-    void renderTiles(RenderTarget &, const FrameContext &, bool needsDepthPrepass, bool clearTiles = false);
+    // drawLineBands면 깊이 검사 선 band도 같은 작업에서 그린다(band가 덮는 타일 행이 모두 끝난 뒤).
+    void renderTiles(RenderTarget &, const FrameContext &, bool needsDepthPrepass, bool clearTiles = false,
+                     bool drawLineBands = false);
     void renderLines(RenderTarget &, const RenderQueue &, const FrameContext &);
     void renderDepthTestedLines(RenderTarget &, const RenderQueue &, const FrameContext &);
     void planDepthTestedLines(const RenderQueue &, const FrameContext &);
     void prepareDebugLineChunk(std::size_t chunkIndex);
     DebugLineRows debugLineRowRange(const std::optional<Rasterizer::PreparedDebugLine> &) const noexcept;
+    void computeDebugLineBands();
+    void drawDebugLineBand(RenderTarget &, const FrameContext &, int band);
+    void renderTileRange(RenderTarget &, const FrameContext &, std::size_t first, std::size_t last,
+                         bool needsDepthPrepass, bool clearTiles, std::vector<TriangleRef *> &gathered,
+                         TileBuffer &tileBuffer);
     void applyPostProcessing(RenderTarget &);
     friend struct RendererTestAccess;
 
