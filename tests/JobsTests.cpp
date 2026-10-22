@@ -195,6 +195,50 @@ void perWorkerTests()
     std::thread([&] { other = &counts.Local(); }).join();
     check(other != &first, "another thread gets its own object");
 }
+
+void finishTests()
+{
+    // finish는 조각을 맡은 스레드마다 그 스레드의 마지막 조각 뒤에 불린다. 그때 본 개수가 최종 개수와 같아야 한다.
+    struct Counts
+    {
+        std::size_t items = 0, seenAtFinish = 0, finishes = 0;
+    };
+    for (int repeat = 0; repeat < 20; ++repeat)
+    {
+        sr::jobs::PerWorker<Counts> counts;
+        std::atomic<bool> finishWithoutChunks = false;
+        sr::jobs::ParallelFor<sr::jobs::Split::Fixed>(
+            std::size_t{0}, std::size_t{5000}, std::size_t{3},
+            [&](std::size_t first, std::size_t last) { counts.Local().items += last - first; },
+            [&]
+            {
+                auto *local = counts.Find();
+                if (!local)
+                    finishWithoutChunks = true;
+                else
+                {
+                    local->seenAtFinish = local->items;
+                    ++local->finishes;
+                }
+            });
+        std::size_t total = 0;
+        for (const auto &count : counts)
+        {
+            total += count.items;
+            check(count.finishes >= 1 && count.seenAtFinish == count.items,
+                  "finish runs after the thread's last chunk");
+        }
+        check(total == std::size_t{5000}, "finish overload still covers every item");
+        check(!finishWithoutChunks.load(), "finish runs only on a thread that ran chunks");
+    }
+    bool finished = false;
+    sr::jobs::ParallelFor(0, 1, 1, [](int, int) {}, [&] { finished = true; });
+    check(finished, "a single inline chunk also calls finish");
+    sr::jobs::PerWorker<int> unused;
+    int *found = &unused.Local();
+    std::thread([&] { found = unused.Find(); }).join();
+    check(found == nullptr, "Find does not create a value for a new thread");
+}
 } // namespace
 
 namespace sr::test
@@ -207,5 +251,6 @@ void RegisterJobsTests(TestRegistry &registry)
     registry.Add("jobs.limits", limitTests);
     registry.Add("jobs.isolated", isolatedTests);
     registry.Add("jobs.per_worker", perWorkerTests);
+    registry.Add("jobs.finish", finishTests);
 }
 } // namespace sr::test
