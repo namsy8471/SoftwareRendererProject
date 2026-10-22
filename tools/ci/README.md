@@ -4,9 +4,10 @@
 | --- | --- | --- |
 | `.github/workflows/ci.yml` `linux` | GitHub 공용 Ubuntu | `CODEMAP.md` 누락 검사(`check_codemap.py`), CMake+GCC 빌드, 단위·골든 테스트, 참고용 벤치 |
 | `.github/workflows/ci.yml` `linux-sanitize` | GitHub 공용 Ubuntu | ASan+UBSan 빌드로 같은 테스트 + srcli 모드별 짧은 실행 |
-| `.github/workflows/windows.yml` `cloud` (3개 동시) | GitHub 공용 Windows (windows-2025, VS 2026) | Release x64 `RunTests.ps1 -Quick`, `/analyze` 빌드(`/p:SrAnalyze=true`)+테스트, Debug x64 ASan 빌드+테스트 |
+| `.github/workflows/windows.yml` `cloud` (2개 동시) | GitHub 공용 Windows (windows-2025, VS 2026) | Release x64 `RunTests.ps1 -Quick`, `/analyze` 빌드(`/p:SrAnalyze=true`)+테스트. `.md`만 바꾼 PR·push는 건너뛴다 |
+| `.github/workflows/windows.yml` `asan` | GitHub 공용 Windows | main push·수동 실행 때만. Debug x64 ASan 빌드+테스트(약 15분). PR에서는 `linux-sanitize`가 같은 코드를 검사한다 |
 | `.github/workflows/windows.yml` `bench` | 사용자 PC (self-hosted) | main push·수동 실행 때만. `srcli`만 Release x64로 빌드, 1080p `Bench.ps1 -Runs 3`, 절대 기준(p95 <= 9ms)과 main 대비 비교표 |
-| `.github/workflows/ab-bench.yml` (모드마다 1개 동시) | GitHub 공용 Windows (windows-2025) | 같은 VM에서 base·head `srcli`를 빌드해 1080p로 번갈아 측정, 변화율·95% 구간·pixel_hash 비교 → 요약 + PR 댓글 |
+| `.github/workflows/ab-bench.yml` (모드마다 1개 동시) | GitHub 공용 Windows (windows-2025) | `ab-bench` 라벨이 붙은 PR·수동 실행 때만. 같은 VM에서 base·head `srcli`를 빌드해 1080p로 번갈아 측정, 변화율·95% 구간·pixel_hash 비교 → 요약 + PR 댓글 |
 
 PC는 절대 기준 벤치만 맡는다. 100fps 판정(p95 <= 9ms)은 이 PC 수치라서 클라우드로 옮길 수 없고, "이전 코드보다 몇 % 빠른가"는 아래 클라우드 A/B 벤치로 잰다.
 클라우드 Windows는 4코어라 이 PC(24코어)보다 빌드가 몇 배 느리지만 PC가 꺼져 있어도 돈다.
@@ -19,7 +20,9 @@ PC는 절대 기준 벤치만 맡는다. 100fps 판정(p95 <= 9ms)은 이 PC 수
 변경 하나가 이전 코드보다 빠른지는 PC 없이 클라우드에서 잰다. 절대 ms는 PC와 다르지만, 같은 VM에서 두 빌드를
 번갈아 재면 VM 전체의 흔들림이 양쪽에 같이 들어가서 비율(%)은 비교할 수 있다.
 
-- 언제 도나: `src/`, `tools/srcli/`, `assets/`, `build/`, `*.vcxproj`를 바꾼 PR마다 자동으로. 문서만 바꾼 PR은 돌지 않는다.
+- 언제 도나: `src/`, `tools/srcli/`, `assets/`, `build/`, `*.vcxproj`를 바꾼 PR에 **`ab-bench` 라벨을 붙였을 때**(붙이는 순간 + 그 뒤 push마다),
+  또는 수동 실행(`gh workflow run ab-bench.yml --ref <브랜치>`). 라벨: `gh pr edit <번호> --add-label ab-bench`.
+  PR마다 자동으로 돌지 않는 이유: 20분 넘게 걸려 머지를 늦추는데, 채택 판단은 주로 PC A/B로 하고 클라우드는 2% 이상 차이만 가린다.
 - 무엇을 비교하나: PR이면 base = 브랜치가 갈라진 지점(merge-base), head = PR 마지막 커밋. 그 브랜치가 만든 변화만 본다.
 - 어떻게 재나: 모드(fill/wire/normal)마다 Windows VM 하나. VM 안에서 base와 head의 `srcli`를 MSVC Release x64로 빌드하고,
   예열 한 쌍 뒤 30라운드를 base→head, head→base 순서를 번갈아 가며 잰다(`tools/ci/AB-Bench.ps1`, 1920x1080, 실행마다 200프레임).

@@ -12,8 +12,8 @@ CPU 소프트웨어 렌더러(C++23/26, oneTBB, SSE/AVX). 목표는 **기본 데
 - **상대 비교**(이 변경이 이전 코드보다 빠른가)는 변경의 종류에 따라 측정 장소를 고른다.
   - 스레드 수에 덜 민감한 변경 → **클라우드 A/B 벤치**(`.github/workflows/ab-bench.yml`).
     예: 한 스레드 안의 계산(SIMD, 분기 제거, 인라인, 메모리 배치, 수학 함수, 클리핑·셰이딩 식).
-    같은 VM에서 base·head를 번갈아 재서 변화율과 95% 구간을 낸다. PR마다 자동으로 돌고, PR 없이도
-    `gh workflow run ab-bench.yml --ref <브랜치>`로 돌린다. PC를 쓰지 않는다. 읽는 법은 `tools/ci/README.md`.
+    같은 VM에서 base·head를 번갈아 재서 변화율과 95% 구간을 낸다. PR에 `ab-bench` 라벨을 붙이면 돌고
+    (`gh pr edit <번호> --add-label ab-bench`), PR 없이도 `gh workflow run ab-bench.yml --ref <브랜치>`로 돌린다. PC를 쓰지 않는다. 읽는 법은 `tools/ci/README.md`.
   - 스레드 수에 민감한 변경 → **PC A/B**(`./tests/Bench.ps1 -Runs 3`로 변경 전후, PC 순서를 받아서).
     예: 타일 크기, TBB 분할·grain size, 작업 분배, 스레드 간 동기화·공유 데이터, 스레드별 버퍼, 병렬 단계 순서.
     클라우드는 4 vCPU라 24코어 PC와 결과가 다를 수 있다. 애매하면 클라우드로 먼저 보고 PC에서 확인한다.
@@ -83,7 +83,7 @@ tools/dev.sh render wire out.png
 2. 프로파일: `tests/CaptureCpuProfiles.ps1`(VS CPU Usage/VTune)로 핫스팟 함수를 찾고, 해당 함수의 어셈블리(`/FAs` 또는 디스어셈블리)를 본다.
 3. 수정: 핫스팟만 고친다. 위 "어셈블리 수준 최적화 원칙"에 따라 어셈블리(인라인 여부, 분기, SIMD 사용, 메모리 접근)를 보고 고친다.
 4. 테스트: `./tests/RunTests.ps1 -Quick` 전부 통과(골든 포함).
-5. 재측정: 브랜치를 푸시하고 `gh workflow run ab-bench.yml --ref <브랜치>`(PR이 있으면 자동)로 클라우드 A/B 표를 받는다.
+5. 재측정: 브랜치를 푸시하고 `gh workflow run ab-bench.yml --ref <브랜치>`(PR이 있으면 `ab-bench` 라벨)로 클라우드 A/B 표를 받는다.
    PC로 확인할 때는 `./tests/Bench.ps1 -Runs 3 -Label after-<주제>`.
 6. 채택 조건: A/B 표에서 `pixel_hash`가 같고 판정이 ✅ 개선일 때만 남긴다. ❌ 느려짐이면 되돌린다.
    ➖ 구분 불가면 `-f rounds=60`으로 다시 재고, 그래도 구분 불가면 PC에서 잰다. 스레드에 민감한 변경은 처음부터 PC A/B로 판단한다.
@@ -171,7 +171,8 @@ tools/dev.sh render wire out.png
 
 ## CI와 PC 러너
 
-- 빌드·테스트·`/analyze`·ASan·A/B 벤치는 GitHub 클라우드(Linux, Windows)에서 돈다. PC(self-hosted runner, 라벨 `renderer-pc`)는
+- 빌드·테스트·`/analyze`·ASan·A/B 벤치는 GitHub 클라우드(Linux, Windows)에서 돈다. PR에서는 Linux 2개 + MSVC Release·`/analyze`만
+  돌고(약 10분), MSVC ASan은 main push·수동, A/B는 `ab-bench` 라벨·수동 때만 돈다. `.md`만 바꾼 PR은 Windows를 건너뛴다. PC(self-hosted runner, 라벨 `renderer-pc`)는
   `windows.yml`의 `bench` job(절대 기준)만 맡고, main push와 수동 실행 때만 돈다(PR마다 돌지 않는다). 구성 설명과 등록 방법은 `tools/ci/README.md`.
 - PC 벤치 job이 필요하거나 대기 중인데 러너가 꺼져 있으면, 사용자에게 묻지 말고 러너를 켠다.
   끄는 것은 사용자가 요청할 때만 한다.

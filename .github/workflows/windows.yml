@@ -1,5 +1,8 @@
 # Windows CI.
-# - 빌드·테스트·/analyze·ASan: GitHub 클라우드 Windows(windows-2025, VS 2026 = v145)에서 job마다 동시에 돈다.
+# - 빌드·테스트·/analyze: GitHub 클라우드 Windows(windows-2025, VS 2026 = v145)에서 job마다 동시에 돈다.
+# - MSVC ASan(Debug x64, 약 15분)은 main push·수동 실행 때만 돈다. PR에서는 Linux ASan+UBSan(ci.yml, 약 2분)이
+#   같은 렌더러 코드를 검사하므로 MSVC ASan이 머지를 늦출 이유가 없다. Win32 앱 코드는 머지 뒤 main에서 검사된다.
+# - .md(문서)만 바꾼 push·PR은 이 workflow를 건너뛴다. CODEMAP.md 검사는 ci.yml이 맡는다.
 # - 벤치: 사용자 PC(self-hosted runner, 라벨 renderer-pc)에서 srcli만 빌드해 1080p로 잰다(main push·수동 실행만).
 #   절대 기준(CLAUDE.md, p95 <= 9ms)은 이 PC의 Release x64 수치라서 클라우드로 옮길 수 없다.
 #   변경 전후 상대 비교는 클라우드 A/B 벤치(ab-bench.yml)가 PR마다 한다.
@@ -11,11 +14,14 @@ name: Windows
 on:
   push:
     branches: [main]
+    paths-ignore: ['**.md']
   pull_request:
+    paths-ignore: ['**.md']
   workflow_dispatch:
 
+# PR 브랜치는 새 push가 오면 이전 실행을 취소한다. main은 커밋마다 따로 둬서, 연달아 머지해도 앞 머지의 검사가 끝까지 돈다.
 concurrency:
-  group: windows-${{ github.ref }}
+  group: windows-${{ github.ref }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
   cancel-in-progress: true
 
 permissions:
@@ -42,10 +48,6 @@ jobs:
           - name: /analyze
             key: analyze
             args: -Quick -MSBuildArgs '/p:SrAnalyze=true'
-          # Debug|x64는 BuildSettings.props에서 이미 EnableASAN(/fsanitize=address)이다. 명시적으로 한 번 더 켠다.
-          - name: AddressSanitizer (Debug x64)
-            key: asan
-            args: -Configurations Debug -Platforms x64 -MSBuildArgs '/p:EnableASAN=true'
     steps:
       - uses: actions/checkout@v4
 
@@ -63,6 +65,29 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: windows-${{ matrix.key }}-failure
+          path: |
+            tests/out/golden/
+            tests/bin/logs/
+          if-no-files-found: ignore
+
+  # MSVC ASan. 가장 오래 걸리는 job(약 15분)이라 PR에서는 빼고 main push·수동 실행 때만 돈다.
+  # Debug|x64는 BuildSettings.props에서 이미 EnableASAN(/fsanitize=address)이다. 명시적으로 한 번 더 켠다.
+  asan:
+    name: MSVC AddressSanitizer (Debug x64) (cloud)
+    if: github.event_name != 'pull_request'
+    runs-on: windows-2025
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build + test
+        run: ./tests/RunTests.ps1 -Configurations Debug -Platforms x64 -MSBuildArgs '/p:EnableASAN=true'
+
+      - name: Upload golden diffs and logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-asan-failure
           path: |
             tests/out/golden/
             tests/bin/logs/

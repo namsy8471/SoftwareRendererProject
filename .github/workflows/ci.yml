@@ -9,8 +9,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+# PR 브랜치는 새 push가 오면 이전 실행을 취소한다. main은 커밋마다 따로 둬서, 연달아 머지해도 앞 머지의 검사가 끝까지 돈다.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.ref }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
   cancel-in-progress: true
 
 jobs:
