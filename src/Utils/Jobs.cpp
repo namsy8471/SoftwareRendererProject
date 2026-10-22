@@ -22,6 +22,9 @@
 //   작업을 공개하면 필요한 helper 수만큼만 골라 깨운다.
 // - 작업은 고정 칸(slots)에 공개한다. 중첩 작업(스키닝의 primitive 안 정점 분할)과 여러 호출 스레드가
 //   동시에 낸 작업도 각자 칸을 쓴다. 칸이 다 차면 그 작업은 호출 스레드 혼자 처리한다.
+// - 하이브리드 CPU(P/E코어)에서는 E코어에 올라 있는 worker가 짧게 돌고 잠든다. worker를 코어에 고정하지 않는다.
+//   PC(Core Ultra 9 275HX, P 8 + E 16)에서 고정하면 OS가 일이 남은 스레드를 P코어로 옮기지 못해
+//   fill +7%, wire +20%, normal +10%로 느려졌다(f6f0046).
 #if defined(_MSC_VER)
 // C4324: alignas(64)로 캐시 줄을 나눈 구조체가 채워졌다는 안내. 의도한 배치다.
 #pragma warning(disable : 4324)
@@ -35,6 +38,9 @@ using Clock = std::chrono::steady_clock;
 // 일이 끝난 worker가 다음 작업을 기다리며 도는 시간. 한 프레임 안의 병렬 단계 사이 간격(수~수십 µs)보다
 // 길어 프레임 중에는 잠들지 않고, 창이 쉬는 동안에는 곧 잠들어 CPU를 놓는다.
 constexpr auto workerSpin = std::chrono::microseconds(200);
+// E코어에 올라 있는 worker가 도는 시간. 도는 E코어도 패키지 전력을 써서(노트북 칩이면 특히) 아직 일하는
+// P코어의 클럭 여유를 줄이므로 짧게 돌고 잠든다.
+constexpr auto efficientCoreSpin = std::chrono::microseconds(50);
 // 호출 스레드가 다른 참여자의 마지막 조각을 기다리며 도는 시간. 그 뒤에는 OS 대기로 넘어간다.
 constexpr auto ownerSpin = std::chrono::microseconds(50);
 // 잠든 worker 표시(비트 i = worker i+1). worker는 최대 maximumParticipants - 1 = 63개라 64비트 하나로 충분하다.
@@ -160,6 +166,60 @@ void finishHelper(Job &job, std::size_t completed) noexcept
         job.done.notify_one();
 }
 
+// 하이브리드 CPU에서 가장 빠른 종류가 아닌 논리 프로세서(group 0의 비트). 하이브리드가 아니거나 알 수 없으면 0.
+std::uint64_t queryEfficientCores() noexcept
+{
+#ifdef _WIN32
+    DWORD length = 0;
+    GetLogicalProcessorInformationEx(RelationProcessorCore, nullptr, &length);
+    if (GetLastError() != ERROR_INSUFFICIENT_BUFFER || length == 0)
+        return 0;
+    std::vector<std::uint64_t> buffer((length + sizeof(std::uint64_t) - 1) / sizeof(std::uint64_t));
+    auto *bytes = reinterpret_cast<std::byte *>(buffer.data());
+    if (!GetLogicalProcessorInformationEx(RelationProcessorCore,
+                                          reinterpret_cast<PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX>(bytes),
+                                          &length))
+        return 0;
+    // 코어마다 (효율 등급, group 0 마스크). 등급이 클수록 빠르다(P코어 1, E코어 0).
+    std::uint64_t byClass[256]{};
+    BYTE fastest = 0;
+    for (DWORD offset = 0; offset < length;)
+    {
+        const auto &entry =
+            *reinterpret_cast<const SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX *>(bytes + offset);
+        offset += entry.Size;
+        if (entry.Relationship != RelationProcessorCore)
+            continue;
+        const auto efficiency = entry.Processor.EfficiencyClass;
+        fastest = std::max(fastest, efficiency);
+        // 물리 코어 하나는 항상 group 하나 안에 있다(GroupCount == 1).
+        if (entry.Processor.GroupMask[0].Group == 0)
+            byClass[efficiency] |= entry.Processor.GroupMask[0].Mask;
+    }
+    std::uint64_t slower = 0;
+    for (unsigned efficiency = 0; efficiency < fastest; ++efficiency)
+        slower |= byClass[efficiency];
+    return slower;
+#else
+    return 0;
+#endif
+}
+
+// 이 스레드가 지금 E코어에서 도는가. 스레드는 코어 사이를 옮겨 다니므로 기다리기 시작할 때마다 본다.
+bool onEfficientCore(std::uint64_t efficientCores) noexcept
+{
+#ifdef _WIN32
+    if (efficientCores == 0)
+        return false;
+    PROCESSOR_NUMBER processor;
+    GetCurrentProcessorNumberEx(&processor);
+    return processor.Group == 0 && processor.Number < 64 && ((efficientCores >> processor.Number) & 1) != 0;
+#else
+    (void)efficientCores;
+    return false;
+#endif
+}
+
 std::size_t hardwareThreads() noexcept
 {
     static const std::size_t threads =
@@ -218,6 +278,19 @@ struct ThreadSlotHolder
     ThreadSlotHolder &operator=(const ThreadSlotHolder &) = delete;
     ~ThreadSlotHolder() { registry().Release(index); }
 };
+
+// 이 스레드를 Windows 전력 절약 스케줄링(EcoQoS) 대상에서 뺀다. 창이 없거나 뒤에 있는 프로세스(벤치, 최소화된
+// 앱)의 스레드는 OS가 E코어와 낮은 클럭에 두려 할 수 있다. 실패해도 동작에는 영향이 없다.
+void optOutOfPowerThrottling() noexcept
+{
+#ifdef _WIN32
+    THREAD_POWER_THROTTLING_STATE state{};
+    state.Version = THREAD_POWER_THROTTLING_CURRENT_VERSION;
+    state.ControlMask = THREAD_POWER_THROTTLING_EXECUTION_SPEED;
+    state.StateMask = 0;
+    SetThreadInformation(GetCurrentThread(), ThreadPowerThrottling, &state, sizeof(state));
+#endif
+}
 
 void nameThread(std::size_t index)
 {
@@ -299,6 +372,9 @@ class Pool
 
     Pool()
     {
+        m_efficientCores = queryEfficientCores();
+        // 풀을 처음 쓰는 스레드(앱/벤치의 main thread)도 직렬 구간을 맡으므로 같이 뺀다.
+        optOutOfPowerThrottling();
         const auto workers = hardwareThreads() - 1;
         for (std::size_t index = 0; index < workers; ++index)
         {
@@ -375,6 +451,7 @@ class Pool
     void workerMain(std::size_t index)
     {
         nameThread(index);
+        optOutOfPowerThrottling();
         while (true)
         {
             // 칸을 보기 전에 세대를 읽는다. 본 뒤에 공개된 작업은 세대가 달라져 아래 대기에서 바로 깬다.
@@ -412,6 +489,7 @@ class Pool
     void waitForWork(std::size_t index, std::uint32_t seen) noexcept
     {
         m_spinning.fetch_add(1, std::memory_order_relaxed);
+        const auto spinTime = onEfficientCore(m_efficientCores) ? efficientCoreSpin : workerSpin;
         const auto start = Clock::now();
         for (unsigned spin = 1;; ++spin)
         {
@@ -421,7 +499,7 @@ class Pool
                 return;
             }
             _mm_pause();
-            if ((spin & 1023) == 0 && Clock::now() - start > workerSpin)
+            if ((spin & 1023) == 0 && Clock::now() - start > spinTime)
                 break;
         }
         m_spinning.fetch_sub(1, std::memory_order_relaxed);
@@ -450,6 +528,8 @@ class Pool
     alignas(64) std::atomic<std::uint64_t> m_sleepMask{0};
     WakeFlag m_wake[maximumParticipants];
     std::size_t m_workers = 0;
+    // E코어 논리 프로세서(group 0 비트). 하이브리드가 아니면 0이고 모두 workerSpin만큼 돈다.
+    std::uint64_t m_efficientCores = 0;
     // 닫는 중인 칸 표시. 실제 작업으로 쓰지 않는다.
     Job m_closing;
 };
