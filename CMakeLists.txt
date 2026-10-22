@@ -16,35 +16,14 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# --- oneTBB: Windows는 저장소에 포함된 바이너리, 그 외는 시스템 패키지(libtbb-dev 등) ---
-if(WIN32)
-  set(SR_TBB_ROOT "${CMAKE_SOURCE_DIR}/src/ThirdParty/OneTBB_2023.1.0")
-  if(CMAKE_SIZEOF_VOID_P EQUAL 8)
-    set(SR_TBB_ARCH intel64)
-  else()
-    set(SR_TBB_ARCH ia32)
-  endif()
-  add_library(sr_tbb INTERFACE)
-  target_include_directories(sr_tbb SYSTEM INTERFACE "${SR_TBB_ROOT}/include")
-  target_link_directories(sr_tbb INTERFACE "${SR_TBB_ROOT}/lib/${SR_TBB_ARCH}/vc14")
-  set(SR_TBB_DLL_DIR "${SR_TBB_ROOT}/redist/${SR_TBB_ARCH}/vc14")
-  set(SR_TBB_TARGET sr_tbb)
-else()
-  find_package(TBB REQUIRED)
-  set(SR_TBB_TARGET TBB::tbb)
-endif()
+# 병렬 작업은 자체 스레드 풀(src/Utils/Jobs.cpp)이라 std::thread만 필요하다.
 find_package(Threads REQUIRED)
-
-# --- 작업 스케줄러: 기본은 자체 스레드 풀(src/Utils/Jobs.cpp). TBB는 같은 API의 비교용 백엔드 ---
-set(SR_JOB_BACKEND "Native" CACHE STRING "sr::jobs backend: Native (own thread pool) or TBB (comparison)")
-set_property(CACHE SR_JOB_BACKEND PROPERTY STRINGS Native TBB)
 
 # --- 공통 컴파일 설정 ---
 add_library(sr_options INTERFACE)
 target_compile_definitions(sr_options INTERFACE SR_NO_MODULES SR_HEADLESS_ONLY NOMINMAX
                                                 SR_SOURCE_ASSET_DIR="${CMAKE_SOURCE_DIR}/assets")
 target_include_directories(sr_options INTERFACE "${CMAKE_SOURCE_DIR}/src" "${CMAKE_SOURCE_DIR}")
-target_include_directories(sr_options SYSTEM INTERFACE "${CMAKE_SOURCE_DIR}/src/ThirdParty")
 if(MSVC)
   target_compile_options(sr_options INTERFACE /W4 /utf-8 /permissive- /Zc:__cplusplus /external:W0
                                               /std:c++latest)
@@ -84,10 +63,7 @@ file(GLOB_RECURSE SR_CORE_SOURCES CONFIGURE_DEPENDS
      "${CMAKE_SOURCE_DIR}/src/IO/*.cpp" "${CMAKE_SOURCE_DIR}/src/Project/*.cpp"
      "${CMAKE_SOURCE_DIR}/src/Animation/*.cpp")
 add_library(sr_core STATIC ${SR_CORE_SOURCES})
-target_link_libraries(sr_core PUBLIC sr_options ${SR_TBB_TARGET} Threads::Threads)
-if(SR_JOB_BACKEND STREQUAL "TBB")
-  target_compile_definitions(sr_core PUBLIC SR_JOB_BACKEND_TBB)
-endif()
+target_link_libraries(sr_core PUBLIC sr_options Threads::Threads)
 # AVX 구현만 AVX로 컴파일한다(런타임 CPUID로 선택). 다른 파일에 AVX가 섞이지 않게 한다.
 if(MSVC)
   set_source_files_properties("${CMAKE_SOURCE_DIR}/src/Math/SIMD_AVX.cpp"
@@ -105,15 +81,6 @@ target_link_libraries(srcli PRIVATE sr_core)
 file(GLOB SR_TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/tests/*.cpp")
 add_executable(RendererTests ${SR_TEST_SOURCES})
 target_link_libraries(RendererTests PRIVATE sr_core)
-
-if(WIN32)
-  foreach(target srcli RendererTests)
-    add_custom_command(TARGET ${target} POST_BUILD
-      COMMAND ${CMAKE_COMMAND} -E copy_if_different
-              "${SR_TBB_DLL_DIR}/$<IF:$<CONFIG:Debug>,tbb12_debug.dll,tbb12.dll>" "$<TARGET_FILE_DIR:${target}>")
-  endforeach()
-  target_link_libraries(sr_tbb INTERFACE $<IF:$<CONFIG:Debug>,tbb12_debug,tbb12>)
-endif()
 
 enable_testing()
 add_test(NAME RendererTests COMMAND RendererTests "${CMAKE_SOURCE_DIR}")

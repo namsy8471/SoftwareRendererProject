@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-CPU 소프트웨어 렌더러(C++23/26, oneTBB, SSE/AVX). 목표는 **기본 데모 장면을 1920×1080에서 최소 100fps**로 그리는 것이다(느린 프레임 포함).
+CPU 소프트웨어 렌더러(C++23/26, 자체 Job System `sr::jobs`, SSE/AVX). 목표는 **기본 데모 장면을 1920×1080에서 최소 100fps**로 그리는 것이다(느린 프레임 포함).
 이 파일은 AI 작업용 요약이다. 사람용 설명은 README(3개 언어), 상세 계약은 MAINTENANCE.md에 있다.
 
 ## 성능 기준 (100fps 판정)
@@ -18,7 +18,7 @@ CPU 소프트웨어 렌더러(C++23/26, oneTBB, SSE/AVX). 목표는 **기본 데
     같은 VM에서 base·head를 번갈아 재서 변화율과 95% 구간을 낸다. PR에 `ab-bench` 라벨을 붙이면 돌고
     (`gh pr edit <번호> --add-label ab-bench`), PR 없이도 `gh workflow run ab-bench.yml --ref <브랜치>`로 돌린다. PC를 쓰지 않는다. 읽는 법은 `tools/ci/README.md`.
   - 스레드 수에 민감한 변경 → **PC A/B**(`./tests/Bench.ps1 -Runs 3`로 변경 전후, PC 순서를 받아서).
-    예: 타일 크기, TBB 분할·grain size, 작업 분배, 스레드 간 동기화·공유 데이터, 스레드별 버퍼, 병렬 단계 순서.
+    예: 타일 크기, `sr::jobs` 분할·grain size, 작업 분배, 스레드 간 동기화·공유 데이터, 스레드별 버퍼, 병렬 단계 순서.
     클라우드는 4 vCPU라 24코어 PC와 결과가 다를 수 있다. 애매하면 클라우드로 먼저 보고 PC에서 확인한다.
 - **절대 기준**(아래 p95 <= 9ms)은 PC 벤치로만 판정한다. 변경마다 재지 않고 마일스톤에서만 잰다
   (main 병합 뒤 자동 실행, 기준 근처의 최적화를 마무리할 때).
@@ -45,7 +45,7 @@ tools\bin\x64\Release\srcli.exe bench --mode wire --json
 tools\bin\x64\Release\srcli.exe render --mode normal --out tests/out/normal.png
 ```
 
-Linux / 클라우드 (CMake + GCC, `apt install libtbb-dev` 필요):
+Linux / 클라우드 (CMake + GCC, 외부 라이브러리 없음):
 
 ```bash
 tools/dev.sh test [필터]       # out/release에 빌드 + RendererTests
@@ -156,15 +156,13 @@ tools/dev.sh render wire out.png
 ./tools/Worktree.ps1 new perf/normal-shading        # origin/main에서 브랜치 생성 → ..\SR-worktrees\perf-normal-shading
 ./tools/Worktree.ps1 new fix/x -Base <브랜치>       # main이 아닌 브랜치에서 시작
 ./tools/Worktree.ps1 new <기존 브랜치>              # 이미 있는 브랜치를 연다
-./tools/Worktree.ps1 deps                           # 현재 worktree에 oneTBB 바이너리 다시 채우기
 ./tools/Worktree.ps1 list
 ./tools/Worktree.ps1 remove perf/normal-shading     # PR 병합 뒤 정리. 미커밋 변경이 있으면 실패(-Force)
 ```
 
 - 경로: `..\SR-worktrees\<브랜치 이름의 / 를 - 로 바꾼 것>`. 모든 스크립트(`RunTests.ps1`, `Bench.ps1`, srcli 자산 탐색)는
   worktree 기준 상대 경로로 동작하고, 빌드 산출물(`tests/bin`, `tools/bin`, `x64/`)도 worktree마다 따로 생긴다.
-- oneTBB의 링크·실행에 필요한 `tbb12[_debug].lib/.dll`은 저장소에 들어 있다(새 clone·CI에서 바로 빌드).
-  그 밖의 `.lib/.dll/.pdb`는 `.gitignore` 때문에 없으므로, 필요하면 스크립트로 만들거나 `deps`를 실행한다.
+- 외부 런타임 DLL이 없다(병렬 작업은 `src/Utils/Jobs.*`의 자체 스레드 풀). `.lib/.dll/.pdb`는 `.gitignore` 대상이다.
 - 브랜치 이름: `perf/<주제>`(최적화), `fix/<주제>`, `ci/<주제>`, `refactor/<주제>`, `docs/<주제>`, `tooling/<주제>`.
 - 흐름: worktree에서 커밋 → `git push -u origin <브랜치>` → main 대상 PR(초안) → CI 녹색 → 병합 → `remove`.
 - 벤치·프로파일은 PC 전체 CPU를 쓰므로, 다른 worktree에서 빌드가 도는 동안 잰 수치는 판정에 쓰지 않는다.

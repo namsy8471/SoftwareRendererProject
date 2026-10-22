@@ -52,7 +52,7 @@
   <!--
     Third-party headers are treated as external code. Keep warning level and
     static-analysis diagnostics strict for project sources, while preventing
-    vendor implementation details (oneTBB, etc.) from polluting our build.
+    vendor implementation details from polluting our build.
   -->
   <ItemDefinitionGroup>
     <ClCompile>
@@ -60,7 +60,7 @@
       <!-- Project code is /W4-clean; vendor headers are already isolated by
            /external:W0, so new first-party warnings should fail the build. -->
       <TreatWarningAsError>true</TreatWarningAsError>
-      <ExternalIncludeDirectories>$(SolutionDir)src\ThirdParty;$(SolutionDir)src\ThirdParty\OneTBB_2023.1.0\include;%(ExternalIncludeDirectories)</ExternalIncludeDirectories>
+      <ExternalIncludeDirectories>%(ExternalIncludeDirectories)</ExternalIncludeDirectories>
       <ExternalWarningLevel>TurnOffAllWarnings</ExternalWarningLevel>
       <DisableAnalyzeExternal>true</DisableAnalyzeExternal>
     </ClCompile>
@@ -85,18 +85,15 @@
       <LanguageStandard>stdcpplatest</LanguageStandard>
       <EnableModules>true</EnableModules>
       <BuildStlModules>true</BuildStlModules>
-      <AdditionalIncludeDirectories>$(SolutionDir)src;$(SolutionDir);$(SolutionDir)src\ThirdParty;$(SolutionDir)src\ThirdParty\OneTBB_2023.1.0\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <AdditionalOptions>/utf-8 /external:I"$(SolutionDir)src\ThirdParty" /external:I"$(SolutionDir)src\ThirdParty\OneTBB_2023.1.0\include" /external:W0 /analyze:external- %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalIncludeDirectories>$(SolutionDir)src;$(SolutionDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalOptions>/utf-8 /external:W0 /analyze:external- %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalLibraryDirectories>$(SolutionDir)src\ThirdParty\OneTBB_2023.1.0\lib\ia32\vc14;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>tbb12_debug.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PostBuildEvent>
-      <Command>xcopy /E /I /Y "$(ProjectDir)assets" "$(OutDir)assets\"
-copy /Y "$(ProjectDir)src\ThirdParty\OneTBB_2023.1.0\redist\ia32\vc14\tbb12_debug.dll" "$(OutDir)."</Command>
+      <Command>xcopy /E /I /Y "$(ProjectDir)assets" "$(OutDir)assets\"</Command>
       <Message>Get assets in build folder</Message>
     </PostBuildEvent>
   </ItemDefinitionGroup>
@@ -111,18 +108,15 @@ copy /Y "$(ProjectDir)src\ThirdParty\OneTBB_2023.1.0\redist\ia32\vc14\tbb12_debu
       <LanguageStandard>stdcpplatest</LanguageStandard>
       <EnableModules>true</EnableModules>
       <BuildStlModules>true</BuildStlModules>
-      <AdditionalIncludeDirectories>$(SolutionDir)src;$(SolutionDir);$(SolutionDir)src\ThirdParty;$(SolutionDir)src\ThirdParty\OneTBB_2023.1.0\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <AdditionalOptions>/utf-8 /external:I"$(SolutionDir)src\ThirdParty" /external:I"$(SolutionDir)src\ThirdParty\OneTBB_2023.1.0\include" /external:W0 /analyze:external- %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalIncludeDirectories>$(SolutionDir)src;$(SolutionDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalOptions>/utf-8 /external:W0 /analyze:external- %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalLibraryDirectories>$(SolutionDir)src\ThirdParty\OneTBB_2023.1.0\lib\ia32\vc14;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>tbb12.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PostBuildEvent>
-      <Command>xcopy /E /I /Y "$(ProjectDir)assets" "$(OutDir)assets\"
-copy /Y "$(ProjectDir)src\ThirdParty\OneTBB_2023.1.0\redist\ia32\vc14\tbb12.dll" "$(OutDir)."</Command>
+      <Command>xcopy /E /I /Y "$(ProjectDir)assets" "$(OutDir)assets\"</Command>
       <Message>Get assets in build folder</Message>
     </PostBuildEvent>
   </ItemDefinitionGroup>
@@ -135,21 +129,18 @@ copy /Y "$(ProjectDir)src\ThirdParty\OneTBB_2023.1.0\redist\ia32\vc14\tbb12.dll"
       <LanguageStandard>stdcpplatest</LanguageStandard>
       <EnableModules>true</EnableModules>
       <BuildStlModules>true</BuildStlModules>
-      <AdditionalIncludeDirectories>$(SolutionDir)src;$(SolutionDir);$(SolutionDir)src\ThirdParty;$(SolutionDir)src\ThirdParty\OneTBB_2023.1.0\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <AdditionalOptions>/utf-8 /external:I"$(SolutionDir)src\ThirdParty" /external:I"$(SolutionDir)src\ThirdParty\OneTBB_2023.1.0\include" /external:W0 /analyze:external- %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalIncludeDirectories>$(SolutionDir)src;$(SolutionDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalOptions>/utf-8 /external:W0 /analyze:external- %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalLibraryDirectories>$(SolutionDir)src\ThirdParty\OneTBB_2023.1.0\lib\intel64\vc14;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>tbb12_debug.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <ResourceCompile>
       <AdditionalIncludeDirectories>$(SolutionDir)src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ResourceCompile>
     <PostBuildEvent>
-      <Command>xcopy /E /I /Y "$(ProjectDir)assets" "$(OutDir)assets\"
-copy /Y "$(ProjectDir)src\ThirdParty\OneTBB_2023.1.0\redist\intel64\vc14\tbb12_debug.dll" "$(OutDir)."</Command>
+      <Command>xcopy /E /I /Y "$(ProjectDir)assets" "$(OutDir)assets\"</Command>
       <Message>Get assets in build folder</Message>
     </PostBuildEvent>
   </ItemDefinitionGroup>
@@ -162,24 +153,21 @@ copy /Y "$(ProjectDir)src\ThirdParty\OneTBB_2023.1.0\redist\intel64\vc14\tbb12_d
       <PreprocessorDefinitions>NDEBUG;_WINDOWS;NOMINMAX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpplatest</LanguageStandard>
-      <AdditionalIncludeDirectories>$(SolutionDir)src;$(SolutionDir);$(SolutionDir)src\ThirdParty;$(SolutionDir)src\ThirdParty\OneTBB_2023.1.0\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SolutionDir)src;$(SolutionDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <EnableModules>true</EnableModules>
       <BuildStlModules>true</BuildStlModules>
-      <AdditionalOptions>/utf-8 /external:I"$(SolutionDir)src\ThirdParty" /external:I"$(SolutionDir)src\ThirdParty\OneTBB_2023.1.0\include" /external:W0 /analyze:external- %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>/utf-8 /external:W0 /analyze:external- %(AdditionalOptions)</AdditionalOptions>
       <OpenMPSupport>false</OpenMPSupport>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalLibraryDirectories>$(SolutionDir)\src\ThirdParty\OneTBB_2023.1.0\lib\intel64\vc14;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>tbb12.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <ResourceCompile>
       <AdditionalIncludeDirectories>$(SolutionDir)src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ResourceCompile>
     <PostBuildEvent>
-      <Command>xcopy /E /I /Y "$(ProjectDir)assets" "$(OutDir)assets\"
-copy /Y "$(ProjectDir)src\ThirdParty\OneTBB_2023.1.0\redist\intel64\vc14\tbb12.dll" "$(OutDir)."</Command>
+      <Command>xcopy /E /I /Y "$(ProjectDir)assets" "$(OutDir)assets\"</Command>
       <Message>Get assets in build folder</Message>
     </PostBuildEvent>
   </ItemDefinitionGroup>

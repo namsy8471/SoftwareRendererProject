@@ -34,7 +34,7 @@ options:
   --hidden-wire       hidden-line wireframe (depth prepass)
   --dda               DDA lines instead of Bresenham
   --stats             collect renderer counters and pass timings (slower)
-  --threads N         limit oneTBB parallelism (default: all cores)
+  --threads N         limit sr::jobs parallelism (default: all cores)
   --load-every N      bench: load teapot.obj in the background every N frames (results discarded)
   --scene FILE        render this .gltf/.glb instead of the demo scene and play its animation
   --clip N            animation clip index for --scene (default 0)

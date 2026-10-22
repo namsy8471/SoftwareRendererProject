@@ -1,6 +1,5 @@
 #include "Utils/Jobs.h"
 
-#if !defined(SR_JOB_BACKEND_TBB)
 #include <bit>
 #include <chrono>
 #include <cstdio>
@@ -491,4 +490,3 @@ std::size_t MaxConcurrency() noexcept
     return std::min(detail::activeLimit.load(std::memory_order_relaxed), detail::hardwareThreads());
 }
 } // namespace sr::jobs
-#endif

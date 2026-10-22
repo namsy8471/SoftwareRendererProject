@@ -13,7 +13,7 @@
 <p>
   <img alt="C++26 Preview" src="https://img.shields.io/badge/C%2B%2B-26%20Preview-00599C?logo=cplusplus">
   <img alt="CPU Renderer" src="https://img.shields.io/badge/renderer-CPU-7B61FF">
-  <img alt="oneTBB" src="https://img.shields.io/badge/parallelism-oneTBB-FFC20A">
+  <img alt="sr::jobs" src="https://img.shields.io/badge/parallelism-in--house%20job%20system-FFC20A">
   <img alt="Windows" src="https://img.shields.io/badge/platform-Windows-0078D4?logo=windows">
 </p>
 
@@ -63,7 +63,7 @@ Since 2026-10-20, an AI (Claude) writes and optimizes the code. Changes are judg
 |---|---|
 | Rendering path | Implemented directly on the **CPU from vertex processing to pixel output** |
 | Captured performance comparison | **8 FPS → 58 FPS** |
-| Parallel work unit | **16×16 tiles** + oneTBB task scheduling |
+| Parallel work unit | **16×16 tiles** + in-house job system (`sr::jobs`) |
 | SIMD paths | Baseline **128-bit SSE** + runtime-selected **256-bit AVX** |
 | Spatial acceleration | Object-AABB frustum culling + octree-node culling |
 | Debug tools | Wireframe · Normal · AABB · Light Direction |
@@ -87,7 +87,7 @@ The performance images were captured on 2025-08-27. Results vary with the CPU, r
 ### Systems and optimization
 
 - A render queue and 16×16 tile binning
-- oneTBB-based command processing and tile rasterization
+- Command processing and tile rasterization on the in-house job system (`sr::jobs`)
 - Per-worker clip buffers and triangle pools in each renderer's `WorkerScratch`, plus a frame-local single-entry vertex/transform cache reused only by exact-key matches; see [maintenance contracts](MAINTENANCE.md)
 - SSE operations in the custom `SRMath` library
 - Runtime dispatch between SSE and AVX after CPUID/XCR0 validation
@@ -104,7 +104,7 @@ flowchart LR
     Scene["Scene<br/>Camera · GameObject · transforms"]
     Submit["Scene Submission<br/>AABB / Frustum / Octree · RenderQueue"]
     Frontend["Renderer Front End<br/>MVP · culling · clipping · 16×16 binning"]
-    Tiles["Rasterizer / oneTBB Tiles<br/>prepared triangles · depth · Phong"]
+    Tiles["Rasterizer / sr::jobs Tiles<br/>prepared triangles · depth · Phong"]
     Lines["Line Row Bands<br/>parallel wires / large normal batches · sequential overlays"]
     Post["Post Process<br/>optional FXAA"]
     Target["RenderTarget<br/>borrowed pixels · owned depth / IDs"]
@@ -123,7 +123,7 @@ flowchart LR
     Math -.-> Frontend
 ```
 
-Scene commands retain stable object, mesh, and octree order. Each clipped `PreparedTriangle` is created once in a per-worker `concurrent_vector` pool; `(tileIndex, triangle*)` references enter a worker-local flat array with per-tile counts/cursors and touched IDs. After the front-end join freezes the active-worker list, prefix offsets assign disjoint destination ranges. Parallel worker scatters fill one pointer array and join before each tile span is optionally sorted and rasterized. Scheduling remains with oneTBB; primitive IDs and pixel-ownership rules are unchanged. A pure default fast X-ray scene skips new flat tile-reference/worker-metadata allocations and the depth prepass.
+Scene commands retain stable object, mesh, and octree order. Each clipped `PreparedTriangle` is created once in a per-worker `concurrent_vector` pool; `(tileIndex, triangle*)` references enter a worker-local flat array with per-tile counts/cursors and touched IDs. After the front-end join freezes the active-worker list, prefix offsets assign disjoint destination ranges. Parallel worker scatters fill one pointer array and join before each tile span is optionally sorted and rasterized. Scheduling runs on `sr::jobs`; primitive IDs and pixel-ownership rules are unchanged. A pure default fast X-ray scene skips new flat tile-reference/worker-metadata allocations and the depth prepass.
 
 Worker-flat and final-pointer capacities are reused instead of accumulating capacity in per-tile vectors. `binReferences` counts logical references once; `retainedBinBytes` includes flat/final/wire/debug storage, counts/cursors/offsets, headers, and touched/active-worker lists. `binMs` covers front-end reference preparation; `rasterMs` includes prefix, scatter, sorting, and rasterization. Speed and memory comparisons are still in progress: this structure is not a claim of improved performance or final adoption.
 
@@ -131,7 +131,7 @@ Worker-flat and final-pointer capacities are reused instead of accumulating capa
 
 Wireframe defaults to fast **X-ray display**, including occluded lines. Only enabling `Hidden-line wireframe (depth prepass)` adds an all-face depth-only pass to frames containing wire commands and hides their occluded segments. Default mixed-mode wire faces do not occlude filled faces and require no prepass. Normals have an independent depth policy: they test existing face depth; with hidden wire off, only fill faces produce it, so a pure X-ray wire scene has no face depth to hide normals. AABB/light gizmos remain depth-independent overlays. Optional FXAA follows all line passes.
 
-Wire lines run in parallel using disjoint oneTBB Y-row bands: roughly one band per 64 rows, capped at 32. Completed front-end triangle pools, depth, and primitive IDs are read-only. `BeginLineRows` restricts pixel writes without clipping endpoints or restarting a line at a band boundary, preserving the original Bresenham/DDA pixel rules. After wire workers join, batches of at least 256 DepthTested lines prepare transforms and clipping in parallel 256-line chunks, then draw through original-order bins and disjoint Y-row bands. Smaller normal batches use the existing sequential path; overlays run sequentially after normal workers join.
+Wire lines run in parallel using disjoint Y-row bands: roughly one band per 64 rows, capped at 32. Completed front-end triangle pools, depth, and primitive IDs are read-only. `BeginLineRows` restricts pixel writes without clipping endpoints or restarting a line at a band boundary, preserving the original Bresenham/DDA pixel rules. After wire workers join, batches of at least 256 DepthTested lines prepare transforms and clipping in parallel 256-line chunks, then draw through original-order bins and disjoint Y-row bands. Smaller normal batches use the existing sequential path; overlays run sequentially after normal workers join.
 
 Tile-local front-to-back sorting and current-frame tile Hi-Z are independent experimental menu options, **both off by default**. Unwritten pixels, equal depth, and uncertain numerical bounds are not rejected. Testing and updating depth summaries also costs time, so more occlusion does not guarantee a speedup. Optional pass timings/counters and current comparison status are recorded in the [visibility change record](PERFORMANCE.md#renderer-visibility-2026).
 
@@ -149,7 +149,7 @@ This section records not only the final changes, but also the problems encounter
 | Near-camera geometry | Projected coordinates exceeded screen and Z-buffer bounds | Call-stack analysis, clipping, and clamping |
 | Missing normals | Some teapot faces had no normal data, breaking shading | Accumulate face normals and generate smooth normals |
 | MTL names | Material lookup failed for keys containing a colon | Fallback lookup using the suffix after the last colon |
-| Multithreading | Single-threaded rasterization and repeated allocation dominated frame time | Tile rendering, oneTBB, TLS caches/pools |
+| Multithreading | Single-threaded rasterization and repeated allocation dominated frame time | Tile rendering, in-house job system (`sr::jobs`), TLS caches/pools |
 | Maintainability | Large functions and scattered state obscured the impact of changes | Responsibility-based files, WorkerScratch, regression tests |
 
 ### 1. C++ standards compliance and resource lifetime
@@ -218,7 +218,7 @@ This section records not only the final changes, but also the problems encounter
 
 **Root-cause analysis:** Rasterization can process independent screen regions in parallel, but the original design had no safe work-partitioning unit. At the same time, short-lived containers repeatedly grew their capacity instead of reusing memory already allocated in previous frames.
 
-**Solution:** The viewport is split into 16×16 tiles. A triangle's screen-space AABB determines which tile bins receive a reference to it, and oneTBB processes those tiles as parallel tasks. Vertex results, stamps, clip buffers, and triangle pools are reused through thread-local storage. `reserve()`, high-watermark caches, and ping-pong buffers reduce reallocation.
+**Solution:** The viewport is split into 16×16 tiles. A triangle's screen-space AABB determines which tile bins receive a reference to it, and `sr::jobs` processes those tiles as parallel tasks. Vertex results, stamps, clip buffers, and triangle pools are reused through thread-local storage. `reserve()`, high-watermark caches, and ping-pong buffers reduce reallocation.
 
 **Result:** One development measurement improved from roughly 5 FPS on the single-threaded path to roughly 60 FPS after multithreading. The comparison images captured on 2025-08-27 show 8 FPS increasing to 58 FPS. These figures came from different development stages and conditions and are not standardized benchmarks.
 
@@ -338,7 +338,7 @@ New regression coverage uses memory targets for stride/padding, invalid and zero
 - The `Desktop development with C++` workload and a Windows SDK
 - Support for the latest C++ standard and standard-library modules
 
-oneTBB 2023.1.0 is included under `src/ThirdParty`, so no separate package installation is required.
+Parallel work runs on an in-house thread pool (`src/Utils/Jobs.*`), so no package installation or runtime DLL is required.
 
 ### Visual Studio
 
@@ -347,7 +347,7 @@ oneTBB 2023.1.0 is included under `src/ThirdParty`, so no separate package insta
 3. Run **Build > Build Solution**.
 4. Set `SoftrendererProject` as the startup project and run **Debug > Start Without Debugging**. `RendererTests` is a separate console test executable.
 
-The supported configurations are `Debug|x64`, `Release|x64`, `Debug|Win32`, and `Release|Win32`. After a build, `assets` and the architecture-specific `tbb12_debug.dll` (Debug) or `tbb12.dll` (Release) are copied automatically to the output directory.
+The supported configurations are `Debug|x64`, `Release|x64`, `Debug|Win32`, and `Release|Win32`. After a build, `assets` is copied automatically to the output directory.
 
 ### Command line
 
@@ -391,7 +391,6 @@ SoftwareRendererProject/
 │  ├─ Platform/           # Win32 boundary header and GDI back-buffer RAII
 │  ├─ Renderer/           # RenderQueue, clipping, tile rasterizer, FXAA
 │  ├─ Scene/              # Camera and GameObject
-│  ├─ ThirdParty/         # oneTBB
 │  └─ Utils/              # Error types, fixed-capacity storage, timing
 ├─ ARCHITECTURE.md
 ├─ CLAUDE.md              # AI-facing summary (commands, rules, performance bar)
@@ -420,4 +419,3 @@ SoftwareRendererProject/
 
 ## Third-party libraries
 
-- [oneTBB 2023.1.0](https://github.com/uxlfoundation/oneTBB): task-based parallelism
