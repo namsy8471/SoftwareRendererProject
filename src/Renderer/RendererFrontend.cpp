@@ -199,7 +199,9 @@ void Renderer::processCommand(const MeshRenderCommand &cmd, const FrameContext &
         uint32_t i1 = indices[i + 1];
         uint32_t i2 = indices[i + 2];
 
-        if (i0 >= mesh->vertices.size() || i1 >= mesh->vertices.size() || i2 >= mesh->vertices.size())
+        // fillVertex 호출 뒤에는 컴파일러가 메시가 그대로라고 보지 못해 size()(48B 나눗셈)를 매번 다시
+        // 계산했다. 이 명령 동안 메시 정점 배열은 바뀌지 않으므로 위에서 읽어 둔 값과 같다.
+        if (i0 >= meshVertexCount || i1 >= meshVertexCount || i2 >= meshVertexCount)
             continue;
 
         // 서로 다른 두 정점이 같은 칸을 쓰면 나중에 채운 정점이 앞의 것을 덮는다. 그때만 복사본으로 처리한다.
