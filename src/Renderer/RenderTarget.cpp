@@ -3,8 +3,7 @@
 #include <algorithm>
 #include <new>
 #include <stdexcept>
-#include <tbb/blocked_range.h>
-#include <tbb/parallel_for.h>
+#include "Utils/Jobs.h"
 
 std::expected<void, RenderTargetError> RenderTarget::Attach(PixelSurfaceView surface, bool keepPrimitiveIds)
 {
@@ -97,8 +96,8 @@ void RenderTarget::Clear() noexcept
     constexpr int rowsPerTask = 16;
     try
     {
-        tbb::parallel_for(tbb::blocked_range<int>(0, m_surface.height, rowsPerTask),
-                          [this](const tbb::blocked_range<int> &rows) { clearRows(rows.begin(), rows.end()); });
+        sr::jobs::ParallelFor(0, m_surface.height, rowsPerTask,
+                              [this](int first, int last) { clearRows(first, last); });
     }
     catch (...)
     {

@@ -49,6 +49,7 @@
     <ClInclude Include="src\Graphics\ViewParams.h" />
     <ClInclude Include="src\Utils\AssetLoadError.h" />
     <ClInclude Include="src\Utils\FixedCapacityVector.h" />
+    <ClInclude Include="src\Utils\Jobs.h" />
     <ClInclude Include="src\Utils\PerformanceAnalyzer.h" />
     <ClInclude Include="src\Utils\Utils.h" />
     <ClInclude Include="targetver.h" />

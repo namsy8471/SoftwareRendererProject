@@ -8,9 +8,8 @@
 #include <limits>
 #include <vector>
 
-// oneTBB는 구현 파일 안에서만 사용하며 FXAA의 공개 API는 비소유 surface만 받는다.
-#include <tbb/blocked_range.h>
-#include <tbb/parallel_for.h>
+// 병렬 작업은 구현 파일 안에서만 사용하며 FXAA의 공개 API는 비소유 surface만 받는다.
+#include "Utils/Jobs.h"
 
 namespace
 {
@@ -109,28 +108,29 @@ void sr::fxaa::Apply(ConstPixelSurfaceView input, PixelSurfaceView output)
 
     // 1차 패스가 서로 다른 행의 휘도를 완성한 후 2차 패스가 읽는다.
     // 이 장벽으로 인접 행의 중복 쓰기와 읽기/쓰기 경합을 방지한다.
-    tbb::parallel_for(tbb::blocked_range<int>{0, height},
-                      [&](const tbb::blocked_range<int> &rows)
-                      {
-                          for (int y = rows.begin(); y != rows.end(); ++y)
+    sr::jobs::ParallelFor(0, height,
+                          [&](int first, int last)
                           {
-                              const std::size_t row = static_cast<std::size_t>(y) * rowSize;
-                              const std::size_t inputRow = static_cast<std::size_t>(y) * input.stridePixels;
-                              for (int x = 0; x < width; ++x)
+                              for (int y = first; y != last; ++y)
                               {
-                                  const std::size_t index = row + static_cast<std::size_t>(x);
-                                  lumaBuffer[index] =
-                                      luma(unpackColor(input.pixels[inputRow + static_cast<std::size_t>(x)]));
+                                  const std::size_t row = static_cast<std::size_t>(y) * rowSize;
+                                  const std::size_t inputRow =
+                                      static_cast<std::size_t>(y) * input.stridePixels;
+                                  for (int x = 0; x < width; ++x)
+                                  {
+                                      const std::size_t index = row + static_cast<std::size_t>(x);
+                                      lumaBuffer[index] = luma(
+                                          unpackColor(input.pixels[inputRow + static_cast<std::size_t>(x)]));
+                                  }
                               }
-                          }
-                      });
+                          });
 
     // 2차 패스 역시 서로 다른 출력 행만 쓰고, 완성된 휘도 버퍼를 읽는다.
-    tbb::parallel_for(
-        tbb::blocked_range<int>{1, height - 1},
-        [&](const tbb::blocked_range<int> &rows)
+    sr::jobs::ParallelFor(
+        1, height - 1,
+        [&](int first, int last)
         {
-            for (int y = rows.begin(); y != rows.end(); ++y)
+            for (int y = first; y != last; ++y)
             {
                 for (int x = 1; x < width - 1; ++x)
                 {

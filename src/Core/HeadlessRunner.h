@@ -40,7 +40,7 @@ struct RunConfig
     ViewMode mode = ViewMode::Fill;
     RenderOptions options{};
     ELineAlgorithm lineAlgorithm = ELineAlgorithm::Bresenham;
-    // 0이면 oneTBB 기본값(모든 코어).
+    // 0이면 sr::jobs 기본값(모든 코어).
     int threads = 0;
     // 0보다 크면 측정 중 이 프레임 간격마다 teapot.obj를 백그라운드로 로드한다. 결과는 장면에 넣지 않고
     // 버리므로 픽셀은 같다. 로딩이 렌더 프레임 시간(p95)을 얼마나 흔드는지 재는 용도다.

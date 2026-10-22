@@ -7,8 +7,7 @@
 #include <chrono>
 #include <limits>
 #include <stdexcept>
-#include <tbb/blocked_range.h>
-#include <tbb/parallel_for.h>
+#include "Utils/Jobs.h"
 
 namespace
 {
@@ -135,12 +134,12 @@ void Renderer::prepareTileReferences()
     m_tileReferenceCount = 0;
     if (m_activeTileWorkers.empty())
         return;
-    tbb::parallel_for(tbb::blocked_range<std::size_t>(0, m_activeTileWorkers.size(), 1),
-                      [&](const tbb::blocked_range<std::size_t> &range)
-                      {
-                          for (auto index = range.begin(); index != range.end(); ++index)
-                              m_activeTileWorkers[index]->SortTileReferences();
-                      });
+    sr::jobs::ParallelFor(std::size_t{0}, m_activeTileWorkers.size(),
+                          [&](std::size_t first, std::size_t last)
+                          {
+                              for (auto index = first; index != last; ++index)
+                                  m_activeTileWorkers[index]->SortTileReferences();
+                          });
     for (const auto *worker : m_activeTileWorkers)
         m_tileReferenceCount += worker->sortedTileReferences.size();
 }
@@ -194,12 +193,12 @@ void Renderer::renderTiles(RenderTarget &target, const FrameContext &frame, bool
     // 중앙 타일은 다른 타일의 수십 배라 큰 조각 하나가 끝을 늦췄다(PC 24스레드 타일 단계 사용률 76%).
     // 4타일씩 고정해 처음부터 잘게 나눈다. 타일은 서로 독립이라 결과는 같다.
     constexpr std::size_t tilesPerTask = 4;
-    tbb::parallel_for(
-        tbb::blocked_range<std::size_t>(0, m_tileStats.size(), tilesPerTask),
-        [&](const tbb::blocked_range<std::size_t> &range)
+    sr::jobs::ParallelFor<sr::jobs::Split::Fixed>(
+        std::size_t{0}, m_tileStats.size(), tilesPerTask,
+        [&](std::size_t first, std::size_t last)
         {
-            auto &gathered = m_tileGather.local();
-            for (auto index = range.begin(); index != range.end(); ++index)
+            auto &gathered = m_tileGather.Local();
+            for (auto index = first; index != last; ++index)
             {
                 gatherTileReferences(index, gathered);
                 auto bin = std::span<TriangleRef *>(gathered);
@@ -226,7 +225,7 @@ void Renderer::renderTiles(RenderTarget &target, const FrameContext &frame, bool
                 Rasterizer rasterizer(target, frame, m_options.collectStats ? &stats : nullptr);
                 rasterizer.BeginTile(
                     {x, y, std::min(x + tileSize, m_width), std::min(y + tileSize, m_height)}, m_options.hiZ,
-                    clearTiles, &m_tileBuffers.local());
+                    clearTiles, &m_tileBuffers.Local());
                 if (needsDepthPrepass)
                 {
                     // 혼합 모드도 모든 면의 깊이를 먼저 완성해야 뒤쪽 채움 색이 남지 않는다.
@@ -246,8 +245,7 @@ void Renderer::renderTiles(RenderTarget &target, const FrameContext &frame, bool
                     rasterizer.ShadeOwners();
                 }
             }
-        },
-        tbb::simple_partitioner());
+        });
 }
 
 void Renderer::renderLines(RenderTarget &target, const RenderQueue &queue, const FrameContext &frame)
@@ -263,22 +261,22 @@ void Renderer::renderLines(RenderTarget &target, const RenderQueue &queue, const
         std::array<RenderStats, maximumLineBands> bandStats{};
         // 풀은 binCommands 완료 뒤 읽기 전용이다. 선의 기울기/오차는 원래
         // 끝점 기준이며 band는 쓰기 영역만 제한해 경계 픽셀도 동일하다.
-        tbb::parallel_for(tbb::blocked_range<int>(0, m_lineBandCount, 1),
-                          [&](const tbb::blocked_range<int> &range)
-                          {
-                              for (int band = range.begin(); band != range.end(); ++band)
+        sr::jobs::ParallelFor(0, m_lineBandCount,
+                              [&](int first, int last)
                               {
-                                  const int minY = band * m_lineBandHeight;
-                                  const int maxY = minY + std::min(m_lineBandHeight, m_height - minY);
-                                  Rasterizer lines(target, frame,
-                                                   m_options.collectStats ? &bandStats[band] : nullptr);
-                                  lines.BeginLineRows(minY, maxY);
-                                  for (const auto &scratch : m_workerScratch)
-                                      for (const auto *triangle : scratch.wireBins[band])
-                                          lines.DrawWireTriangle(*triangle, m_currentLineAlgorithm,
-                                                                 m_options.hiddenWireframe);
-                              }
-                          });
+                                  for (int band = first; band != last; ++band)
+                                  {
+                                      const int minY = band * m_lineBandHeight;
+                                      const int maxY = minY + std::min(m_lineBandHeight, m_height - minY);
+                                      Rasterizer lines(target, frame,
+                                                       m_options.collectStats ? &bandStats[band] : nullptr);
+                                      lines.BeginLineRows(minY, maxY);
+                                      for (const auto &scratch : m_workerScratch)
+                                          for (const auto *triangle : scratch.wireBins[band])
+                                              lines.DrawWireTriangle(*triangle, m_currentLineAlgorithm,
+                                                                     m_options.hiddenWireframe);
+                                  }
+                              });
         if (m_options.collectStats)
             for (int band = 0; band < m_lineBandCount; ++band)
                 m_stats.MergeCounters(bandStats[band]);
@@ -413,32 +411,32 @@ void Renderer::renderDepthTestedLines(RenderTarget &target, const RenderQueue &q
 
     // 큰 메시의 법선 명령 하나도 256개 선 단위로 분배한다. 각 chunk는
     // 고유한 원본 순번 슬롯만 쓰며 명령 MVP와 입력 정점은 읽기 전용이다.
-    tbb::parallel_for(tbb::blocked_range<std::size_t>(0, m_debugLineChunks.size(), 1),
-                      [&](const tbb::blocked_range<std::size_t> &range)
-                      {
-                          for (auto chunkIndex = range.begin(); chunkIndex != range.end(); ++chunkIndex)
+    sr::jobs::ParallelFor(std::size_t{0}, m_debugLineChunks.size(),
+                          [&](std::size_t first, std::size_t last)
                           {
-                              const auto &chunk = m_debugLineChunks[chunkIndex];
-                              const auto &command = m_debugLineCommands[chunk.commandIndex];
-                              const auto &vertices = command.command->vertices;
-                              auto &counts = m_debugLineRowCounts.local();
-                              if (counts.size() != static_cast<std::size_t>(m_height))
-                                  counts.assign(static_cast<std::size_t>(m_height), 0u);
-                              const auto end = chunk.firstLine + chunk.lineCount;
-                              for (auto line = chunk.firstLine; line < end; ++line)
+                              for (auto chunkIndex = first; chunkIndex != last; ++chunkIndex)
                               {
-                                  const auto index = command.firstLine + line;
-                                  m_preparedDebugLines[index] = Rasterizer::PrepareDepthTestedLine(
-                                      vertices[line * 2], vertices[line * 2 + 1], command.modelViewProjection,
-                                      m_width, m_height);
-                                  const auto rows = rowRange(m_preparedDebugLines[index]);
-                                  m_debugLineRows[index] = rows;
-                                  // 모든 band가 그리는 선은 경계 선택에 영향이 없어 세지 않는다.
-                                  if (rows.first <= rows.last && rows.first >= 0)
-                                      ++counts[static_cast<std::size_t>(rows.first)];
+                                  const auto &chunk = m_debugLineChunks[chunkIndex];
+                                  const auto &command = m_debugLineCommands[chunk.commandIndex];
+                                  const auto &vertices = command.command->vertices;
+                                  auto &counts = m_debugLineRowCounts.Local();
+                                  if (counts.size() != static_cast<std::size_t>(m_height))
+                                      counts.assign(static_cast<std::size_t>(m_height), 0u);
+                                  const auto end = chunk.firstLine + chunk.lineCount;
+                                  for (auto line = chunk.firstLine; line < end; ++line)
+                                  {
+                                      const auto index = command.firstLine + line;
+                                      m_preparedDebugLines[index] = Rasterizer::PrepareDepthTestedLine(
+                                          vertices[line * 2], vertices[line * 2 + 1],
+                                          command.modelViewProjection, m_width, m_height);
+                                      const auto rows = rowRange(m_preparedDebugLines[index]);
+                                      m_debugLineRows[index] = rows;
+                                      // 모든 band가 그리는 선은 경계 선택에 영향이 없어 세지 않는다.
+                                      if (rows.first <= rows.last && rows.first >= 0)
+                                          ++counts[static_cast<std::size_t>(rows.first)];
+                                  }
                               }
-                          }
-                      });
+                          });
 
     // 고정 64행 band에서는 IronMan 법선이 몰린 한 band가 그리기 시간의 대부분을 차지했다
     // (1080p: 17개 중 한 band 3.27ms, 전체 3.31ms). 행별 선 수의 누적이 같아지도록
@@ -475,11 +473,11 @@ void Renderer::renderDepthTestedLines(RenderTarget &target, const RenderQueue &q
     bandStart[static_cast<std::size_t>(bands)] = m_height;
 
     std::array<RenderStats, maximumLineBands> bandStats{};
-    tbb::parallel_for(
-        tbb::blocked_range<int>(0, bands, 1),
-        [&](const tbb::blocked_range<int> &range)
+    sr::jobs::ParallelFor(
+        0, bands,
+        [&](int first, int last)
         {
-            for (int band = range.begin(); band != range.end(); ++band)
+            for (int band = first; band != last; ++band)
             {
                 const int minY = bandStart[band], maxY = bandStart[band + 1];
                 Rasterizer lines(target, frame, m_options.collectStats ? &bandStats[band] : nullptr);

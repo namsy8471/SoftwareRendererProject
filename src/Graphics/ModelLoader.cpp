@@ -8,9 +8,7 @@
 #include <ranges>
 #include <string_view>
 #include <unordered_map>
-#include <tbb/blocked_range.h>
-#include <tbb/combinable.h>
-#include <tbb/parallel_for.h>
+#include "Utils/Jobs.h"
 
 #include "Graphics/TextureLoader.h"
 #include "Graphics/Model.h"
@@ -417,22 +415,23 @@ void generateMissingNormals(Mesh &mesh)
 }
 AABB buildSpatialData(std::span<Mesh> meshes)
 {
-    tbb::combinable<AABB> localBounds;
-    tbb::parallel_for(tbb::blocked_range<std::size_t>(0, meshes.size()),
-                      [&](const tbb::blocked_range<std::size_t> &range)
-                      {
-                          for (auto index = range.begin(); index != range.end(); ++index)
+    sr::jobs::PerWorker<AABB> localBounds;
+    sr::jobs::ParallelFor(std::size_t{0}, meshes.size(),
+                          [&](std::size_t first, std::size_t last)
                           {
-                              auto &mesh = meshes[index];
-                              generateMissingNormals(mesh);
-                              mesh.localAABB = ComputeLocalAABB(mesh);
-                              localBounds.local().Encapsulate(mesh.localAABB);
-                              mesh.octree = std::make_unique<Octree>();
-                              mesh.octree->Build(mesh);
-                          }
-                      });
+                              for (auto index = first; index != last; ++index)
+                              {
+                                  auto &mesh = meshes[index];
+                                  generateMissingNormals(mesh);
+                                  mesh.localAABB = ComputeLocalAABB(mesh);
+                                  localBounds.Local().Encapsulate(mesh.localAABB);
+                                  mesh.octree = std::make_unique<Octree>();
+                                  mesh.octree->Build(mesh);
+                              }
+                          });
     AABB bounds;
-    localBounds.combine_each([&](const AABB &local) { bounds.Encapsulate(local); });
+    for (const AABB &local : localBounds)
+        bounds.Encapsulate(local);
     return bounds;
 }
 } // namespace

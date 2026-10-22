@@ -14,7 +14,7 @@
 #include "Scene/Camera.h"
 #include "Math/SIMD.h"
 #include "Math/Frustum.h"
-#include <tbb/global_control.h>
+#include "Utils/Jobs.h"
 #include <array>
 #include <algorithm>
 #include <bit>
@@ -140,11 +140,11 @@ struct RendererTestAccess
         check(first.commandStamp == 1 && first.vertexTags[0].stamp == 0, "stamp wrap");
 
         Renderer a, b;
-        a.m_workerScratch.local().triangles.emplace_back(TriangleRef{});
-        b.m_workerScratch.local().triangles.emplace_back(TriangleRef{});
+        a.m_workerScratch.Local().triangles.emplace_back(TriangleRef{});
+        b.m_workerScratch.Local().triangles.emplace_back(TriangleRef{});
         a.prepareFrame();
-        check(a.m_workerScratch.local().triangles.empty(), "first renderer reset");
-        check(b.m_workerScratch.local().triangles.size() == 1, "renderer instances isolated");
+        check(a.m_workerScratch.Local().triangles.empty(), "first renderer reset");
+        check(b.m_workerScratch.Local().triangles.size() == 1, "renderer instances isolated");
     }
     static void commandTransformCache()
     {
@@ -312,7 +312,7 @@ struct RendererTestAccess
         // 실제 command 처리도 새 subset 정점만 채우고 material 변경에 stamp를 재발급하지 않는다.
         Renderer renderer;
         renderer.ensureViewport(32, 32);
-        auto &actualWorker = renderer.m_workerScratch.local();
+        auto &actualWorker = renderer.m_workerScratch.Local();
         const Renderer::FrameContext frame{identity, {}, {}, 2, 2};
         command.worldTransform = identity;
         command.indicesToDraw = mesh.indices;
@@ -348,7 +348,7 @@ struct RendererTestAccess
         MeshRenderCommand wideCommand{&wide, colliding, identity, &mesh.material};
         Renderer collider;
         collider.ensureViewport(32, 32);
-        auto &collidingWorker = collider.m_workerScratch.local();
+        auto &collidingWorker = collider.m_workerScratch.Local();
         collider.processCommand(wideCommand, frame, collidingWorker, 0);
         const auto expectedTriangle = Rasterizer::Prepare(
             Renderer::shadeVertex(mesh.vertices[0], identity, identity, identity),
@@ -477,7 +477,7 @@ struct RendererTestAccess
         // 실제 ETS 소유 배열의 capacity 하한을 더한다. allocator/RSS나 worker 수는 고정하지 않는다.
         Renderer measured;
         measured.ensureViewport(32, 32);
-        auto &scratch = measured.m_workerScratch.local();
+        auto &scratch = measured.m_workerScratch.Local();
         scratch.tileScatter.resize(4);
         append(scratch, 0, &triangles[0]);
         append(scratch, 3, &triangles[1]);
@@ -504,7 +504,7 @@ struct RendererTestAccess
                   "each flat bin allocation contributes its retained capacity independently");
         };
         checkRetainedGrowth(scratch.sortedTileReferences);
-        checkRetainedGrowth(measured.m_tileGather.local());
+        checkRetainedGrowth(measured.m_tileGather.Local());
         checkRetainedGrowth(measured.m_activeTileWorkers);
         checkRetainedGrowth(scratch.tileReferences);
         checkRetainedGrowth(scratch.tileScatter);
@@ -620,8 +620,8 @@ struct RendererTestAccess
                 memory.target.Clear();
                 reference.target.Clear();
                 renderer.prepareFrame();
-                renderer.binTriangle(command, a, b, c, frame, renderer.m_workerScratch.local());
-                const auto &scratch = renderer.m_workerScratch.local();
+                renderer.binTriangle(command, a, b, c, frame, renderer.m_workerScratch.Local());
+                const auto &scratch = renderer.m_workerScratch.Local();
                 for (std::size_t tile = 0; tile < scratch.tileScatter.size(); ++tile)
                     check(scratch.tileScatter[tile].count ==
                               static_cast<std::size_t>(
@@ -1017,7 +1017,7 @@ void renderSmoke(const TestContext &context)
         flags.bShowWireframe = wireframe;
         std::vector<unsigned int> serial;
         {
-            tbb::global_control single(tbb::global_control::max_allowed_parallelism, 1);
+            sr::jobs::ConcurrencyLimit single(1);
             serial = draw(triangle, flags, false);
             for (int iteration = 1; iteration < 100; ++iteration)
                 check(serial == draw(triangle, flags, false), "single-worker repeated pixel equality");
@@ -1039,7 +1039,7 @@ void renderSmoke(const TestContext &context)
         };
         std::vector<MeshRenderCommand> stableCommands;
         {
-            tbb::global_control single(tbb::global_control::max_allowed_parallelism, 1);
+            sr::jobs::ConcurrencyLimit single(1);
             stableCommands = collect();
         }
         check(!stableCommands.empty(), "asset command submission");
