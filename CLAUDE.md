@@ -8,6 +8,9 @@ CPU 소프트웨어 렌더러(C++23/26, oneTBB, SSE/AVX). 목표는 **기본 데
 - 측정 도구: `srcli bench` (창 없음, 고정 dt 1/60, 60프레임 warmup 뒤 600프레임).
 - 역할 구분: `srcli bench`는 합격/불합격을 가르는 **판정용 숫자**, VTune·VS CPU Usage(`tests/CaptureCpuProfiles.ps1`)는 **어디가 느린지 찾는 진단용**이다.
   프로파일러는 측정 자체에 오버헤드가 있어 그 수치(ms)로 판정하지 않는다. 사용 순서는 아래 "최적화 작업 흐름" 2단계.
+- **프로파일링은 필수다(사용자 결정, 2026-10-22).** 모든 최적화는 PC에서 **VTune과 VS Profiler(VS CPU Usage) 둘 다**로
+  변경 전과 후를 프로파일링해 성능을 확인한다. 핫스팟 상위 함수와 점유율(%)의 전후를 커밋 메시지·PR 설명에 적는다.
+  callgrind(Ir), 클라우드 A/B, Linux/GCC 수치는 보조 자료일 뿐이며 이 두 프로파일러를 대신하지 않는다.
 - 한 프레임 = `FrameRunner::Update`(Scene 갱신 + 가시성 수집) + `FrameRunner::Render`(`RenderTarget::Clear` + `Renderer::RenderScene`). GDI 표시는 제외.
 - **상대 비교**(이 변경이 이전 코드보다 빠른가)는 변경의 종류에 따라 측정 장소를 고른다.
   - 스레드 수에 덜 민감한 변경 → **클라우드 A/B 벤치**(`.github/workflows/ab-bench.yml`).
@@ -80,15 +83,17 @@ tools/dev.sh render wire out.png
 한 번에 한 가지 변경만 하고, 아래 순서를 지킨다.
 
 1. 기준 측정: 클라우드 A/B가 base를 직접 빌드해 재므로 따로 기록하지 않아도 된다. PC로 잴 때만 `./tests/Bench.ps1 -Runs 3 -Label before-<주제>`.
-2. 프로파일: `tests/CaptureCpuProfiles.ps1`(VS CPU Usage/VTune)로 핫스팟 함수를 찾고, 해당 함수의 어셈블리(`/FAs` 또는 디스어셈블리)를 본다.
+2. 프로파일(필수, PC): `tests/CaptureCpuProfiles.ps1 -OutputDirectory tests/bin/profiles/before-<주제> -Analyze`로 VS CPU Usage와 VTune을
+   **둘 다** 수집해 핫스팟 함수와 점유율을 기록하고, 해당 함수의 어셈블리(`/FAs` 또는 디스어셈블리)를 본다. 한쪽만 쓰지 않는다.
 3. 수정: 핫스팟만 고친다. 위 "어셈블리 수준 최적화 원칙"에 따라 어셈블리(인라인 여부, 분기, SIMD 사용, 메모리 접근)를 보고 고친다.
 4. 테스트: `./tests/RunTests.ps1 -Quick` 전부 통과(골든 포함).
 5. 재측정: 브랜치를 푸시하고 `gh workflow run ab-bench.yml --ref <브랜치>`(PR이 있으면 `ab-bench` 라벨)로 클라우드 A/B 표를 받는다.
    PC로 확인할 때는 `./tests/Bench.ps1 -Runs 3 -Label after-<주제>`.
+   프로파일도 다시 잡는다(필수): `-OutputDirectory tests/bin/profiles/after-<주제>`로 VS CPU Usage와 VTune 모두. 고친 함수의 점유율이 실제로 줄었는지 확인한다.
 6. 채택 조건: A/B 표에서 `pixel_hash`가 같고 판정이 ✅ 개선일 때만 남긴다. ❌ 느려짐이면 되돌린다.
    ➖ 구분 불가면 `-f rounds=60`으로 다시 재고, 그래도 구분 불가면 PC에서 잰다. 스레드에 민감한 변경은 처음부터 PC A/B로 판단한다.
 7. 커밋·푸시: 마무리 전 `./tests/RunTests.ps1 -Rebuild`(4개 구성) 통과 후, 커밋 메시지에 모드별 A/B 변화율(95% 구간)과
-   pixel_hash 동일 여부를 적고 푸시한다. PC에서 쟀다면 PC 전후 mean/p95(ms)도 적는다.
+   pixel_hash 동일 여부, VTune·VS CPU Usage의 전후 핫스팟(상위 함수와 점유율 %)을 적고 푸시한다. PC에서 쟀다면 PC 전후 mean/p95(ms)도 적는다.
 
 ## 화면 확인
 
