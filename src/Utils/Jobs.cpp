@@ -279,6 +279,19 @@ struct ThreadSlotHolder
     ~ThreadSlotHolder() { registry().Release(index); }
 };
 
+// 이 스레드를 Windows 전력 절약 스케줄링(EcoQoS) 대상에서 뺀다. 창이 없거나 뒤에 있는 프로세스(벤치, 최소화된
+// 앱)의 스레드는 OS가 E코어와 낮은 클럭에 두려 할 수 있다. 실패해도 동작에는 영향이 없다.
+void optOutOfPowerThrottling() noexcept
+{
+#ifdef _WIN32
+    THREAD_POWER_THROTTLING_STATE state{};
+    state.Version = THREAD_POWER_THROTTLING_CURRENT_VERSION;
+    state.ControlMask = THREAD_POWER_THROTTLING_EXECUTION_SPEED;
+    state.StateMask = 0;
+    SetThreadInformation(GetCurrentThread(), ThreadPowerThrottling, &state, sizeof(state));
+#endif
+}
+
 void nameThread(std::size_t index)
 {
     // VTune/VS 프로파일러의 스레드 목록에서 풀 worker를 구분한다. 실패해도 동작에는 영향이 없다.
@@ -360,6 +373,8 @@ class Pool
     Pool()
     {
         m_efficientCores = queryEfficientCores();
+        // 풀을 처음 쓰는 스레드(앱/벤치의 main thread)도 직렬 구간을 맡으므로 같이 뺀다.
+        optOutOfPowerThrottling();
         const auto workers = hardwareThreads() - 1;
         for (std::size_t index = 0; index < workers; ++index)
         {
@@ -436,6 +451,7 @@ class Pool
     void workerMain(std::size_t index)
     {
         nameThread(index);
+        optOutOfPowerThrottling();
         while (true)
         {
             // 칸을 보기 전에 세대를 읽는다. 본 뒤에 공개된 작업은 세대가 달라져 아래 대기에서 바로 깬다.
