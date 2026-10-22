@@ -125,8 +125,7 @@ void Renderer::fillVertex(std::uint32_t index, const MeshRenderCommand &command,
 void Renderer::prepareFrame()
 {
     // 모든 parallel_for가 끝난 프레임 경계에서만 풀과 bin을 비운다.
-    m_tileReferences.clear();
-    std::ranges::fill(m_tileOffsets, 0);
+    m_tileReferenceCount = 0;
     m_activeTileWorkers.clear();
     for (auto &scratch : m_workerScratch)
         scratch.BeginFrame();

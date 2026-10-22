@@ -407,26 +407,25 @@ struct RendererTestAccess
                 append(workers[i < 4 ? 0 : 1], expectedTiles[i], &triangles[i]);
             renderer.m_activeTileWorkers = {&workers[0], &workers[1]};
             renderer.prepareTileReferences();
-            check(renderer.m_tileOffsets.size() == tileCount + 1 && renderer.m_tileOffsets.front() == 0 &&
-                      renderer.m_tileOffsets.back() == triangles.size() &&
-                      renderer.m_tileReferences.size() == triangles.size(),
-                  "flat tile prefix total equals worker reference cardinality");
+            check(renderer.m_tileReferenceCount == triangles.size() &&
+                      workers[0].sortedTileReferences.size() == 4 && workers[1].sortedTileReferences.size() == 3,
+                  "per-worker tile sort total equals worker reference cardinality");
             std::array<bool, 7> seen{};
+            std::vector<TriangleRef *> gathered;
             for (std::size_t tile = 0; tile < tileCount; ++tile)
             {
-                const auto begin = renderer.m_tileOffsets[tile], end = renderer.m_tileOffsets[tile + 1];
+                renderer.gatherTileReferences(tile, gathered);
                 const auto expectedCount = static_cast<std::size_t>(std::ranges::count(expectedTiles, tile));
-                check(begin <= end && end <= triangles.size() && end - begin == expectedCount,
-                      "flat tile ranges are disjoint contiguous and include empty tiles");
+                check(gathered.size() == expectedCount, "gathered tile ranges include empty tiles");
                 std::vector<TriangleRef *> expectedOrder;
                 for (const auto &worker : workers)
                     for (const auto &reference : worker.tileReferences)
                         if (reference.tileIndex == tile)
                             expectedOrder.push_back(reference.triangle);
-                for (auto index = begin; index < end; ++index)
+                for (std::size_t index = 0; index < gathered.size(); ++index)
                 {
-                    const auto *triangle = renderer.m_tileReferences[index];
-                    check(triangle == expectedOrder[index - begin],
+                    const auto *triangle = gathered[index];
+                    check(triangle == expectedOrder[index],
                           "scatter preserves each worker's original reference order inside its range");
                     // 역참조 전에 알려진 pointer 집합인지 확인해 미기록 scatter 슬롯도 검출한다.
                     const auto found = std::ranges::find_if(triangles, [&](const auto &value)
@@ -450,15 +449,14 @@ struct RendererTestAccess
             }
             renderer.m_activeTileWorkers.clear();
             renderer.prepareTileReferences();
-            check(renderer.m_tileReferences.empty() &&
-                      std::ranges::all_of(renderer.m_tileOffsets, [](auto offset) { return offset == 0; }),
+            check(renderer.m_tileReferenceCount == 0,
                   "empty prefix scatter discards stale ranges after populated frame");
         }
 
         // 거대한 실제 할당 없이 count 메타데이터만 과대하게 만들어 checked prefix를 통과시킨다.
         renderer.ensureViewport(16, 16);
         workers[0].tileScatter.resize(1);
-        workers[0].tileScatter[0].count = renderer.m_tileReferences.max_size() + 1;
+        workers[0].tileScatter[0].count = workers[0].sortedTileReferences.max_size() + 1;
         workers[0].touchedTileIds = {0};
         renderer.m_activeTileWorkers = {&workers[0]};
         bool overflowRejected = false;
@@ -474,9 +472,7 @@ struct RendererTestAccess
         workers[0].BeginFrame();
         renderer.m_activeTileWorkers.clear();
         renderer.prepareTileReferences();
-        check(renderer.m_tileReferences.empty() &&
-                  std::ranges::all_of(renderer.m_tileOffsets, [](auto offset) { return offset == 0; }),
-              "empty preparation recovers after rejected prefix metadata");
+        check(renderer.m_tileReferenceCount == 0, "empty preparation recovers after rejected prefix metadata");
 
         // 실제 ETS 소유 배열의 capacity 하한을 더한다. allocator/RSS나 worker 수는 고정하지 않는다.
         Renderer measured;
@@ -488,8 +484,7 @@ struct RendererTestAccess
         measured.collectActiveTileWorkers();
         measured.prepareTileReferences();
         const auto minimumBytes =
-            measured.m_tileOffsets.capacity() * sizeof(std::size_t) +
-            measured.m_tileReferences.capacity() * sizeof(TriangleRef *) +
+            scratch.sortedTileReferences.capacity() * sizeof(TriangleRef *) +
             measured.m_activeTileWorkers.capacity() * sizeof(Renderer::WorkerScratch *) +
             scratch.tileReferences.capacity() * sizeof(decltype(scratch.tileReferences)::value_type) +
             scratch.tileScatter.capacity() * sizeof(decltype(scratch.tileScatter)::value_type) +
@@ -508,8 +503,8 @@ struct RendererTestAccess
                       measured.GetStats().retainedBinBytes - beforeBytes >= requiredGrowth,
                   "each flat bin allocation contributes its retained capacity independently");
         };
-        checkRetainedGrowth(measured.m_tileOffsets);
-        checkRetainedGrowth(measured.m_tileReferences);
+        checkRetainedGrowth(scratch.sortedTileReferences);
+        checkRetainedGrowth(measured.m_tileGather.local());
         checkRetainedGrowth(measured.m_activeTileWorkers);
         checkRetainedGrowth(scratch.tileReferences);
         checkRetainedGrowth(scratch.tileScatter);
