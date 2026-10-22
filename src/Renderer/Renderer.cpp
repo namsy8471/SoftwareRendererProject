@@ -181,8 +181,12 @@ void Renderer::renderTiles(RenderTarget &target, const FrameContext &frame, bool
             target.Clear();
         return;
     }
+    // auto_partitioner는 1080p 8160타일을 스레드 수에 맞춰 크게 나눈 뒤 훔칠 때만 쪼갠다. IronMan이 걸친
+    // 중앙 타일은 다른 타일의 수십 배라 큰 조각 하나가 끝을 늦췄다(PC 24스레드 타일 단계 사용률 76%).
+    // 4타일씩 고정해 처음부터 잘게 나눈다. 타일은 서로 독립이라 결과는 같다.
+    constexpr std::size_t tilesPerTask = 4;
     tbb::parallel_for(
-        tbb::blocked_range<std::size_t>(0, m_tileStats.size()),
+        tbb::blocked_range<std::size_t>(0, m_tileStats.size(), tilesPerTask),
         [&](const tbb::blocked_range<std::size_t> &range)
         {
             for (auto index = range.begin(); index != range.end(); ++index)
@@ -224,7 +228,8 @@ void Renderer::renderTiles(RenderTarget &target, const FrameContext &frame, bool
                         if (triangle->sourceCommand->rasterizeMode == ERasterizeMode::Fill)
                             rasterizer.DrawTriangle(*triangle, RasterPass::Shaded);
             }
-        });
+        },
+        tbb::simple_partitioner());
 }
 
 void Renderer::renderLines(RenderTarget &target, const RenderQueue &queue, const FrameContext &frame)
