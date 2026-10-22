@@ -133,6 +133,19 @@ std::size_t participate(Job &job, std::uint32_t id) noexcept
                 job.error = std::current_exception();
         }
     }
+    if (completed != 0 && job.finish && !job.failed.load(std::memory_order_relaxed))
+    {
+        try
+        {
+            job.finish(job.body);
+        }
+        catch (...)
+        {
+            bool expected = false;
+            if (job.failed.compare_exchange_strong(expected, true))
+                job.error = std::current_exception();
+        }
+    }
     return completed;
 }
 

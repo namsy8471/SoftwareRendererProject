@@ -51,7 +51,10 @@ struct alignas(64) ChunkRange
 struct Job
 {
     using RunFunction = void (*)(void *body, std::size_t first, std::size_t last);
+    using FinishFunction = void (*)(void *body);
     RunFunction run = nullptr;
+    // 조각을 하나라도 끝낸 참여자가 더 가져갈 조각이 없을 때 한 번 부른다. 없으면 nullptr.
+    FinishFunction finish = nullptr;
     void *body = nullptr;
     std::size_t itemCount = 0, chunkSize = 1;
     std::uint32_t chunkCount = 0, participants = 1;
@@ -74,20 +77,22 @@ std::size_t ThreadSlot();
 bool &IsolatedFlag() noexcept;
 } // namespace detail
 
-// [begin, end)를 조각으로 나눠 body(first, last)를 병렬로 부른다. 모든 조각이 끝난 뒤 반환하며,
-// 조각에서 난 예외는 남은 조각을 건너뛰고 호출자에게 다시 던진다(첫 예외 하나).
-template <Split split = Split::Adaptive, class Index, class Body>
-void ParallelFor(Index begin, std::type_identity_t<Index> end, std::type_identity_t<Index> grain, Body &&body)
+namespace detail
+{
+template <Split split, class Index, class Body, class Finish>
+void ParallelForImpl(Index begin, Index end, Index grain, Body &body, Finish *finish)
 {
     if (!(begin < end))
         return;
     const auto itemCount = static_cast<std::size_t>(end - begin);
     const std::size_t minimumChunk = grain > Index{0} ? static_cast<std::size_t>(grain) : 1;
-    const std::size_t threads = detail::AvailableConcurrency();
+    const std::size_t threads = AvailableConcurrency();
     // 한 스레드뿐이거나 한 조각이면 작업을 공개하지 않고 바로 부른다.
     if (threads <= 1 || itemCount <= minimumChunk)
     {
         body(begin, end);
+        if constexpr (!std::is_same_v<Finish, std::nullptr_t>)
+            (*finish)();
         return;
     }
     std::size_t chunkSize = minimumChunk;
@@ -99,21 +104,44 @@ void ParallelFor(Index begin, std::type_identity_t<Index> end, std::type_identit
 
     struct Bound
     {
-        std::remove_reference_t<Body> *body;
+        Body *body;
+        Finish *finish;
         Index begin;
-    } bound{&body, begin};
-    detail::Job job;
+    } bound{&body, finish, begin};
+    Job job;
     job.run = [](void *context, std::size_t first, std::size_t last)
     {
         const auto &self = *static_cast<Bound *>(context);
         (*self.body)(static_cast<Index>(self.begin + static_cast<Index>(first)),
                      static_cast<Index>(self.begin + static_cast<Index>(last)));
     };
+    if constexpr (!std::is_same_v<Finish, std::nullptr_t>)
+        job.finish = [](void *context) { (*static_cast<Bound *>(context)->finish)(); };
     job.body = &bound;
     job.itemCount = itemCount;
     job.chunkSize = chunkSize;
     job.chunkCount = static_cast<std::uint32_t>((itemCount - 1) / chunkSize + 1);
-    detail::Execute(job, threads);
+    Execute(job, threads);
+}
+} // namespace detail
+
+// [begin, end)를 조각으로 나눠 body(first, last)를 병렬로 부른다. 모든 조각이 끝난 뒤 반환하며,
+// 조각에서 난 예외는 남은 조각을 건너뛰고 호출자에게 다시 던진다(첫 예외 하나).
+template <Split split = Split::Adaptive, class Index, class Body>
+void ParallelFor(Index begin, std::type_identity_t<Index> end, std::type_identity_t<Index> grain, Body &&body)
+{
+    detail::ParallelForImpl<split, Index>(begin, end, grain, body, static_cast<std::nullptr_t *>(nullptr));
+}
+
+// ParallelFor와 같고, 조각을 맡았던 스레드마다 더 가져갈 조각이 없어지면 그 스레드에서 finish()를 부른다.
+// 스레드별 결과(PerWorker)의 마무리(정렬 등)를 다음 병렬 단계로 미루지 않고 이 작업의 끝 대기 시간에
+// 하려고 쓴다. 모든 finish가 끝난 뒤 반환한다. 한 스레드가 같은 작업에 다시 들어와 조각을 더 맡으면
+// finish도 다시 부르므로, finish는 그 스레드의 결과 전체를 처음부터 다시 만들어야 한다.
+template <Split split = Split::Adaptive, class Index, class Body, class Finish>
+void ParallelFor(Index begin, std::type_identity_t<Index> end, std::type_identity_t<Index> grain, Body &&body,
+                 Finish &&finish)
+{
+    detail::ParallelForImpl<split, Index>(begin, end, grain, body, &finish);
 }
 
 // 스레드마다 하나씩 만드는 작업 공간. Local()은 처음 부른 스레드에서 기본 생성한다.
@@ -183,6 +211,12 @@ template <class T> class PerWorker
         if (auto *cell = entry.load(std::memory_order_acquire)) [[likely]]
             return cell->value;
         return create(entry);
+    }
+    // 이 스레드의 칸이 아직 없으면 만들지 않고 nullptr을 돌려준다.
+    T *Find()
+    {
+        auto *cell = m_cells[detail::ThreadSlot()].load(std::memory_order_acquire);
+        return cell ? &cell->value : nullptr;
     }
     Iterator<T> begin() { return Iterator<T>(m_order.cbegin()); }
     Iterator<T> end() { return Iterator<T>(m_order.cend()); }

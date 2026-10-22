@@ -30,6 +30,7 @@ void Renderer::WorkerScratch::BeginFrame()
     for (auto &bin : wireBins)
         bin.clear();
     triangles.clear();
+    tileReferencesSorted = false;
     clipInput.clear();
     clipOutput.clear();
     clippedVertices.clear();
@@ -146,14 +147,29 @@ void Renderer::binCommands(const RenderQueue &queue, const FrameContext &frame)
         m_commandTriangleBases[index] = triangleCount;
         triangleCount += static_cast<std::uint64_t>(count);
     }
-    sr::jobs::ParallelFor<sr::jobs::Split::Fixed>(std::size_t{0}, commands.size(), std::size_t{1},
-                                                  [&](std::size_t first, std::size_t last)
-                                                  {
-                                                      auto &scratch = m_workerScratch.Local();
-                                                      for (auto index = first; index != last; ++index)
-                                                          processCommand(commands[index], frame, scratch,
-                                                                         m_commandTriangleBases[index]);
-                                                  });
+    // 깊이 검사 선(법선)의 준비는 타일 결과와 무관하다. 따로 병렬 단계를 열지 않고 명령 뒤에 이어 붙여
+    // 같은 작업에서 돌린다. 분류가 끝나 가며 놀던 스레드가 이 chunk를 가져간다.
+    planDepthTestedLines(queue, frame);
+    const auto commandCount = commands.size();
+    const auto lineChunkCount = m_debugLinePlan == DebugLinePlan::Parallel ? m_debugLineChunks.size() : 0;
+    // 스레드마다 자기 분류가 끝나면(더 가져갈 명령이 없으면) 그 자리에서 자기 참조를 타일별로 정렬한다.
+    // 예전에는 모두 끝날 때까지 기다린 뒤 정렬만 하는 병렬 단계를 한 번 더 열었다(합류 1회 + worker 깨우기).
+    sr::jobs::ParallelFor<sr::jobs::Split::Fixed>(
+        std::size_t{0}, commandCount + lineChunkCount, std::size_t{1},
+        [&](std::size_t first, std::size_t last)
+        {
+            for (auto index = first; index != last; ++index)
+                if (index < commandCount)
+                    processCommand(commands[index], frame, m_workerScratch.Local(), m_commandTriangleBases[index]);
+                else
+                    prepareDebugLineChunk(index - commandCount);
+        },
+        [&]
+        {
+            if (auto *scratch = m_workerScratch.Find())
+                if (!scratch->tileReferencesSorted)
+                    scratch->SortTileReferences();
+        });
     collectActiveTileWorkers();
 }
 
@@ -172,6 +188,7 @@ void Renderer::processCommand(const MeshRenderCommand &cmd, const FrameContext &
     if (!cmd.sourceMesh || cmd.indicesToDraw.size() % 3 != 0)
         return;
     const Mesh *mesh = cmd.sourceMesh;
+    scratch.tileReferencesSorted = false;
     scratch.BeginCachedCommand(cmd, frame.viewProjection);
     const auto &mvp = scratch.modelViewProjection;
     const auto &inverseTransposeWorld = scratch.normalMatrix;

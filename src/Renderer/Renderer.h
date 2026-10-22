@@ -84,6 +84,13 @@ class Renderer
     // 법선 선은 화면 중앙 몇 행에 몰린다. 행별 선 수로 band 경계를 정해 band 작업량을 맞춘다.
     sr::jobs::PerWorker<std::vector<std::uint32_t>> m_debugLineRowCounts;
     std::vector<std::uint64_t> m_debugLineRowWeights;
+    // 깊이 검사 선을 이번 프레임에 어떻게 그리는지. Parallel이면 준비 chunk가 분류 작업에서 이미 돌았다.
+    enum class DebugLinePlan
+    {
+        Serial,
+        Parallel
+    };
+    DebugLinePlan m_debugLinePlan = DebugLinePlan::Serial;
 
     struct CommandCacheKey
     {
@@ -153,6 +160,8 @@ class Renderer
         }
         bool BeginCachedCommand(const MeshRenderCommand &, const SRMath::mat4 &viewProjection);
         void SortTileReferences();
+        // sortedTileReferences가 지금의 tileReferences와 맞는지. 참조를 더하면 false가 된다.
+        bool tileReferencesSorted = false;
     };
     sr::jobs::PerWorker<WorkerScratch> m_workerScratch;
     // frontend join 뒤 고정한 비소유 목록. scatter는 각 worker의 cursor만
@@ -196,6 +205,9 @@ class Renderer
     void renderTiles(RenderTarget &, const FrameContext &, bool needsDepthPrepass, bool clearTiles = false);
     void renderLines(RenderTarget &, const RenderQueue &, const FrameContext &);
     void renderDepthTestedLines(RenderTarget &, const RenderQueue &, const FrameContext &);
+    void planDepthTestedLines(const RenderQueue &, const FrameContext &);
+    void prepareDebugLineChunk(std::size_t chunkIndex);
+    DebugLineRows debugLineRowRange(const std::optional<Rasterizer::PreparedDebugLine> &) const noexcept;
     void applyPostProcessing(RenderTarget &);
     friend struct RendererTestAccess;
 
