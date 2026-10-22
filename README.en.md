@@ -36,6 +36,84 @@ This CPU-based software renderer began as a way to verify the rendering-pipeline
 
 Since 2026-10-20, an AI (Claude) writes and optimizes the code. Changes are judged by measured fps/ms and assembly review, and verified by tests, golden images, and CI.
 
+## AI work summary (2026-10-20 to 10-22)
+
+**Bottom line: the 100 fps goal at 1920×1080 is met in all three modes.** On the PC (MSVC Release x64, 24 threads) the slow-frame times (p95) are fill 3.42 ms, wire 3.92 ms and normal 7.47 ms, all inside the p95 ≤ 9 ms bar. Against the first 1080p measurement on 2026-10-21, mean frame time fell by 47–55%.
+
+| Mode | First (2026-10-21) mean / p95 | Now (main, 2026-10-22) mean / p95 | Mean time | Mean fps |
+|---|---|---|---|---|
+| fill | 6.66 / 7.90 ms | 3.10 / 3.42 ms | **−53.5%** | 150 → **323** |
+| wire | 7.27 / 8.56 ms | 3.27 / 3.92 ms | **−55.0%** | 138 → **306** |
+| normal | 11.27 / 12.69 ms (missed the bar) | 5.99 / 7.47 ms | **−46.8%** | 89 → **167** |
+
+> "First" is `RendererTests --benchmark` just before PR #6 (600 frames, median of 6 runs); "now" is the PR #27 measurement (`srcli bench`, interleaved base/head A/B). They were taken on different days with different tools, so the cumulative change is approximate; the per-PR A/B results below are the exact evidence. Every change kept the pixel hash identical (no visible change).
+
+### 1. Optimizations (adopted)
+
+Each PR was measured on the same PC with base and head interleaved, and adopted only when it was at least 2% faster and statistically significant. Numbers are mean frame time changes (n.s. = not significant).
+
+| PR | Change | fill | wire | normal |
+|---|---|---:|---:|---:|
+| #2 | Remove serial main-thread work in normal-line frames (measured at 1280×720) | −14.4% | −13.8% | −20.5% |
+| #6 | Balance line bands by line count; skip `powf` when the specular base is 0 | −2.7% | −24.1% | −17.3% |
+| #17 | Drop the full-screen clear pass; clear inside each tile task | −3.1% | no change | −4.1% |
+| #20 | Flatten the octree and emit visible triangles as merged ranges (11,579 → 1,055 commands per frame) | **−16.9%** | **−23.5%** | **−10.5%** |
+| #21 | 4096-slot vertex cache (fits L2), in-place triangle prepare, vertex prefetch, SSE color packing | −7.0% | −4.0% | −2.4% |
+| #23 | Fixed 4-tile tasks; per-worker tile sort instead of a serial global prefix | **−10.5%** | no change | −6.9% |
+| #24 | Finish depth testing first, then shade each pixel once (shaded pixels 312,670 → 181,480) | −6.2% | no change | −4.0% |
+| #26 | Shade four pixels at a time in SSE lanes (bit-identical) | −4.0% | n.s. | −2.8% (n.s.) |
+| #27 | Draw in a 16×16 tile buffer and drop the screen-sized triangle ID plane (16 → 8 bytes per pixel) | **−13.3%** | **−8.7%** | **−6.8%** |
+
+Each PR's commit messages hold the VTune and VS CPU Usage hotspots before/after, the MSVC assembly (/FAs) before/after, and the test results.
+
+### 2. Tried and not adopted
+
+Changes that were not at least 2% faster, or were slower, were dropped and the reason was recorded.
+
+| Attempt | Result | Lesson |
+|---|---|---|
+| Binning stage SIMD and lazy vertex shading | VTune binning CPU −4 to −17%, but PC frame time fill −1.0%, wire −1.8%, normal −1.1% | On 24 threads, CPU cuts in one stage barely reach frame time |
+| Triangle raster loop (SSE coverage mask, branchless Bresenham) | VTune raster CPU −18%, frame time only −0.5 to −1.7%; branchless Bresenham was slower on MSVC | Same as above |
+| Mesh-sized per-worker vertex setup cache | Fewer instructions (Ir) but PC fill +6.4% slower (23 MB per worker) | Memory footprint beats instruction count; per-worker arrays must fit L2 |
+| Streaming stores for tile write-back | Cloud fill +9.6% slower | |
+| SSE stores for ClearRect and tile buffer copy | No difference (all n.s.) | The cost is cold-memory writes, not call overhead |
+| Wire bands of 8/4 rows | +6% / +9% slower | Lines get walked again in every band they touch |
+| LTCG | 2–4% faster, but full build 27 s → 113 s | |
+
+### 3. Tools and docs for AI work
+
+| Item | Role |
+|---|---|
+| [CLAUDE.md](CLAUDE.md) | AI-facing summary: the 100 fps bar (p95 ≤ 9 ms), commands, workflow, verdict rules |
+| Assembly-level optimization rule (CLAUDE.md, PR #19) | Optimize from the generated assembly (`/FAs`, `dumpbin /disasm`), not source-level guesses, and record before/after. Covers per-frame and load-time code |
+| Mandatory profiling rule (CLAUDE.md, PR #22) | Every optimization is profiled on the PC with both VTune and VS CPU Usage, before and after, with hotspot shares recorded |
+| [CODEMAP.md](CODEMAP.md) | One line per source file; CI (`tools/ci/check_codemap.py`) catches missing files |
+| `srcli` (`tools/srcli`) | Renders the demo scene without a window: `bench --json` (frame times, `pixel_hash`), `render --out` (PNG), `--scene` (glTF + animation) |
+| Tests | Framework-free `RendererTests` (83 on PC MSVC) and 8 golden images (`tests/golden`) |
+| Scripts | `tests/RunTests.ps1 -Quick/-Filter/-UpdateGolden`, `tests/Bench.ps1` (JSON Lines), `tests/CaptureCpuProfiles.ps1` (VTune + VS CPU Usage), `tools/dev.sh` (Linux), `tools/Worktree.ps1` |
+
+### 4. Automation
+
+| Item | What it does |
+|---|---|
+| GitHub CI (`ci.yml`, `windows.yml`) | Linux GCC build, unit and golden tests, ASan+UBSan, CODEMAP check. MSVC build, tests and `/analyze /WX` on GitHub-hosted Windows. MSVC ASan only on main push or manual runs. Docs-only PRs skip Windows. PR wait about 23 → about 10 min |
+| Cloud A/B bench (`ab-bench.yml`) | Measures base and head interleaved on one VM. `/Brepro` makes the same source give the same binary (identical binaries are not measured). The verdict rule (significant and at least 2%) was checked with an A/A experiment (`ab-calibrate.yml`). Stops early once the verdict is clear (23 → about 10 min). Runs when a PR has the `ab-bench` label |
+| PC Job Runner (local to the PC) | Cloud sessions drop jobs into a queue folder and the PC runs them in order (build, tests, bench, profiles, push, PR), with a status window and tray showing steps, remaining time and the queue |
+| SRJob.ps1 standard (local to the PC) | Build cache per SHA, adaptive A/B (stops at 6–12 rounds once clear), cached base profiles. A measurement job went from about 22 to about 8–10 min |
+| Worktrees | Each task works in `..\SR-worktrees\<branch>`, so the main PC checkout is never touched |
+
+### 5. Features added (roadmap phases 1–5)
+
+| Phase | PR | Content |
+|---|---|---|
+| 1 | #11 | In-house JSON parser, background file loading, `.obj` drag and drop / Open Model |
+| 2 | #14 | Project folders and scene files (`.srproj`, `.srscene`), File menu, save and reopen |
+| 3 | #13 | In-house PNG/JPEG/BMP/TGA/DDS decoders (incl. BC1–BC5, BC7); stb_image removed after matching it on 84 files |
+| 4 | #15 | Dependency-free glTF 2.0 loader (`.gltf`/`.glb`, hierarchy, materials, skin and animation data) |
+| 5 | #16 | Animation: quaternions, glTF keyframe playback, CPU skeletal skinning (SSE/AVX, identical results) |
+
+Also: Framework split into Scene, FrameRunner, Win32App and SceneRenderCollector (#9), and a fix for `vec2`/`vec3` `==` reporting equal vectors as different (#12).
+
 ## Preview
 
 ### Performance comparison
