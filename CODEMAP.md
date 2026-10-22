@@ -51,8 +51,8 @@
 | `RendererFrontend.cpp` | Renderer 앞단: 정점 변환·명령 캐시, 클리핑 호출, 16×16 타일 참조 생성 |
 | `RendererClipping.cpp` | 동차 clip 공간 평면 클리핑과 속성 보간 |
 | `RendererShading.cpp` | 원근 보정 보간, Phong 조명, 텍스처 샘플 |
-| `Rasterizer.h` · `Rasterizer.cpp` | **Rasterizer**: 타일 하나의 삼각형 coverage·깊이·Hi-Z, 와이어/디버그 선 그리기(행 밴드) |
-| `RenderTarget.h` · `RenderTarget.cpp` | **RenderTarget**: 빌린 색상 뷰(**PixelSurfaceView**, stride 있음) + 소유 depth/primitive ID, 연결 검증, Clear/ClearRect |
+| `Rasterizer.h` · `Rasterizer.cpp` | **Rasterizer**: 타일 하나의 삼각형 coverage·깊이·Hi-Z(16x16 색/깊이/ID 타일 버퍼에 그리고 EndTile에서 한 번 씀), 와이어/디버그 선 그리기(행 밴드) |
+| `RenderTarget.h` · `RenderTarget.cpp` | **RenderTarget**: 빌린 색상 뷰(**PixelSurfaceView**, stride 있음) + 소유 depth/primitive ID(ID 면은 끌 수 있음, 앱/srcli는 끔), 연결 검증, Clear/ClearRect |
 | `RenderQueue.h` | **RenderQueue**: 프레임의 MeshRenderCommand·DebugPrimitiveCommand 목록, 디버그 정점 버퍼 재사용 |
 | `RenderCommand.h` | **MeshRenderCommand**, **DebugPrimitiveCommand**, DebugVertex, ERasterizeMode, DebugDepthPolicy |
 | `RenderTypes.h` | **RenderOptions**, **RenderStats**, TileBounds, RasterPass, ELineAlgorithm, EAAAlgorithm, RenderFrameContext |

@@ -104,8 +104,13 @@ void Renderer::renderScene(RenderTarget &target, const RenderQueue &queue, const
         m_stats.rasterMs = elapsedMilliseconds(stage);
         for (const auto &stats : m_tileStats)
             m_stats.MergeCounters(stats);
-        for (auto id : target.PrimitiveIds())
-            m_stats.finalFilledPixels += id != RenderTarget::emptyOwner;
+        if (target.HasPrimitiveIds())
+            for (auto id : target.PrimitiveIds())
+                m_stats.finalFilledPixels += id != RenderTarget::emptyOwner;
+        else
+            // 그려진 픽셀의 깊이는 양수(1/w > 0)라 빈 값(float 최솟값)과 같지 않다. ID로 센 값과 같다.
+            for (auto depth : target.Depth())
+                m_stats.finalFilledPixels += depth != RenderTarget::emptyDepth;
     }
     stage = FrameClock::now();
     renderLines(target, queue, frame);

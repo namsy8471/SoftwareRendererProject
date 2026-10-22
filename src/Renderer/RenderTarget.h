@@ -38,6 +38,9 @@ enum class RenderTargetError
 
 // 색상 저장소만 빌리고 깊이와 동일 깊이 판정용 ID는 직접 소유한다.
 // 깊이/ID는 width * height로 촘촘하게 배치되며 색상 stride를 사용하지 않는다.
+// ID 면은 끌 수 있다(keepPrimitiveIds = false). 이때 PrimitiveIds()는 비어 있고 Clear/ClearRect는 색과 깊이만 지운다.
+// 타일 래스터는 ID를 타일 버퍼 안에서만 쓰며, 이미 그려진 픽셀은 가장 작은 ID(0)의 주인으로 본다
+// (같은 깊이면 먼저 그린 쪽이 남는다). 매 프레임 지우고 그리는 앱/srcli는 화면이 같고 픽셀당 8바이트를 덜 쓴다.
 class RenderTarget
 {
   public:
@@ -52,7 +55,8 @@ class RenderTarget
 
     // 연결/해제는 렌더 작업이 없는 때에만 호출한다. 실패 시 이전 뷰도 남기지 않는다.
     // 한 축이 0이면 성공한 빈 target으로 정규화한다. 음수 크기는 오류다.
-    [[nodiscard]] std::expected<void, RenderTargetError> Attach(PixelSurfaceView surface);
+    [[nodiscard]] std::expected<void, RenderTargetError> Attach(PixelSurfaceView surface,
+                                                                bool keepPrimitiveIds = true);
     void Detach() noexcept;
     // 색상 padding은 건드리지 않는다. 큰 1/w가 가까우며 같은 깊이는 작은 ID가 이긴다.
     void Clear() noexcept;
@@ -71,6 +75,7 @@ class RenderTarget
     [[nodiscard]] int Width() const noexcept { return m_surface.width; }
     [[nodiscard]] int Height() const noexcept { return m_surface.height; }
     [[nodiscard]] bool Empty() const noexcept { return m_surface.pixels.empty(); }
+    [[nodiscard]] bool HasPrimitiveIds() const noexcept { return !m_primitiveIds.empty(); }
 
   private:
     void clearRows(int firstRow, int lastRow) noexcept;

@@ -249,7 +249,8 @@ void Rasterizer::useTarget()
 {
     const auto surface = m_target.Surface();
     m_depthBase = m_target.Depth().data();
-    m_idBase = m_target.PrimitiveIds().data();
+    // ID 면이 없는 타깃이면 nullptr다. 그런 타깃의 삼각형은 타일 버퍼로만 그린다(DrawTriangle).
+    m_idBase = m_target.HasPrimitiveIds() ? m_target.PrimitiveIds().data() : nullptr;
     m_colorBase = surface.pixels.data();
     m_depthStride = static_cast<std::size_t>(m_target.Width());
     m_colorStride = surface.stridePixels;
@@ -279,12 +280,19 @@ void Rasterizer::BeginTile(TileBounds bounds, bool hiZ, bool cleared, TileBuffer
         else
         {
             const auto surface = m_target.Surface();
+            const bool ids = m_target.HasPrimitiveIds();
             for (int y = 0; y < height; ++y)
             {
                 const auto row = static_cast<std::size_t>(bounds.minY + y);
                 const auto first = row * m_target.Width() + bounds.minX;
                 std::copy_n(m_target.Depth().data() + first, width, m_tile->depth.data() + y * 16);
-                std::copy_n(m_target.PrimitiveIds().data() + first, width, m_tile->ids.data() + y * 16);
+                if (ids)
+                    std::copy_n(m_target.PrimitiveIds().data() + first, width, m_tile->ids.data() + y * 16);
+                else
+                    // ID 면이 없으면 이미 그려진 픽셀의 주인은 가장 작은 ID(0)로 본다. 같은 깊이면 먼저 그린 쪽이 남는다.
+                    for (int x = 0; x < width; ++x)
+                        m_tile->ids[y * 16 + x] =
+                            m_tile->depth[y * 16 + x] == RenderTarget::emptyDepth ? RenderTarget::emptyOwner : 0;
                 std::copy_n(surface.pixels.data() + row * surface.stridePixels + bounds.minX, width,
                             m_tile->color.data() + y * 16);
             }
@@ -313,12 +321,14 @@ void Rasterizer::EndTile()
         return;
     const auto surface = m_target.Surface();
     const int width = m_bounds.maxX - m_bounds.minX;
+    const bool ids = m_target.HasPrimitiveIds();
     for (int y = 0; y < m_bounds.maxY - m_bounds.minY; ++y)
     {
         const auto row = static_cast<std::size_t>(m_bounds.minY + y);
         const auto first = row * m_target.Width() + m_bounds.minX;
         std::copy_n(m_tile->depth.data() + y * 16, width, m_target.Depth().data() + first);
-        std::copy_n(m_tile->ids.data() + y * 16, width, m_target.PrimitiveIds().data() + first);
+        if (ids)
+            std::copy_n(m_tile->ids.data() + y * 16, width, m_target.PrimitiveIds().data() + first);
         std::copy_n(m_tile->color.data() + y * 16, width,
                     surface.pixels.data() + row * surface.stridePixels + m_bounds.minX);
     }
@@ -392,7 +402,7 @@ bool Rasterizer::IsOccluded(const PreparedTriangle &t)
 
 void Rasterizer::DrawTriangle(const PreparedTriangle &t, RasterPass pass)
 {
-    if (m_target.Empty())
+    if (m_target.Empty() || !m_idBase)
         return;
     if (m_hiZ && pass != RasterPass::ShadeVisible && IsOccluded(t))
         return;

@@ -219,7 +219,8 @@ bool Win32App::resizeRenderTarget(HWND window)
                                              static_cast<int>(clientRect.bottom - clientRect.top));
     if (!resized)
         return false;
-    if (!m_renderTarget.Attach(m_presenter.Surface()))
+    // 매 프레임 지우고 그리므로 삼각형 ID를 화면 크기로 보관하지 않는다(픽셀당 8바이트 쓰기 절약, 화면 동일).
+    if (!m_renderTarget.Attach(m_presenter.Surface(), false))
     {
         // 색상 DIB 생성 후 깊이/ID 할당만 실패해도 낡거나 부분적인 화면을 표시하지 않는다.
         m_presenter.Reset();
