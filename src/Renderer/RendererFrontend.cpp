@@ -7,6 +7,7 @@
 #include <limits>
 #include <stdexcept>
 #include <tbb/parallel_for.h>
+#include <xmmintrin.h>
 #include <tbb/blocked_range.h>
 
 Renderer::WorkerScratch::WorkerScratch()
@@ -179,8 +180,21 @@ void Renderer::processCommand(const MeshRenderCommand &cmd, const FrameContext &
     const auto &inverseTransposeWorld = scratch.normalMatrix;
     const auto indices = cmd.indicesToDraw;
     std::array<WorkerScratch::CachedVertex, 3> conflict;
+    const Vertex *const meshVertices = mesh->vertices.data();
+    const std::size_t meshVertexCount = mesh->vertices.size();
     for (size_t i = 0; i < indices.size(); i += 3)
     {
+        // 정점 번호는 메시 전체에 흩어져 있어 miss 때 읽는 메시 정점이 L2 밖에 있기 쉽다.
+        // 8삼각형 앞의 정점을 미리 당겨 둔다. 캐시 검사 뒤에만 당기면 그 분기가 더 비쌌다(채움 +2.9%).
+        // prefetch는 값에 영향이 없다.
+        constexpr std::size_t prefetchAhead = 3 * 8;
+        if (i + prefetchAhead < indices.size())
+            for (std::size_t corner = 0; corner < 3; ++corner)
+            {
+                const auto ahead = indices[i + prefetchAhead + corner];
+                if (ahead < meshVertexCount)
+                    _mm_prefetch(reinterpret_cast<const char *>(meshVertices + ahead), _MM_HINT_T0);
+            }
         uint32_t i0 = indices[i];
         uint32_t i1 = indices[i + 1];
         uint32_t i2 = indices[i + 2];
