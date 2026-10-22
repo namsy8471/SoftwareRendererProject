@@ -14,6 +14,14 @@ struct Plane
     }
 };
 
+// ClassifyAABB의 결과. Inside는 상자 전체가 모든 평면 안쪽에 여유를 두고 들어 있다는 뜻이다.
+enum class FrustumTest
+{
+    Outside,
+    Intersects,
+    Inside
+};
+
 class Frustum
 {
   public:
@@ -22,4 +30,8 @@ class Frustum
 
     void Update(const SRMath::mat4 &viewProjectionMatrix) noexcept;
     [[nodiscard]] bool IsAABBInFrustum(const AABB &aabb) const noexcept;
+    // Outside 판정은 IsAABBInFrustum과 같은 계산이다(false ⇔ Outside). Inside면 이 상자 안에 든 더 작은
+    // 상자도 IsAABBInFrustum을 통과한다. 그 보장이 부동소수점 반올림에 흔들리지 않도록 n-vertex가
+    // 평면 안쪽으로 크기에 비례한 여유(insideMargin) 이상일 때만 Inside라고 한다. 애매하면 Intersects다.
+    [[nodiscard]] FrustumTest ClassifyAABB(const AABB &aabb) const noexcept;
 };
