@@ -3,8 +3,7 @@
 #include "Scene/Camera.h"
 #include "Graphics/Light.h"
 #include "Graphics/AssetParsing.h"
-#include <tbb/global_control.h>
-#include <tbb/parallel_invoke.h>
+#include "Utils/Jobs.h"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -448,9 +447,7 @@ void determinismTests()
     Snapshot expected;
     for (bool single : {true, false})
     {
-        tbb::global_control limit(
-            tbb::global_control::max_allowed_parallelism,
-            single ? 1 : tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism));
+        sr::jobs::ConcurrencyLimit limit(single ? 1 : sr::jobs::MaxConcurrency());
         for (int iteration = 0; iteration < 100; ++iteration)
         {
             renderer.SetOptions({(iteration & 1) != 0, (iteration & 2) != 0, iteration == 99});
@@ -520,8 +517,7 @@ void tileMergeSubmissionTests()
         return queue;
     };
     Renderer reused, independent;
-    const auto defaultWorkers =
-        tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism);
+    const auto defaultWorkers = sr::jobs::MaxConcurrency();
     // 1 tile, 동일한 8 tiles지만 서로 다른 행 stride, 큰→작은→재확장을 포함한다.
     for (const auto size : {std::array{16, 16}, std::array{32, 64}, std::array{64, 32}, std::array{65, 49},
                             std::array{33, 67}, std::array{65, 49}})
@@ -538,7 +534,7 @@ void tileMergeSubmissionTests()
                 MemoryTarget image(width, height), other(width, height);
                 Snapshot expected, otherExpected;
                 {
-                    tbb::global_control single(tbb::global_control::max_allowed_parallelism, 1);
+                    sr::jobs::ConcurrencyLimit single(1);
                     Renderer reference;
                     reference.SetOptions({false, false, false, hidden});
                     reference.RenderScene(image.target, queue, camera.GetViewParams(), {});
@@ -557,8 +553,7 @@ void tileMergeSubmissionTests()
                         "material-only queue change leaves depth and stable primitive IDs unchanged");
                 for (const bool single : {true, false})
                 {
-                    tbb::global_control limit(tbb::global_control::max_allowed_parallelism,
-                                              single ? 1 : defaultWorkers);
+                    sr::jobs::ConcurrencyLimit limit(single ? 1 : defaultWorkers);
                     for (int options = 0; options < 8; ++options)
                     {
                         const bool stats = (options & 4) != 0;
@@ -566,10 +561,18 @@ void tileMergeSubmissionTests()
                         independent.SetOptions({(options & 2) != 0, (options & 1) != 0, stats, hidden});
                         image.target.Clear();
                         other.target.Clear();
-                        // 서로 다른 renderer/target의 프레임은 같은 arena에서도 독립이어야 한다.
-                        tbb::parallel_invoke(
-                            [&] { reused.RenderScene(image.target, queue, camera.GetViewParams(), {}); },
-                            [&] { independent.RenderScene(other.target, alternate, camera.GetViewParams(), {}); });
+                        // 서로 다른 renderer/target의 프레임은 같은 worker들이 동시에 그려도 독립이어야 한다.
+                        sr::jobs::ParallelFor<sr::jobs::Split::Fixed>(
+                            0, 2, 1,
+                            [&](int first, int last)
+                            {
+                                for (int side = first; side != last; ++side)
+                                    if (side == 0)
+                                        reused.RenderScene(image.target, queue, camera.GetViewParams(), {});
+                                    else
+                                        independent.RenderScene(other.target, alternate,
+                                                                camera.GetViewParams(), {});
+                            });
                         require(
                             snapshot(image.target) == expected && snapshot(other.target) == otherExpected,
                             "private tile merge preserves pixels depth owners across workers and options");
@@ -654,9 +657,7 @@ void wireOptionTests()
         }
         for (bool single : {true, false})
         {
-            tbb::global_control limit(
-                tbb::global_control::max_allowed_parallelism,
-                single ? 1 : tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism));
+            sr::jobs::ConcurrencyLimit limit(single ? 1 : sr::jobs::MaxConcurrency());
             for (int iteration = 0; iteration < 100; ++iteration)
             {
                 renderer.SetOptions({(iteration & 1) != 0, (iteration & 2) != 0, iteration == 99, hidden});
@@ -714,10 +715,7 @@ void parallelDebugSubmissionTests()
         for (const auto algorithm : {ELineAlgorithm::Bresenham, ELineAlgorithm::DDA})
             for (const bool single : {true, false})
             {
-                tbb::global_control limit(
-                    tbb::global_control::max_allowed_parallelism,
-                    single ? 1
-                           : tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism));
+                sr::jobs::ConcurrencyLimit limit(single ? 1 : sr::jobs::MaxConcurrency());
                 for (const int lineCount : {255, 256, 769, 0, 1, 257, 0})
                 {
                     RenderQueue queue = geometry;
@@ -820,14 +818,12 @@ void preparedDebugSlotFreshnessTests()
     const RenderFrameContext frame{scene.camera.GetProjectionMatrix() * scene.camera.GetViewMatrix(),
                                    scene.camera.GetCameraPos(), preparedLights, (width - 1) / tileSize + 1,
                                    (height - 1) / tileSize + 1};
-    const auto defaultWorkers =
-        tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism);
+    const auto defaultWorkers = sr::jobs::MaxConcurrency();
     for (const auto algorithm : {ELineAlgorithm::Bresenham, ELineAlgorithm::DDA})
         for (const bool single : {true, false})
             for (const bool stats : {false, true})
             {
-                tbb::global_control limit(tbb::global_control::max_allowed_parallelism,
-                                          single ? 1 : defaultWorkers);
+                sr::jobs::ConcurrencyLimit limit(single ? 1 : defaultWorkers);
                 Renderer reused;
                 reused.SetLineAlgorithm(algorithm);
                 reused.SetOptions({false, false, stats, false});

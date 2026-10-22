@@ -7,9 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <utility>
-#include <tbb/blocked_range.h>
-#include <tbb/combinable.h>
-#include <tbb/parallel_for.h>
+#include "Utils/Jobs.h"
 
 namespace sr::anim
 {
@@ -85,15 +83,16 @@ void SkinVertices(std::span<const Vertex> in, std::span<const SkinInfluence> inf
         return;
     }
     // min/max는 순서와 무관하므로 조각을 어떤 worker가 처리해도 결과가 같다.
-    tbb::combinable<AABB> partial;
-    tbb::parallel_for(tbb::blocked_range<std::size_t>{0, count, parallelGrain},
-                      [&](const tbb::blocked_range<std::size_t> &range)
-                      {
-                          const std::size_t size = range.size();
-                          skin(in.subspan(range.begin(), size), influences.subspan(range.begin(), size),
-                               jointMatrices, out.subspan(range.begin(), size), partial.local());
-                      });
-    partial.combine_each([&](const AABB &local) { bounds.Encapsulate(local); });
+    sr::jobs::PerWorker<AABB> partial;
+    sr::jobs::ParallelFor(std::size_t{0}, count, parallelGrain,
+                          [&](std::size_t first, std::size_t last)
+                          {
+                              const std::size_t size = last - first;
+                              skin(in.subspan(first, size), influences.subspan(first, size), jointMatrices,
+                                   out.subspan(first, size), partial.Local());
+                          });
+    for (const AABB &local : partial)
+        bounds.Encapsulate(local);
 }
 
 std::expected<std::unique_ptr<SkinnedMesh>, std::string> SkinnedMesh::Create(
@@ -159,12 +158,12 @@ void SkinnedMesh::Update(const SRMath::mat4 &ownerWorld)
 
     // primitive끼리는 독립이다. 작은 primitive가 많은 모델(BrainStem: 59개, 각 2천 정점 미만)도 코어를 나눠
     // 쓰도록 primitive 단위로 병렬화하고, 큰 primitive는 SkinVertices 안에서 다시 나뉜다.
-    tbb::parallel_for(tbb::blocked_range<std::size_t>{0, m_primitives.size(), 1},
-                      [&](const tbb::blocked_range<std::size_t> &range)
-                      {
-                          for (std::size_t p = range.begin(); p != range.end(); ++p)
-                              updatePrimitive(m_primitives[p], ownerWorld);
-                      });
+    sr::jobs::ParallelFor(std::size_t{0}, m_primitives.size(),
+                          [&](std::size_t first, std::size_t last)
+                          {
+                              for (std::size_t p = first; p != last; ++p)
+                                  updatePrimitive(m_primitives[p], ownerWorld);
+                          });
     // 합치기는 primitive 순서대로 해서 결과가 worker 배치와 무관하다.
     m_worldBounds = AABB{};
     for (const Primitive &primitive : m_primitives)

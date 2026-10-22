@@ -55,9 +55,9 @@ flowchart TB
     Utils -. supports .-> Framework
     Utils -. supports .-> Renderer
 
-    oneTBB[(oneTBB)] -. parallel tasks / TLS .-> Loader
-    oneTBB -. parallel tasks / TLS .-> Queue
-    oneTBB -. parallel tasks / TLS .-> Renderer
+    Jobs[(sr::jobs)] -. parallel tasks / TLS .-> Loader
+    Jobs -. parallel tasks / TLS .-> Queue
+    Jobs -. parallel tasks / TLS .-> Renderer
     Codecs["Graphics/Codecs<br/>in-house PNG · JPEG · BMP · TGA · DDS"] -->|image decode| TextureLoader
     WinAPI[(WinAPI)] -. window / input / GDI .-> Framework
     WinAPI -. present .-> GDI
@@ -72,7 +72,7 @@ sequenceDiagram
     participant S as Scene / SceneRenderCollector
     participant Q as RenderQueue
     participant R as Renderer
-    participant T as oneTBB workers
+    participant T as sr::jobs workers
     participant B as RenderTarget
     participant G as GdiPresenter
 
@@ -128,14 +128,14 @@ sequenceDiagram
 | 제출 경계 | `RenderCommand.h`, `RenderQueue.h` | 장면 데이터와 렌더러 사이의 한 프레임짜리 명령 버퍼 제공 |
 | CPU 렌더러 | `src/Renderer` | 정점 변환, back-face culling, clipping, 타일 binning, 래스터화, 깊이 검사, Phong 조명, 디버그 선, FXAA |
 | 수학·공통 기반 | `src/Math`, `src/Utils` | 벡터/행렬, AABB/Frustum, SSE/AVX 선택, 고정 용량 버퍼, 구조화 오류, 성능 측정 |
-| 플랫폼·외부 코드 | `src/Platform`, `src/ThirdParty` | Win32 헤더 경계와 GDI 수명 관리, oneTBB 병렬 실행, 자체 이미지 코덱(PNG·JPEG·BMP·TGA·DDS, `src/Graphics/Codecs`) |
+| 플랫폼·외부 코드 | `src/Platform`, `src/ThirdParty` | Win32 헤더 경계와 GDI 수명 관리, 자체 이미지 코덱(PNG·JPEG·BMP·TGA·DDS, `src/Graphics/Codecs`) |
 
 ### 시작 시 자산이 장면이 되는 과정
 
 1. `Win32App::initializeScene`이 실행 파일 기준 `assets` 경로로 `sr::demo::LoadScene`을 호출하고, 장면 표의 모델마다 `ModelLoader::LoadOBJ`를 호출합니다.
 2. `ModelLoader`는 `std::filesystem::path`로 OBJ를 열고, `std::string_view`와 `std::from_chars` 중심으로 정점·텍스처 좌표·법선·면·material 사용 정보를 읽습니다.
 3. MTL이 참조되면 `TextureLoader`가 material의 색상·광택 값을 읽습니다. 이미지는 별도의 `LoadImageFile` API로 디코딩하며, 현재 MTL의 `map_Kd`를 자동 연결하지는 않습니다.
-4. 누락된 법선을 생성하고 mesh별 AABB와 octree를 구성합니다. 독립적인 mesh 후처리는 oneTBB로 병렬화됩니다.
+4. 누락된 법선을 생성하고 mesh별 AABB와 octree를 구성합니다. 독립적인 mesh 후처리는 sr::jobs로 병렬화됩니다.
 5. 성공하면 `std::unique_ptr<Model>`이 `GameObject`로 이동합니다. 실패하면 `AssetLoadError`가 `std::expected`를 통해 `Win32App`으로 전달되고, UI 계층에서만 `MessageBoxW`로 바뀝니다.
 
 ### 한 프레임이 그려지는 과정
@@ -150,7 +150,7 @@ sequenceDiagram
 
 ### 병렬 처리와 SIMD 경계
 
-- oneTBB는 mesh 명령 생성, renderer front-end, tile rasterization, 와이어·큰 법선 묶음, FXAA에 사용됩니다. 선은 `min(32, ceil(height / 64))`개 band로 나누고 각 작업이 서로 겹치지 않는 `[minY, maxY)` 행의 색상만 씁니다. 와이어 join 뒤 DepthTested 선이 256개 이상이면 256-line chunk로 변환·클리핑을 병렬 준비합니다. 원본 순번 슬롯에서 제출 순서대로 bin을 만들고 불변 준비 결과를 행 worker가 공유합니다. 256개 미만은 순차 fallback이며 오버레이는 법선 join 뒤 순차 실행합니다.
+- sr::jobs는 mesh 명령 생성, renderer front-end, tile rasterization, 와이어·큰 법선 묶음, FXAA에 사용됩니다. 선은 `min(32, ceil(height / 64))`개 band로 나누고 각 작업이 서로 겹치지 않는 `[minY, maxY)` 행의 색상만 씁니다. 와이어 join 뒤 DepthTested 선이 256개 이상이면 256-line chunk로 변환·클리핑을 병렬 준비합니다. 원본 순번 슬롯에서 제출 순서대로 bin을 만들고 불변 준비 결과를 행 worker가 공유합니다. 256개 미만은 순차 fallback이며 오버레이는 법선 join 뒤 순차 실행합니다.
 - 와이어 단계의 삼각형 풀은 front-end 종료 후 읽기 전용이고, 깊이·primitive ID도 읽기 전용입니다. `BeginLineRows`는 화면으로 clamp한 쓰기 범위만 바꿉니다. 선을 band 경계에서 clip하거나 새 끝점으로 재시작하지 않고 원래 Bresenham/DDA 진행을 유지하므로 반올림·기울기 bias·경계 픽셀 규칙이 보존됩니다. 완전히 겹치지 않는 Y 범위의 선만 건너뛰고, 통계는 band별로 모아 join 뒤 합칩니다.
 - Front-end의 clip buffer, 정점 캐시, stamp와 triangle pool은 worker별 `WorkerScratch`에 분리됩니다. 현재 프레임의 마지막 메시·정점 저장소·world/VP 비트·모드 키가 일치할 때만 정점 결과와 MVP/법선 행렬을 재사용합니다. 캐시 miss는 새 stamp와 변환 행렬을 준비하며 `BeginFrame`은 캐시를 무효화합니다. 자세한 키·실패 복구 계약은 [유지보수 문서](MAINTENANCE.md)를 따릅니다.
 - 삼각형 풀은 worker별 `concurrent_vector`를 유지하고 참조는 flat `tileReferences`에 기록합니다. `tileScatter`는 타일별 count/cursor를, `touchedTileIds`는 초기화할 타일을 보관합니다. Front-end join 뒤 활성 worker 목록을 고정하고 prefix offset으로 worker별 목적 구간을 배정합니다. 병렬 scatter가 단일 최종 포인터 배열을 채우고 join한 뒤 각 tile span에서 선택적 정렬·래스터화를 수행합니다. 픽셀 소유권·primitive ID와 서로 겹치지 않는 화면 쓰기 규칙은 그대로이며 별도 JobSystem은 없습니다. 기본 빠른 X-ray만 있는 장면은 flat 타일 참조·worker 메타데이터의 신규 할당과 depth prepass를 건너뜁니다.
@@ -198,14 +198,14 @@ This project does not delegate rasterization to a GPU API. It loads OBJ assets, 
 | Submission boundary | `RenderCommand.h`, `RenderQueue.h` | Provide a frame-scoped command buffer between scene data and the renderer |
 | CPU renderer | `src/Renderer` | Transform vertices; back-face cull; clip; bin into tiles; rasterize; depth test; apply Phong lighting; draw debug lines; run FXAA |
 | Math and utilities | `src/Math`, `src/Utils` | Supply vectors/matrices, AABB/Frustum math, SSE/AVX selection, fixed-capacity storage, structured errors, and timing |
-| Platform and vendors | `src/Platform`, `src/ThirdParty` | Centralize Win32 includes and GDI ownership; provide oneTBB tasking; in-house image codecs (PNG/JPEG/BMP/TGA/DDS, `src/Graphics/Codecs`) |
+| Platform and vendors | `src/Platform`, `src/ThirdParty` | Centralize Win32 includes and GDI ownership; in-house image codecs (PNG/JPEG/BMP/TGA/DDS, `src/Graphics/Codecs`) |
 
 ### Startup asset path
 
 1. `Win32App::initializeScene` passes the executable-relative `assets` path to `sr::demo::LoadScene`, which calls `ModelLoader::LoadOBJ` for each model in the scene table.
 2. `ModelLoader` opens the OBJ through `std::filesystem::path` and parses positions, texture coordinates, normals, faces, and material usage primarily with `std::string_view` and `std::from_chars`.
 3. `TextureLoader` reads material colors and shininess from MTL. Image decoding uses the separate `LoadImageFile` API; MTL `map_Kd` is not automatically connected today.
-4. Missing normals are generated, then per-mesh AABBs and octrees are constructed. Independent mesh post-processing is parallelized with oneTBB.
+4. Missing normals are generated, then per-mesh AABBs and octrees are constructed. Independent mesh post-processing is parallelized with sr::jobs.
 5. On success, the `std::unique_ptr<Model>` moves into a `GameObject`. On failure, `AssetLoadError` travels through `std::expected` to `Win32App`, where—and only where—it becomes a `MessageBoxW`.
 
 ### Per-frame path
@@ -220,7 +220,7 @@ This project does not delegate rasterization to a GPU API. It loads OBJ assets, 
 
 ### Parallelism and SIMD boundaries
 
-- oneTBB handles mesh-command generation, the renderer front end, tile rasterization, wires/large normal batches, and FXAA. Lines use `min(32, ceil(height / 64))` bands, each writing color only within its disjoint `[minY, maxY)` rows. After wire workers join, at least 256 DepthTested lines enable parallel transform/clipping preparation in 256-line chunks. Original-index slots feed submission-order bins, and row workers share immutable prepared results. Fewer than 256 lines use the sequential fallback; overlays run sequentially after normal workers join.
+- sr::jobs handles mesh-command generation, the renderer front end, tile rasterization, wires/large normal batches, and FXAA. Lines use `min(32, ceil(height / 64))` bands, each writing color only within its disjoint `[minY, maxY)` rows. After wire workers join, at least 256 DepthTested lines enable parallel transform/clipping preparation in 256-line chunks. Original-index slots feed submission-order bins, and row workers share immutable prepared results. Fewer than 256 lines use the sequential fallback; overlays run sequentially after normal workers join.
 - Triangle pools are read-only after the front end finishes; wire depth and primitive IDs are also read-only. `BeginLineRows` changes only the screen-clamped write range. It neither clips endpoints nor restarts a line at the band boundary, retaining the original Bresenham/DDA progression, rounding, slope bias, and edge pixels. Only lines with wholly disjoint Y bounds are skipped; band-local statistics merge after joining.
 - Front-end clip buffers, vertex caches, stamps, and triangle pools live in per-worker `WorkerScratch`. Vertex results and MVP/normal matrices are reused only when the current frame's last mesh, vertex-storage, world/VP-bit, and mode key matches exactly. A cache miss prepares a new stamp and transform matrices; `BeginFrame` invalidates the cache. See [maintenance contracts](MAINTENANCE.md) for exact keys and failure recovery.
 - Triangle pools retain per-worker `concurrent_vector` storage; references enter flat `tileReferences`. `tileScatter` holds per-tile counts/cursors, and `touchedTileIds` identifies metadata to reset. After the front-end join freezes the active-worker list, prefix offsets assign disjoint worker destination ranges. Parallel scatter fills one final pointer array and joins before optional sorting and rasterization within each tile span. Pixel ownership, primitive IDs, and disjoint screen-write rules are unchanged; no separate JobSystem is added. Pure default fast X-ray skips new flat tile-reference/worker-metadata allocations and the depth prepass.
@@ -268,14 +268,14 @@ This project does not delegate rasterization to a GPU API. It loads OBJ assets, 
 | 提出境界 | `RenderCommand.h`, `RenderQueue.h` | Scene dataとrendererの間にframe単位のcommand bufferを提供 |
 | CPUレンダラー | `src/Renderer` | 頂点変換、back-face culling、clipping、tile binning、rasterization、depth test、Phong lighting、debug line、FXAA |
 | 数学と共通基盤 | `src/Math`, `src/Utils` | Vector/matrix、AABB/Frustum、SSE/AVX選択、固定容量storage、構造化error、性能計測 |
-| プラットフォームと外部コード | `src/Platform`, `src/ThirdParty` | Win32 includeとGDI寿命管理の集約、oneTBB task、自前の画像コーデック（PNG/JPEG/BMP/TGA/DDS、`src/Graphics/Codecs`） |
+| プラットフォームと外部コード | `src/Platform`, `src/ThirdParty` | Win32 includeとGDI寿命管理の集約、自前の画像コーデック（PNG/JPEG/BMP/TGA/DDS、`src/Graphics/Codecs`） |
 
 ### 起動時にアセットがシーンになるまで
 
 1. `Win32App::initializeScene`が実行ファイル基準の`assets`パスで`sr::demo::LoadScene`を呼び、シーン表の各モデルに`ModelLoader::LoadOBJ`を呼び出します。
 2. `ModelLoader`は`std::filesystem::path`でOBJを開き、主に`std::string_view`と`std::from_chars`を使ってposition、texture coordinate、normal、face、material usageを解析します。
 3. `TextureLoader`がMTLの色と光沢を読み込みます。画像は別の`LoadImageFile` APIでdecodeし、現在MTLの`map_Kd`は自動接続しません。
-4. 欠落したnormalを生成し、meshごとのAABBとoctreeを構築します。独立したmeshの後処理はoneTBBで並列化されます。
+4. 欠落したnormalを生成し、meshごとのAABBとoctreeを構築します。独立したmeshの後処理はsr::jobsで並列化されます。
 5. 成功時は`std::unique_ptr<Model>`が`GameObject`へmoveされます。失敗時は`AssetLoadError`が`std::expected`で`Win32App`まで渡り、UI層だけで`MessageBoxW`へ変換されます。
 
 ### 1フレームの処理
@@ -290,7 +290,7 @@ This project does not delegate rasterization to a GPU API. It loads OBJ assets, 
 
 ### 並列処理とSIMDの境界
 
-- oneTBBはmesh command生成、renderer front end、tile rasterization、wire/多数のnormal、FXAAに使います。線は`min(32, ceil(height / 64))`個のbandに分け、各taskが重ならない`[minY, maxY)`行のcolorだけを書きます。Wireのjoin後、DepthTested線が256本以上なら256-line chunkで変換・clippingを並列準備します。元の番号のslotから提出順のbinを作り、行workerが不変の準備結果を共有します。256本未満は逐次fallbackで、overlayはnormalのjoin後に逐次実行します。
+- sr::jobsはmesh command生成、renderer front end、tile rasterization、wire/多数のnormal、FXAAに使います。線は`min(32, ceil(height / 64))`個のbandに分け、各taskが重ならない`[minY, maxY)`行のcolorだけを書きます。Wireのjoin後、DepthTested線が256本以上なら256-line chunkで変換・clippingを並列準備します。元の番号のslotから提出順のbinを作り、行workerが不変の準備結果を共有します。256本未満は逐次fallbackで、overlayはnormalのjoin後に逐次実行します。
 - Front-end終了後のtriangle poolとwireのdepth/primitive IDは読み取り専用です。`BeginLineRows`は画面へclampした書き込み範囲だけを変更します。Band境界で端点をclipせず、線を再始動せず、元のBresenham/DDA進行・丸め・slope bias・境界pixelを維持します。Y範囲が全く重ならない線だけを省き、band別statsはjoin後に合算します。
 - Front endのclip buffer、頂点cache、stamp、triangle poolはworker別`WorkerScratch`に分離します。現在frameの最後のmesh・頂点保存領域・world/VPのbit・mode keyが完全一致する場合だけ、頂点結果とMVP/normal matrixを再利用します。Cache missでは新しいstampと変換行列を準備し、`BeginFrame`でcacheを無効化します。Keyと失敗時の復旧契約は[保守文書](MAINTENANCE.md)を参照してください。
 - Triangle poolはworker別の`concurrent_vector`を維持し、参照はflatな`tileReferences`へ記録します。`tileScatter`はtile別のcount/cursor、`touchedTileIds`は初期化するtileを保持します。Front-endのjoin後にactive worker一覧を固定し、prefix offsetでworker別の重ならない出力範囲を割り当てます。並列scatterで単一の最終pointer配列を埋め、join後に各tile spanで任意のsortとrasterizationを行います。Pixel所有権・primitive ID・重ならない書き込み範囲の規則は変えず、独自JobSystemも追加しません。標準の高速X-rayだけのsceneでは、flat tile参照・worker metadataの新規割り当てとdepth prepassを省きます。

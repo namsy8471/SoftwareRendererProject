@@ -5,7 +5,6 @@
 #include <cstdint>
 #include <span>
 #include <optional>
-#include <tbb/enumerable_thread_specific.h>
 #include "Math/SRMath.h"
 #include "Graphics/Mesh.h"
 #include "Graphics/ViewParams.h"
@@ -15,6 +14,7 @@
 #include "Renderer/RenderTarget.h"
 #include "Renderer/Rasterizer.h"
 #include "Utils/FixedCapacityVector.h"
+#include "Utils/Jobs.h"
 #include "Platform/Compiler.h"
 
 class RenderQueue;
@@ -51,8 +51,8 @@ class Renderer
     // 이번 프레임 모든 worker의 타일 참조 수. 0이면 타일 작업을 만들지 않는다.
     std::size_t m_tileReferenceCount = 0;
     // 타일 작업이 활성 worker들의 구간을 이어 붙이는 스레드별 작업 공간. capacity만 재사용한다.
-    tbb::enumerable_thread_specific<std::vector<TriangleRef *>> m_tileGather;
-    tbb::enumerable_thread_specific<TileBuffer> m_tileBuffers;
+    sr::jobs::PerWorker<std::vector<TriangleRef *>> m_tileGather;
+    sr::jobs::PerWorker<TileBuffer> m_tileBuffers;
     std::vector<RenderStats> m_tileStats;
     std::vector<std::uint64_t> m_commandTriangleBases;
     std::vector<unsigned int> m_fxaaSnapshot;
@@ -82,7 +82,7 @@ class Renderer
     std::vector<std::optional<Rasterizer::PreparedDebugLine>> m_preparedDebugLines;
     std::vector<DebugLineRows> m_debugLineRows;
     // 법선 선은 화면 중앙 몇 행에 몰린다. 행별 선 수로 band 경계를 정해 band 작업량을 맞춘다.
-    tbb::enumerable_thread_specific<std::vector<std::uint32_t>> m_debugLineRowCounts;
+    sr::jobs::PerWorker<std::vector<std::uint32_t>> m_debugLineRowCounts;
     std::vector<std::uint64_t> m_debugLineRowWeights;
 
     struct CommandCacheKey
@@ -154,7 +154,7 @@ class Renderer
         bool BeginCachedCommand(const MeshRenderCommand &, const SRMath::mat4 &viewProjection);
         void SortTileReferences();
     };
-    tbb::enumerable_thread_specific<WorkerScratch> m_workerScratch;
+    sr::jobs::PerWorker<WorkerScratch> m_workerScratch;
     // frontend join 뒤 고정한 비소유 목록. scatter는 각 worker의 cursor만
     // 독점 갱신하며, 이 단계에서 ETS나 삼각형 풀을 늘리지 않는다.
     std::vector<WorkerScratch *> m_activeTileWorkers;

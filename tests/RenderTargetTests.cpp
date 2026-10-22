@@ -17,8 +17,7 @@
 #include <string_view>
 #include <utility>
 #include <vector>
-#include <tbb/blocked_range.h>
-#include <tbb/parallel_for.h>
+#include "Utils/Jobs.h"
 
 namespace
 {
@@ -341,17 +340,17 @@ void lineRowBands()
             {
                 Image parallel;
                 std::vector<RenderStats> bandStats(static_cast<std::size_t>(bandCount));
-                tbb::parallel_for(tbb::blocked_range<int>{0, bandCount},
-                                  [&](const tbb::blocked_range<int> &range)
-                                  {
-                                      for (int band = range.begin(); band != range.end(); ++band)
+                sr::jobs::ParallelFor(0, bandCount,
+                                      [&](int first, int last)
                                       {
-                                          Rasterizer rasterizer(parallel.target, frame, &bandStats[band]);
-                                          rasterizer.BeginLineRows(height * band / bandCount,
-                                                                    height * (band + 1) / bandCount);
-                                          draw(rasterizer);
-                                      }
-                                  });
+                                          for (int band = first; band != last; ++band)
+                                          {
+                                              Rasterizer rasterizer(parallel.target, frame, &bandStats[band]);
+                                              rasterizer.BeginLineRows(height * band / bandCount,
+                                                                       height * (band + 1) / bandCount);
+                                              draw(rasterizer);
+                                          }
+                                      });
                 RenderStats merged;
                 for (const auto &stats : bandStats)
                     merged.MergeCounters(stats);
@@ -559,19 +558,20 @@ void preparedDebugLineRowBands()
                     Image actual;
                     std::vector<RenderStats> bandStats(static_cast<std::size_t>(bandCount));
                     // 준비 배열은 join까지 읽기 전용이며 각 worker는 원래 제출 순서를 보존한다.
-                    tbb::parallel_for(tbb::blocked_range<int>{0, bandCount},
-                                      [&](const tbb::blocked_range<int> &range)
-                                      {
-                                          for (int band = range.begin(); band != range.end(); ++band)
+                    sr::jobs::ParallelFor(0, bandCount,
+                                          [&](int first, int last)
                                           {
-                                              Rasterizer rasterizer(actual.target, frame,
-                                                                    instrumented ? &bandStats[band] : nullptr);
-                                              rasterizer.BeginLineRows(height * band / bandCount,
-                                                                        height * (band + 1) / bandCount);
-                                              for (const auto &line : prepared)
-                                                  rasterizer.DrawPreparedDebugLine(line, algorithm);
-                                          }
-                                      });
+                                              for (int band = first; band != last; ++band)
+                                              {
+                                                  Rasterizer rasterizer(actual.target, frame,
+                                                                        instrumented ? &bandStats[band]
+                                                                                     : nullptr);
+                                                  rasterizer.BeginLineRows(height * band / bandCount,
+                                                                           height * (band + 1) / bandCount);
+                                                  for (const auto &line : prepared)
+                                                      rasterizer.DrawPreparedDebugLine(line, algorithm);
+                                              }
+                                          });
                     RenderStats merged;
                     for (const auto &stats : bandStats)
                         merged.MergeCounters(stats);

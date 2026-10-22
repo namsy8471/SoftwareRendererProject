@@ -10,8 +10,7 @@
 
 #include <algorithm>
 #include <utility>
-#include <tbb/blocked_range.h>
-#include <tbb/parallel_for.h>
+#include "Utils/Jobs.h"
 
 void SceneRenderCollector::Collect(std::span<const std::shared_ptr<GameObject>> roots, const Frustum &frustum,
                                    const DebugFlags &flags, RenderQueue &queue)
@@ -57,12 +56,12 @@ void SceneRenderCollector::collectOwnMeshes(const GameObject &object, const Frus
             batch.normalLines = queue.AcquireDebugVertices();
     }
 
-    tbb::parallel_for(tbb::blocked_range<std::size_t>{0, meshCount},
-                      [&](const tbb::blocked_range<std::size_t> &range)
-                      {
-                          for (std::size_t i = range.begin(); i != range.end(); ++i)
-                              collectMeshCommands(object, meshes[i], frustum, flags, m_batches[i]);
-                      });
+    sr::jobs::ParallelFor(std::size_t{0}, meshCount,
+                          [&](std::size_t first, std::size_t last)
+                          {
+                              for (std::size_t i = first; i != last; ++i)
+                                  collectMeshCommands(object, meshes[i], frustum, flags, m_batches[i]);
+                          });
 
     for (std::size_t i = 0; i < meshCount; ++i)
         for (const auto &command : m_batches[i].commands)

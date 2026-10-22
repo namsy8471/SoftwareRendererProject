@@ -10,12 +10,12 @@
 #include "IO/BackgroundLoader.h"
 #include "Renderer/Renderer.h"
 #include "Renderer/RenderTarget.h"
+#include "Utils/Jobs.h"
 
 #include <algorithm>
 #include <chrono>
 #include <memory>
 #include <vector>
-#include <tbb/global_control.h>
 #include <utility>
 
 namespace sr::headless
@@ -62,10 +62,9 @@ std::expected<RunResult, std::string> Run(const RunConfig &config)
     if (config.backgroundLoadInterval < 0)
         return std::unexpected("invalid background load interval");
 
-    std::optional<tbb::global_control> threadLimit;
+    std::optional<sr::jobs::ConcurrencyLimit> threadLimit;
     if (config.threads > 0)
-        threadLimit.emplace(tbb::global_control::max_allowed_parallelism,
-                            static_cast<std::size_t>(config.threads));
+        threadLimit.emplace(static_cast<std::size_t>(config.threads));
 
     const auto describe = [](const AssetLoadError &error)
     {
@@ -224,8 +223,7 @@ std::expected<RunResult, std::string> Run(const RunConfig &config)
         if (animator->GetClip() >= 0)
             result.clipName = animator->GetClipName(static_cast<std::size_t>(animator->GetClip()));
     }
-    result.threads = static_cast<int>(
-        tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism));
+    result.threads = static_cast<int>(sr::jobs::MaxConcurrency());
     return result;
 }
 } // namespace sr::headless

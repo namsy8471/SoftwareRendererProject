@@ -1,6 +1,6 @@
 #include "IO/BackgroundLoader.h"
 
-#include <tbb/task_arena.h>
+#include "Utils/Jobs.h"
 
 #ifdef _WIN32
 #include "Platform/Win32Headers.h"
@@ -37,9 +37,9 @@ void BackgroundLoader::workerLoop(std::stop_token stop)
     // 렌더 worker와 코어를 다툴 때 OS가 프레임 쪽을 먼저 돌리게 한다.
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
 #endif
-    // 로더 내부의 parallel_for(예: ModelLoader의 공간 데이터 생성)가 렌더러의 전역 worker를
-    // 쓰지 않도록 이 스레드 하나만 쓰는 낮은 우선순위 arena에서 실행한다.
-    tbb::task_arena arena(1, 1, tbb::task_arena::priority::low);
+    // 로더 내부의 ParallelFor(예: ModelLoader의 공간 데이터 생성)가 렌더러의 전역 worker를
+    // 쓰지 않도록 이 스레드 하나에서만 실행한다.
+    sr::jobs::IsolatedRunner isolated;
 
     while (true)
     {
@@ -56,7 +56,7 @@ void BackgroundLoader::workerLoop(std::stop_token stop)
         Completion completion;
         try
         {
-            arena.execute([&] { completion = job(stop); });
+            isolated.Run([&] { completion = job(stop); });
         }
         catch (const std::exception &error)
         {

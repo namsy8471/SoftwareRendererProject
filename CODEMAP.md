@@ -152,6 +152,7 @@
 | --- | --- |
 | `AssetLoadError.h` | **AssetLoadError**: 메시지·경로·행 번호. 로더 공통 오류 타입 |
 | `FixedCapacityVector.h` | `sr::FixedCapacityVector`: `std::inplace_vector`가 없을 때 쓰는 고정 용량 버퍼 |
+| `Jobs.h` · `Jobs.cpp` | `sr::jobs`: 자체 스레드 풀과 병렬 작업 API(`ParallelFor` Adaptive/Fixed 분할, `PerWorker<T>` 스레드별 작업 공간, `ConcurrencyLimit`, `MaxConcurrency`, `IsolatedRunner`). 호출 측은 스케줄러를 직접 include하지 않는다 |
 | `ImageFile.h` · `ImageFile.cpp` | 골든·srcli용 이미지: `CopySurface`, `WritePng`/`ReadPng`, `HashPixels`(픽셀 해시), `Compare`(허용 오차 diff) |
 | `PerformanceAnalyzer.h` · `PerformanceAnalyzer.cpp` | **PerformanceAnalyzer**: Win32App의 프레임 delta time과 초당 평균 FPS |
 | `Utils.h` | `GetExecutableDirectory`, `MakeAssetPath`(실행 파일 옆 `assets/`) |
@@ -168,6 +169,7 @@
 | `ImageCodecTests.cpp` | `codecs.*`: 형식별 fixture 해시, 손상·상한, PNG 왕복 |
 | `GltfTests.cpp` | `gltf.*`: base64, wrap, 계층, 오류·견고성, 렌더 |
 | `AnimationTests.cpp` | `animation.*`: 쿼터니언, 샘플링, 스키닝(스칼라 = AVX), Animator, 장면 연결 |
+| `JobsTests.cpp` | `jobs.*`: `sr::jobs` 범위 분할(모든 항목 정확히 한 번), 예외 전달, 중첩·동시 호출, `ConcurrencyLimit`, `IsolatedRunner`, `PerWorker` |
 | `IOTests.cpp` | `io.*`: JSON 파싱·쓰기, 파일 함수, BackgroundLoader |
 | `ProjectTests.cpp` | `project.*`: 프로젝트/씬 JSON 왕복, 형식 오류, 생성·가져오기, ProjectSession |
 | `RendererCoreTests.cpp` | `renderer.*`: 클리핑, 작업자 격리, 명령 캐시, 타일 참조, 래스터 경로, Phong, FXAA |

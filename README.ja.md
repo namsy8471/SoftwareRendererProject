@@ -13,7 +13,7 @@
 <p>
   <img alt="C++26 Preview" src="https://img.shields.io/badge/C%2B%2B-26%20Preview-00599C?logo=cplusplus">
   <img alt="CPU Renderer" src="https://img.shields.io/badge/renderer-CPU-7B61FF">
-  <img alt="oneTBB" src="https://img.shields.io/badge/parallelism-oneTBB-FFC20A">
+  <img alt="sr::jobs" src="https://img.shields.io/badge/parallelism-in--house%20job%20system-FFC20A">
   <img alt="Windows" src="https://img.shields.io/badge/platform-Windows-0078D4?logo=windows">
 </p>
 
@@ -63,7 +63,7 @@ DirectX 11を使用する中で抽象的に感じていたレンダリングパ�
 |---|---|
 | レンダリング経路 | 頂点処理からピクセル出力までを**CPU上で直接実装** |
 | 比較画像上の性能 | **8 FPS → 58 FPS** |
-| 並列処理単位 | **16×16タイル** + oneTBBタスクスケジューリング |
+| 並列処理単位 | **16×16タイル** + 自前のJob System（`sr::jobs`） |
 | SIMD経路 | **128-bit SSE**を基本経路とし、実行時に**256-bit AVX**を選択 |
 | 空間高速化 | オブジェクトAABBのfrustum culling + octree node culling |
 | デバッグ機能 | Wireframe · Normal · AABB · Light Direction |
@@ -87,7 +87,7 @@ DirectX 11を使用する中で抽象的に感じていたレンダリングパ�
 ### システム設計と最適化
 
 - Render queueと16×16 tile binning
-- oneTBBによるcommand処理とtile rasterization
+- 自前のJob System（`sr::jobs`）によるcommand処理とtile rasterization
 - rendererごとの`WorkerScratch`にまとめたworker別clip buffer・triangle poolと、frame内限定の単一entry頂点・変換行列cache。完全一致するkeyだけ再利用し、詳細は[保守契約](MAINTENANCE.md)を参照
 - 独自数学ライブラリ`SRMath`のSSE演算
 - CPUID/XCR0確認後にSSE/AVX実装を選択するruntime dispatch
@@ -104,7 +104,7 @@ flowchart LR
     Scene["Scene<br/>Camera · GameObject · transforms"]
     Submit["Scene Submission<br/>AABB / Frustum / Octree · RenderQueue"]
     Frontend["Renderer Front End<br/>MVP · culling · clipping · 16×16 binning"]
-    Tiles["Rasterizer / oneTBB Tiles<br/>prepared triangles · depth · Phong"]
+    Tiles["Rasterizer / sr::jobs Tiles<br/>prepared triangles · depth · Phong"]
     Lines["Line Row Bands<br/>parallel wires / large normal batches · sequential overlays"]
     Post["Post Process<br/>optional FXAA"]
     Target["RenderTarget<br/>borrowed pixels · owned depth / IDs"]
@@ -123,7 +123,7 @@ flowchart LR
     Math -.-> Frontend
 ```
 
-シーンのコマンドはオブジェクト・mesh・octreeの安定した順序で収集します。Clip後の`PreparedTriangle`をworker別の`concurrent_vector` poolに一度作り、`(tileIndex, triangle*)`参照をworker別のflat配列へ記録します。Tile別のcount/cursorとtouched IDを持ち、front-endのjoin後に固定したactive worker一覧からprefix offsetと重ならない出力範囲を計算します。Worker別の並列scatterで単一pointer配列を埋め、join後に各tile spanを任意にsortして描画します。oneTBBとprimitive ID・pixel所有権の規則は維持します。標準の高速X-rayだけのsceneでは、flat tile参照・worker metadataの新規割り当てとdepth prepassを省きます。
+シーンのコマンドはオブジェクト・mesh・octreeの安定した順序で収集します。Clip後の`PreparedTriangle`をworker別の`concurrent_vector` poolに一度作り、`(tileIndex, triangle*)`参照をworker別のflat配列へ記録します。Tile別のcount/cursorとtouched IDを持ち、front-endのjoin後に固定したactive worker一覧からprefix offsetと重ならない出力範囲を計算します。Worker別の並列scatterで単一pointer配列を埋め、join後に各tile spanを任意にsortして描画します。並列実行は`sr::jobs`が担い、primitive ID・pixel所有権の規則は維持します。標準の高速X-rayだけのsceneでは、flat tile参照・worker metadataの新規割り当てとdepth prepassを省きます。
 
 Tile別vectorのcapacity累積ではなく、worker別flat参照と最終pointer配列のcapacityを再利用します。`binReferences`は論理参照を一度だけ数え、`retainedBinBytes`はflat/最終/wire/debug保存領域、count/cursor/offset、header、touched/active worker一覧を含みます。`binMs`はfront-end参照準備、`rasterMs`はprefix・scatter・sort・rasterizationの時間です。速度・memoryの比較は進行中であり、性能向上や最終採用を示すものではありません。
 
@@ -131,7 +131,7 @@ Tile別vectorのcapacity累積ではなく、worker別flat参照と最終pointer
 
 Wireframeの初期値は、隠れた線も表示する高速な**X-ray表示**です。`Hidden-line wireframe (depth prepass)`をONにした場合だけ、wire commandを含むframeで全ての面のdepth-only passを先行し、隠れた線を除きます。標準の混在modeではwire面がfill面を隠さず、prepassもありません。Normalのdepth policyは独立し、存在する面深度を判定します。Hidden wireがOFFならfill面の深度だけを使うため、純粋なX-ray wire sceneにはnormalを隠す面深度がありません。AABB/lightは深度を無視するoverlayで、全ての線pass後に任意でFXAAを適用します。
 
-Wire線はoneTBBの重ならないY行bandで並列処理します。約64行を基準に最大32 bandとし、front-end完了後のtriangle poolとdepth/primitive IDは読み取り専用です。`BeginLineRows`はpixelの書き込み範囲だけを制限し、band境界で端点をclipしたり線を再始動したりしないため、既存のBresenham/DDAのpixel規則を維持します。Wireのjoin後、DepthTested線が256本以上なら256本単位のchunkで変換・clippingを並列準備し、元の提出順を保つbinとY行bandで描画します。少数のnormalは既存の逐次経路を使い、overlayはnormalのjoin後に逐次実行します。
+Wire線は重ならないY行bandで並列処理します。約64行を基準に最大32 bandとし、front-end完了後のtriangle poolとdepth/primitive IDは読み取り専用です。`BeginLineRows`はpixelの書き込み範囲だけを制限し、band境界で端点をclipしたり線を再始動したりしないため、既存のBresenham/DDAのpixel規則を維持します。Wireのjoin後、DepthTested線が256本以上なら256本単位のchunkで変換・clippingを並列準備し、元の提出順を保つbinとY行bandで描画します。少数のnormalは既存の逐次経路を使い、overlayはnormalのjoin後に逐次実行します。
 
 タイル内front-to-back sortingと現フレームのタイル深度を使うHi-Zは独立した実験用メニューで、**両方とも初期値はOFF**です。未記録pixel、同一深度、数値的に不確実な境界は棄却しません。検査・要約更新のコストもあるため、遮蔽が多くても高速化を保証しません。任意のpass時間・counterと比較状況は[可視性変更記録](PERFORMANCE.md#renderer-visibility-2026)を参照してください。
 
@@ -149,7 +149,7 @@ Wire線はoneTBBの重ならないY行bandで並列処理します。約64行を
 | カメラ近傍のオブジェクト | 投影座標が画面とZ-bufferの範囲を超過 | Call stack分析、clipping、clamp |
 | 法線の欠落 | Teapotの一部faceにnormalがなくshadingが破綻 | Face normalを累積してsmooth normalを生成 |
 | MTL名 | コロンを含むmaterial keyのlookupに失敗 | 最後のコロン以降を用いるfallback lookup |
-| マルチスレッド | 単一スレッドのrasterizationと反復割り当てがボトルネック | Tile rendering、oneTBB、TLS cache/pool |
+| マルチスレッド | 単一スレッドのrasterizationと反復割り当てがボトルネック | Tile rendering、自前のJob System(`sr::jobs`)、TLS cache/pool |
 | 保守性 | 大きな関数と分散した状態で変更の影響を追いにくい | 責務別ファイル、WorkerScratch、回帰テスト |
 
 ### 1. C++標準への準拠とリソース寿命
@@ -218,7 +218,7 @@ Wire線はoneTBBの重ならないY行bandで並列処理します。約64行を
 
 **原因分析:** Rasterizationでは画面の異なる領域を独立して処理できますが、元の構造には安全に仕事を分割する単位がありませんでした。また、毎frame作られる一時containerはcapacityを繰り返し拡張し、割り当てコストを発生させていました。
 
-**解決:** 画面を16×16 tileに分割し、triangleのscreen-space AABBから影響を受けるtile binへ参照を登録しました。各tileはoneTBB taskとして並列処理し、vertex result、stamp、clip buffer、triangle poolはthread-local storageで再利用しました。`reserve()`、high-watermark cache、ping-pong bufferによって再割り当てを削減しました。
+**解決:** 画面を16×16 tileに分割し、triangleのscreen-space AABBから影響を受けるtile binへ参照を登録しました。各tileは`sr::jobs`のtaskとして並列処理し、vertex result、stamp、clip buffer、triangle poolはthread-local storageで再利用しました。`reserve()`、high-watermark cache、ping-pong bufferによって再割り当てを削減しました。
 
 **結果:** 開発中のある測定では、単一スレッド時の約5 FPSからマルチスレッド適用後の約60 FPSまで向上しました。2025-08-27に保存した比較画像では8 FPSから58 FPSへ向上しています。両者は測定時点と条件が異なる開発記録であり、標準化されたベンチマークではありません。
 
@@ -338,7 +338,7 @@ Benchmarkは60フレーム準備後に指定フレーム数を測定します。
 - `Desktop development with C++` workloadとWindows SDK
 - 最新C++標準と標準ライブラリmoduleのサポート
 
-oneTBB 2023.1.0は`src/ThirdParty`に含まれているため、別途packageをインストールする必要はありません。
+並列処理は自前のスレッドプール（`src/Utils/Jobs.*`）なので、packageのインストールやランタイムDLLは不要です。
 
 ### Visual Studio
 
@@ -347,7 +347,7 @@ oneTBB 2023.1.0は`src/ThirdParty`に含まれているため、別途packageを
 3. **Build > Build Solution**を実行します。
 4. `SoftrendererProject`をスタートアッププロジェクトに設定し、**Debug > Start Without Debugging**で起動します。`RendererTests`は別のコンソールテスト実行ファイルです。
 
-対応構成は`Debug|x64`、`Release|x64`、`Debug|Win32`、`Release|Win32`です。ビルド後、`assets`と対象architectureの`tbb12_debug.dll`（Debug）または`tbb12.dll`（Release）がoutput directoryへ自動的にコピーされます。
+対応構成は`Debug|x64`、`Release|x64`、`Debug|Win32`、`Release|Win32`です。ビルド後、`assets`がoutput directoryへ自動的にコピーされます。
 
 ### コマンドライン
 
@@ -391,7 +391,6 @@ SoftwareRendererProject/
 │  ├─ Platform/           # Win32 boundary headerとGDI back buffer RAII
 │  ├─ Renderer/           # RenderQueue、clipping、tile rasterizer、FXAA
 │  ├─ Scene/              # CameraとGameObject
-│  ├─ ThirdParty/         # oneTBB
 │  └─ Utils/              # Error type、fixed-capacity storage、timing
 ├─ ARCHITECTURE.md
 ├─ CLAUDE.md              # AI作業向け要約(コマンド、規則、性能基準)
@@ -420,4 +419,3 @@ SoftwareRendererProject/
 
 ## 外部ライブラリ
 
-- [oneTBB 2023.1.0](https://github.com/uxlfoundation/oneTBB): task-based parallelism

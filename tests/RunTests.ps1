@@ -51,8 +51,6 @@ try {
             }
             Write-Output "BUILD OK: $platform $configuration"
             $output = Join-Path $PSScriptRoot "bin/$platform/$configuration"
-            $dll = if ($configuration -eq 'Debug') { 'tbb12_debug.dll' } else { 'tbb12.dll' }
-            if (-not (Test-Path (Join-Path $output $dll))) { throw "Missing $dll" }
             $testArguments = @($projectRoot)
             if ($Filter) { $testArguments += @('--filter', $Filter) }
             if ($UpdateGolden) { $testArguments += '--update-golden' }

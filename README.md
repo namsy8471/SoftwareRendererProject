@@ -13,7 +13,7 @@
 <p>
   <img alt="C++26 Preview" src="https://img.shields.io/badge/C%2B%2B-26%20Preview-00599C?logo=cplusplus">
   <img alt="CPU Renderer" src="https://img.shields.io/badge/renderer-CPU-7B61FF">
-  <img alt="oneTBB" src="https://img.shields.io/badge/parallelism-oneTBB-FFC20A">
+  <img alt="sr::jobs" src="https://img.shields.io/badge/parallelism-in--house%20job%20system-FFC20A">
   <img alt="Windows" src="https://img.shields.io/badge/platform-Windows-0078D4?logo=windows">
 </p>
 
@@ -63,7 +63,7 @@ DirectX 11을 사용하며 부족하다고 느꼈던 렌더링 파이프라인�
 |---|---|
 | 렌더링 경로 | 정점 처리부터 픽셀 출력까지 **CPU에서 직접 구현** |
 | 성능 비교 이미지 | **8 FPS → 58 FPS** |
-| 병렬 처리 단위 | **16×16 tile** + oneTBB task scheduling |
+| 병렬 처리 단위 | **16×16 tile** + 자체 Job System(`sr::jobs`) 작업 분배 |
 | SIMD 경로 | **128-bit SSE** 기본 경로 + 런타임 **256-bit AVX** 선택 |
 | 공간 가속 | Object AABB frustum culling + octree node culling |
 | 디버그 도구 | Wireframe · Normal · AABB · Light Direction |
@@ -87,7 +87,7 @@ DirectX 11을 사용하며 부족하다고 느꼈던 렌더링 파이프라인�
 ### 시스템·최적화
 
 - Render queue와 16×16 tile binning
-- oneTBB 기반 command 처리와 tile rasterization
+- 자체 Job System(`sr::jobs`) 기반 command 처리와 tile rasterization
 - renderer별 `WorkerScratch`에 모은 worker별 clip buffer·triangle pool과 프레임 한정 단일 키 정점·변환 행렬 캐시: 정확히 같은 키의 명령만 재사용하며 상세 계약은 [유지보수 문서](MAINTENANCE.md)에 설명
 - 자체 수학 라이브러리 `SRMath`의 SSE 연산
 - CPUID/XCR0 검사 후 SSE/AVX 구현을 선택하는 runtime dispatch
@@ -104,7 +104,7 @@ flowchart LR
     Scene["Scene<br/>Camera · GameObject · transforms"]
     Submit["Scene Submission<br/>AABB / Frustum / Octree · RenderQueue"]
     Frontend["Renderer Front End<br/>MVP · culling · clipping · 16×16 binning"]
-    Tiles["Rasterizer / oneTBB Tiles<br/>prepared triangles · depth · Phong"]
+    Tiles["Rasterizer / sr::jobs Tiles<br/>prepared triangles · depth · Phong"]
     Lines["Line Row Bands<br/>parallel wires / large normal batches · sequential overlays"]
     Post["Post Process<br/>optional FXAA"]
     Target["RenderTarget<br/>borrowed pixels · owned depth / IDs"]
@@ -123,7 +123,7 @@ flowchart LR
     Math -.-> Frontend
 ```
 
-렌더 명령은 안정된 객체·메시·옥트리 순서로 수집됩니다. 클리핑된 `PreparedTriangle`은 worker별 `concurrent_vector` 풀에 한 번 만들고, `(tileIndex, triangle*)` 참조는 worker별 flat 배열에 기록합니다. 타일별 count/cursor와 touched ID를 두고, front-end join 뒤 고정한 활성 worker 목록에서 prefix offset과 서로 겹치지 않는 목적 구간을 계산합니다. Worker별 병렬 scatter가 단일 포인터 배열을 채우고 join한 뒤, 각 타일 span을 선택적으로 정렬하고 래스터화합니다. oneTBB를 그대로 사용하며 primitive ID와 픽셀 소유권 규칙은 바뀌지 않습니다. 기본 빠른 X-ray만 있는 장면은 flat 타일 참조·worker 메타데이터의 신규 할당과 depth prepass를 건너뜁니다.
+렌더 명령은 안정된 객체·메시·옥트리 순서로 수집됩니다. 클리핑된 `PreparedTriangle`은 worker별 `concurrent_vector` 풀에 한 번 만들고, `(tileIndex, triangle*)` 참조는 worker별 flat 배열에 기록합니다. 타일별 count/cursor와 touched ID를 두고, front-end join 뒤 고정한 활성 worker 목록에서 prefix offset과 서로 겹치지 않는 목적 구간을 계산합니다. Worker별 병렬 scatter가 단일 포인터 배열을 채우고 join한 뒤, 각 타일 span을 선택적으로 정렬하고 래스터화합니다. 병렬 실행은 `sr::jobs`가 맡으며 primitive ID와 픽셀 소유권 규칙은 바뀌지 않습니다. 기본 빠른 X-ray만 있는 장면은 flat 타일 참조·worker 메타데이터의 신규 할당과 depth prepass를 건너뜁니다.
 
 타일별 vector의 누적 capacity 대신 worker별 flat 참조와 최종 포인터 배열의 capacity를 재사용합니다. `binReferences`는 논리 참조를 한 번만 세고, `retainedBinBytes`는 flat/최종/wire/debug 저장소와 count/cursor/offset, 헤더, touched/활성 worker 목록을 포함합니다. `binMs`는 front-end 참조 준비, `rasterMs`는 prefix·scatter·정렬·래스터화 시간입니다. 이 구조의 속도·메모리 비교는 진행 중이며 성능 향상이나 최종 채택을 뜻하지 않습니다.
 
@@ -131,7 +131,7 @@ flowchart LR
 
 와이어프레임의 기본값은 가려진 선도 보여주는 빠른 **X-ray 표시**입니다. `Hidden-line wireframe (depth prepass)`를 켠 경우에만 와이어가 포함된 프레임에서 모든 면의 depth-only 패스를 먼저 실행하고 와이어의 숨은 선을 제거합니다. 기본 혼합 모드에서는 와이어 면이 채움 면을 가리지 않으며 prepass도 없습니다. 법선의 깊이 정책은 독립적입니다. 항상 존재하는 면 깊이를 검사하되, 옵션 OFF에서는 채움 면이 기록한 깊이만 사용하므로 순수 X-ray 와이어 장면에는 법선을 가릴 면 깊이가 없습니다. AABB·광원은 깊이를 무시하는 설명용 오버레이이며, 모든 선 패스 뒤에 선택적으로 FXAA를 적용합니다.
 
-와이어 선은 oneTBB의 서로 겹치지 않는 Y행 band로 병렬 처리합니다. band 수는 약 64행 단위를 기준으로 최대 32개이며, front-end가 완성한 삼각형 풀과 깊이·primitive ID는 읽기 전용입니다. `BeginLineRows`는 픽셀 쓰기 범위만 제한하고 선을 band 경계로 자르거나 새 끝점에서 재시작하지 않아 Bresenham/DDA의 기존 픽셀 규칙을 유지합니다. 와이어 join 뒤 DepthTested 선이 256개 이상이면 256개 선 단위 chunk로 변환·클리핑을 병렬 준비하고, 원본 제출 순서를 보존하는 bin과 Y행 band로 그립니다. 더 적은 법선은 기존 순차 경로를 사용하며, 오버레이는 법선 작업 join 뒤 순차 처리합니다.
+와이어 선은 서로 겹치지 않는 Y행 band로 병렬 처리합니다. band 수는 약 64행 단위를 기준으로 최대 32개이며, front-end가 완성한 삼각형 풀과 깊이·primitive ID는 읽기 전용입니다. `BeginLineRows`는 픽셀 쓰기 범위만 제한하고 선을 band 경계로 자르거나 새 끝점에서 재시작하지 않아 Bresenham/DDA의 기존 픽셀 규칙을 유지합니다. 와이어 join 뒤 DepthTested 선이 256개 이상이면 256개 선 단위 chunk로 변환·클리핑을 병렬 준비하고, 원본 제출 순서를 보존하는 bin과 Y행 band로 그립니다. 더 적은 법선은 기존 순차 경로를 사용하며, 오버레이는 법선 작업 join 뒤 순차 처리합니다.
 
 타일 내부 front-to-back 정렬과 현재 프레임 타일 깊이를 이용하는 Hi-Z는 메뉴에서 선택하는 실험 옵션이며 **둘 다 기본 꺼짐**입니다. 미기록 픽셀·동일 깊이·수치적으로 불확실한 경우는 Hi-Z로 기각하지 않습니다. 검사와 요약 갱신 비용도 있으므로 가림이 많다는 이유만으로 성능 향상을 보장하지 않습니다. 선택적 패스 시간·카운터와 최신 비교 상태는 [가시성 변경 기록](PERFORMANCE.md#renderer-visibility-2026)을 참고하세요.
 
@@ -149,7 +149,7 @@ flowchart LR
 | 근접 객체 | 투영 좌표가 화면·Z-buffer 범위를 벗어남 | 호출 스택 분석, clipping과 clamp |
 | 누락 법선 | Teapot 일부 face에서 normal이 없어 shading 오류 | face normal 누적 후 smooth normal 생성 |
 | MTL 이름 | 콜론이 포함된 material key lookup 실패 | 마지막 콜론 뒤 이름으로 fallback lookup |
-| 멀티스레딩 | 단일 스레드 rasterization과 반복 할당이 병목 | tile rendering, TBB, TLS cache/pool |
+| 멀티스레딩 | 단일 스레드 rasterization과 반복 할당이 병목 | tile rendering, 자체 Job System(`sr::jobs`), TLS cache/pool |
 | 유지보수 | 큰 함수와 분산된 상태로 변경 영향 추적이 어려움 | 책임별 파일, WorkerScratch, 자동 회귀 테스트 |
 
 ### 1. C++ 표준 준수와 자원 수명
@@ -218,7 +218,7 @@ flowchart LR
 
 **원인 분석:** rasterization은 화면의 서로 다른 영역을 독립적으로 처리할 수 있지만 기존 구조에는 안전한 작업 분할 단위가 없었습니다. 또한 매 frame 생성되는 임시 container가 capacity를 반복 확장하며 할당 비용을 만들었습니다.
 
-**해결:** 화면을 16×16 tile로 나누고, triangle의 screen-space AABB를 이용해 영향을 받는 tile bin에 참조를 등록했습니다. 각 tile은 oneTBB task로 병렬 처리하고, vertex result·stamp·clip buffer·triangle pool은 thread-local storage에서 재사용했습니다. `reserve()`, high-watermark cache와 ping-pong buffer로 재할당을 줄였습니다.
+**해결:** 화면을 16×16 tile로 나누고, triangle의 screen-space AABB를 이용해 영향을 받는 tile bin에 참조를 등록했습니다. 각 tile은 `sr::jobs` 작업으로 병렬 처리하고, vertex result·stamp·clip buffer·triangle pool은 thread-local storage에서 재사용했습니다. `reserve()`, high-watermark cache와 ping-pong buffer로 재할당을 줄였습니다.
 
 **결과:** 개발 당시 단일 스레드 약 5 FPS에서 멀티스레드 약 60 FPS까지 향상된 측정이 있었고, 2025-08-27에 남긴 비교 이미지에서는 8 FPS에서 58 FPS로 향상됐습니다. 두 수치는 측정 시점과 조건이 다른 개발 기록이며 표준화된 벤치마크는 아닙니다.
 
@@ -338,7 +338,7 @@ flowchart LR
 - `Desktop development with C++` workload와 Windows SDK
 - 최신 C++ 표준과 표준 라이브러리 module 지원
 
-oneTBB 2023.1.0은 `src/ThirdParty`에 포함돼 있어 별도 package 설치가 필요하지 않습니다.
+병렬 작업은 자체 스레드 풀(`src/Utils/Jobs.*`)이라 별도 package 설치나 런타임 DLL이 필요하지 않습니다.
 
 ### Visual Studio
 
@@ -347,7 +347,7 @@ oneTBB 2023.1.0은 `src/ThirdParty`에 포함돼 있어 별도 package 설치가
 3. **Build > Build Solution**을 실행합니다.
 4. `SoftrendererProject`를 시작 프로젝트로 지정하고 **Debug > Start Without Debugging**으로 실행합니다. `RendererTests`는 별도의 콘솔 테스트 실행 파일입니다.
 
-지원 구성은 `Debug|x64`, `Release|x64`, `Debug|Win32`, `Release|Win32`입니다. 빌드 후 `assets`와 해당 architecture의 `tbb12_debug.dll`(Debug) 또는 `tbb12.dll`(Release)이 출력 directory로 자동 복사됩니다.
+지원 구성은 `Debug|x64`, `Release|x64`, `Debug|Win32`, `Release|Win32`입니다. 빌드 후 `assets`가 출력 directory로 자동 복사됩니다.
 
 ### 명령줄
 
@@ -391,7 +391,6 @@ SoftwareRendererProject/
 │  ├─ Platform/           # Win32 boundary header와 GDI 백버퍼 RAII
 │  ├─ Renderer/           # RenderQueue, clipping, tile rasterizer, FXAA
 │  ├─ Scene/              # Camera와 GameObject
-│  ├─ ThirdParty/         # oneTBB
 │  └─ Utils/              # error type, fixed-capacity storage, timing
 ├─ ARCHITECTURE.md
 ├─ CLAUDE.md              # AI 작업용 요약(명령, 규칙, 성능 기준)
@@ -420,4 +419,3 @@ SoftwareRendererProject/
 
 ## 외부 라이브러리
 
-- [oneTBB 2023.1.0](https://github.com/uxlfoundation/oneTBB): task-based parallelism

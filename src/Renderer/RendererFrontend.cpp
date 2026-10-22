@@ -6,9 +6,8 @@
 #include <cmath>
 #include <limits>
 #include <stdexcept>
-#include <tbb/parallel_for.h>
 #include <xmmintrin.h>
-#include <tbb/blocked_range.h>
+#include "Utils/Jobs.h"
 
 Renderer::WorkerScratch::WorkerScratch()
 {
@@ -147,15 +146,14 @@ void Renderer::binCommands(const RenderQueue &queue, const FrameContext &frame)
         m_commandTriangleBases[index] = triangleCount;
         triangleCount += static_cast<std::uint64_t>(count);
     }
-    tbb::parallel_for(
-        tbb::blocked_range<std::size_t>(0, commands.size()),
-        [&](const tbb::blocked_range<std::size_t> &range)
-        {
-            auto &scratch = m_workerScratch.local();
-            for (auto index = range.begin(); index != range.end(); ++index)
-                processCommand(commands[index], frame, scratch, m_commandTriangleBases[index]);
-        },
-        tbb::simple_partitioner());
+    sr::jobs::ParallelFor<sr::jobs::Split::Fixed>(std::size_t{0}, commands.size(), std::size_t{1},
+                                                  [&](std::size_t first, std::size_t last)
+                                                  {
+                                                      auto &scratch = m_workerScratch.Local();
+                                                      for (auto index = first; index != last; ++index)
+                                                          processCommand(commands[index], frame, scratch,
+                                                                         m_commandTriangleBases[index]);
+                                                  });
     collectActiveTileWorkers();
 }
 

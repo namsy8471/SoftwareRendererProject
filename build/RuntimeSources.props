@@ -20,6 +20,7 @@
     <ClCompile Include="src\Scene\GameObject.cpp" />
     <ClCompile Include="src\Scene\Scene.cpp" />
     <ClCompile Include="src\Utils\PerformanceAnalyzer.cpp" />
+    <ClCompile Include="src\Utils\Jobs.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="SoftrendererProject.h" />
@@ -49,6 +50,7 @@
     <ClInclude Include="src\Graphics\ViewParams.h" />
     <ClInclude Include="src\Utils\AssetLoadError.h" />
     <ClInclude Include="src\Utils\FixedCapacityVector.h" />
+    <ClInclude Include="src\Utils\Jobs.h" />
     <ClInclude Include="src\Utils\PerformanceAnalyzer.h" />
     <ClInclude Include="src\Utils\Utils.h" />
     <ClInclude Include="targetver.h" />

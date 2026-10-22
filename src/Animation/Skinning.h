@@ -44,7 +44,8 @@ void SkinVerticesAVX(std::span<const Vertex> in, std::span<const SkinInfluence> 
                      std::span<const SRMath::mat4> jointMatrices, std::span<Vertex> out, AABB &bounds) noexcept;
 } // namespace detail
 
-// AVX가 있으면 AVX 구현, 아니면 스칼라. 정점이 많으면 oneTBB로 나눠 병렬 처리한다. 결과는 병렬 여부와 무관하게 같다.
+// AVX가 있으면 AVX 구현, 아니면 스칼라. 정점이 많으면 sr::jobs로 나눠 병렬 처리한다. 결과는 병렬 여부와
+// 무관하게 같다.
 void SkinVertices(std::span<const Vertex> in, std::span<const SkinInfluence> influences,
                   std::span<const SRMath::mat4> jointMatrices, std::span<Vertex> out, AABB &bounds);
 
