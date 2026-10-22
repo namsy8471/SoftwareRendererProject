@@ -30,10 +30,8 @@ void Renderer::ensureViewport(int width, int height)
     const auto tileCount = tilesX * tilesY;
     if (tileCount == std::numeric_limits<std::size_t>::max())
         throw std::length_error("Viewport tile offset count exceeded");
-    // 두 할당 성공 후 viewport를 교체한다. offset의 마지막 원소는 전체 참조 수다.
-    std::vector<std::size_t> offsets(tileCount + 1);
+    // 할당 성공 후 viewport를 교체한다.
     std::vector<RenderStats> stats(tileCount);
-    m_tileOffsets.swap(offsets);
     m_tileStats.swap(stats);
     m_width = width;
     m_height = height;
@@ -125,47 +123,53 @@ void Renderer::renderScene(RenderTarget &target, const RenderQueue &queue, const
 
 void Renderer::prepareTileReferences()
 {
-    m_tileReferences.clear();
+    // 예전에는 main thread가 8160타일 x worker 수(1080p, 24스레드면 약 20만 번)를 혼자 돌며 전역 prefix를
+    // 만들고 전역 배열을 0으로 resize한 뒤 scatter했다. PC 24스레드에서 이 직렬 구간이 프레임마다 약 0.26ms였고
+    // 그동안 나머지 스레드는 놀았다. 이제 worker마다 자기 참조만 자기 배열에 타일별로 모은다(worker끼리 독립).
+    // 타일 작업은 활성 worker 순서대로 각 worker의 구간을 이어 붙이므로 타일 안 순서는 예전 전역 배열과 같다.
+    m_tileReferenceCount = 0;
     if (m_activeTileWorkers.empty())
-    {
-        // fill→X-ray 또는 빈 프레임 전환에서도 이전 offset/참조가 남지 않는다.
-        std::ranges::fill(m_tileOffsets, 0);
         return;
-    }
-
-    // 타일 순서의 prefix 안에 worker 순서대로 서로 겹치지 않는 목적 구간을
-    // 배정한다. 기존 private-bin 병합과 같은 worker별 삽입 순서를 보존한다.
-    std::size_t total = 0;
-    for (std::size_t tile = 0; tile < m_tileStats.size(); ++tile)
-    {
-        m_tileOffsets[tile] = total;
-        for (auto *worker : m_activeTileWorkers)
-        {
-            auto &state = worker->tileScatter[tile];
-            if (state.count > m_tileReferences.max_size() - total)
-                throw std::length_error("Tile reference prefix capacity exceeded");
-            state.cursor = total;
-            total += state.count;
-        }
-    }
-    m_tileOffsets.back() = total;
-    // vector 용량을 프레임 간 재사용한다. 실패하면 scatter/래스터는 시작하지 않으며
-    // 다음 prepareFrame이 private count/참조를 초기화한다.
-    m_tileReferences.resize(total);
-
-    // 각 작업은 한 worker의 cursor와 사전 배정된 목적 슬롯만 쓴다. 모든 count는
-    // frontend push 성공 후 증가했으므로 매 참조가 정확히 한 슬롯을 채운다.
     tbb::parallel_for(tbb::blocked_range<std::size_t>(0, m_activeTileWorkers.size(), 1),
                       [&](const tbb::blocked_range<std::size_t> &range)
                       {
                           for (auto index = range.begin(); index != range.end(); ++index)
-                          {
-                              auto &worker = *m_activeTileWorkers[index];
-                              for (const auto &reference : worker.tileReferences)
-                                  m_tileReferences[worker.tileScatter[reference.tileIndex].cursor++] =
-                                      reference.triangle;
-                          }
+                              m_activeTileWorkers[index]->SortTileReferences();
                       });
+    for (const auto *worker : m_activeTileWorkers)
+        m_tileReferenceCount += worker->sortedTileReferences.size();
+}
+
+void Renderer::WorkerScratch::SortTileReferences()
+{
+    // 타일 구간은 touched 순서로 배정한다. 타일 작업은 (시작, 개수)만 읽으므로 타일 번호 순일 필요가 없다.
+    sortedTileReferences.clear();
+    std::size_t total = 0;
+    for (const auto tile : touchedTileIds)
+    {
+        auto &state = tileScatter[tile];
+        if (state.count > sortedTileReferences.max_size() - total)
+            throw std::length_error("Tile reference prefix capacity exceeded");
+        state.cursor = total;
+        total += state.count;
+    }
+    // 실패하면 이번 프레임은 래스터를 시작하지 않고 다음 BeginFrame이 count를 초기화한다.
+    sortedTileReferences.resize(total);
+    // frontend가 push 성공 뒤에만 count를 늘렸으므로 모든 슬롯이 정확히 한 번 채워진다.
+    // 끝나면 cursor는 구간의 끝이고 시작은 cursor - count다.
+    for (const auto &reference : tileReferences)
+        sortedTileReferences[tileScatter[reference.tileIndex].cursor++] = reference.triangle;
+}
+
+void Renderer::gatherTileReferences(std::size_t tile, std::vector<TriangleRef *> &bin) const
+{
+    bin.clear();
+    for (const auto *worker : m_activeTileWorkers)
+    {
+        const auto &state = worker->tileScatter[tile];
+        const auto *end = worker->sortedTileReferences.data() + state.cursor;
+        bin.insert(bin.end(), end - state.count, end);
+    }
 }
 
 void Renderer::renderTiles(RenderTarget &target, const FrameContext &frame, bool needsDepthPrepass,
@@ -173,7 +177,7 @@ void Renderer::renderTiles(RenderTarget &target, const FrameContext &frame, bool
 {
     // scatter join 뒤에만 각 타일의 span을 정렬/래스터한다.
     prepareTileReferences();
-    if (m_tileReferences.empty())
+    if (m_tileReferenceCount == 0)
     {
         // 빈 X-ray 프레임에는 타일 작업을 만들지 않되 이전 통계는 지운다.
         std::ranges::fill(m_tileStats, RenderStats{});
@@ -181,15 +185,19 @@ void Renderer::renderTiles(RenderTarget &target, const FrameContext &frame, bool
             target.Clear();
         return;
     }
+    // auto_partitioner는 1080p 8160타일을 스레드 수에 맞춰 크게 나눈 뒤 훔칠 때만 쪼갠다. IronMan이 걸친
+    // 중앙 타일은 다른 타일의 수십 배라 큰 조각 하나가 끝을 늦췄다(PC 24스레드 타일 단계 사용률 76%).
+    // 4타일씩 고정해 처음부터 잘게 나눈다. 타일은 서로 독립이라 결과는 같다.
+    constexpr std::size_t tilesPerTask = 4;
     tbb::parallel_for(
-        tbb::blocked_range<std::size_t>(0, m_tileStats.size()),
+        tbb::blocked_range<std::size_t>(0, m_tileStats.size(), tilesPerTask),
         [&](const tbb::blocked_range<std::size_t> &range)
         {
+            auto &gathered = m_tileGather.local();
             for (auto index = range.begin(); index != range.end(); ++index)
             {
-                auto bin =
-                    std::span<TriangleRef *>(m_tileReferences)
-                        .subspan(m_tileOffsets[index], m_tileOffsets[index + 1] - m_tileOffsets[index]);
+                gatherTileReferences(index, gathered);
+                auto bin = std::span<TriangleRef *>(gathered);
                 auto &stats = m_tileStats[index];
                 stats = {};
                 const int x = static_cast<int>(index % frame.tilesX) * tileSize;
@@ -224,7 +232,8 @@ void Renderer::renderTiles(RenderTarget &target, const FrameContext &frame, bool
                         if (triangle->sourceCommand->rasterizeMode == ERasterizeMode::Fill)
                             rasterizer.DrawTriangle(*triangle, RasterPass::Shaded);
             }
-        });
+        },
+        tbb::simple_partitioner());
 }
 
 void Renderer::renderLines(RenderTarget &target, const RenderQueue &queue, const FrameContext &frame)
@@ -282,15 +291,15 @@ void Renderer::updateRetainedBinBytes()
 {
     // capacity 기반 저장소 계측이다. allocator의 내부 오버헤드/RSS는 포함하지
     // 않지만 private 참조/최종 포인터, count/cursor/offset, 헤더/목록은 모두 센다.
-    std::uint64_t bytes = sizeof(m_tileReferences) + m_tileReferences.capacity() * sizeof(TriangleRef *) +
-                          sizeof(m_tileOffsets) + m_tileOffsets.capacity() * sizeof(std::size_t) +
-                          sizeof(m_activeTileWorkers) +
+    std::uint64_t bytes = sizeof(m_activeTileWorkers) +
                           m_activeTileWorkers.capacity() * sizeof(WorkerScratch *);
     for (const auto &scratch : m_workerScratch)
     {
         // 쉬고 있는 과거 worker의 보유 용량도 실제 메모리이므로 빠뜨리지 않는다.
         bytes += sizeof(scratch.tileReferences) + scratch.tileReferences.capacity() * sizeof(TileReference) +
                  sizeof(scratch.tileScatter) + scratch.tileScatter.capacity() * sizeof(TileScatterState) +
+                 sizeof(scratch.sortedTileReferences) +
+                 scratch.sortedTileReferences.capacity() * sizeof(TriangleRef *) +
                  sizeof(scratch.touchedTileIds) + scratch.touchedTileIds.capacity() * sizeof(std::size_t) +
                  sizeof(scratch.wireBins);
         for (const auto &bin : scratch.wireBins)
@@ -300,6 +309,8 @@ void Renderer::updateRetainedBinBytes()
              m_debugLineRowWeights.capacity() * sizeof(std::uint64_t);
     for (const auto &counts : m_debugLineRowCounts)
         bytes += counts.capacity() * sizeof(std::uint32_t);
+    for (const auto &gathered : m_tileGather)
+        bytes += gathered.capacity() * sizeof(TriangleRef *);
     m_stats.retainedBinBytes = bytes;
 }
 

@@ -48,10 +48,10 @@ class Renderer
         std::size_t count = 0;
         std::size_t cursor = 0;
     };
-    // 모든 타일의 참조를 한 저장소에 모은다. offsets의 인접 두 값이 한 타일의
-    // 반개구간이며, 타일마다 남는 과거 capacity를 누적하지 않는다.
-    std::vector<TriangleRef *> m_tileReferences;
-    std::vector<std::size_t> m_tileOffsets;
+    // 이번 프레임 모든 worker의 타일 참조 수. 0이면 타일 작업을 만들지 않는다.
+    std::size_t m_tileReferenceCount = 0;
+    // 타일 작업이 활성 worker들의 구간을 이어 붙이는 스레드별 작업 공간. capacity만 재사용한다.
+    tbb::enumerable_thread_specific<std::vector<TriangleRef *>> m_tileGather;
     std::vector<RenderStats> m_tileStats;
     std::vector<std::uint64_t> m_commandTriangleBases;
     std::vector<unsigned int> m_fxaaSnapshot;
@@ -104,6 +104,8 @@ class Renderer
         // touched 목록으로 초기화한다. 순수 X-ray에는 이 메타데이터도 만들지 않는다.
         std::vector<TileReference> tileReferences;
         std::vector<TileScatterState> tileScatter;
+        // tileReferences를 타일별로 모은 사본. 한 타일의 구간은 [cursor - count, cursor)다.
+        std::vector<TriangleRef *> sortedTileReferences;
         std::vector<std::size_t> touchedTileIds;
         ClipBuffer clipInput, clipOutput, clippedVertices;
         // 정점 하나는 평균 여섯 삼각형이 공유한다. 정점 셰이딩과 clip 검사, NDC, 화면 정점(1/w, 원근 보정
@@ -149,6 +151,7 @@ class Renderer
             return tag.stamp == commandStamp && tag.index == index;
         }
         bool BeginCachedCommand(const MeshRenderCommand &, const SRMath::mat4 &viewProjection);
+        void SortTileReferences();
     };
     tbb::enumerable_thread_specific<WorkerScratch> m_workerScratch;
     // frontend join 뒤 고정한 비소유 목록. scatter는 각 worker의 cursor만
@@ -161,6 +164,7 @@ class Renderer
     void binCommands(const RenderQueue &, const FrameContext &);
     void collectActiveTileWorkers();
     void prepareTileReferences();
+    void gatherTileReferences(std::size_t tile, std::vector<TriangleRef *> &bin) const;
     void updateRetainedBinBytes();
     void processCommand(const MeshRenderCommand &, const FrameContext &, WorkerScratch &,
                         std::uint64_t triangleBase);
