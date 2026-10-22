@@ -7,6 +7,8 @@
 #include <chrono>
 #include <limits>
 #include <stdexcept>
+#include <thread>
+#include <immintrin.h>
 #include "Utils/Jobs.h"
 
 namespace
@@ -92,12 +94,18 @@ void Renderer::renderScene(RenderTarget &target, const RenderQueue &queue, const
             m_stats.binReferences += scratch.tileReferences.size();
         }
     }
-    const bool needsDepthPrepass =
-        m_options.hiddenWireframe &&
+    const bool hasWireframe =
         std::ranges::any_of(queue.GetRenderCommands(), [](const auto &command)
                             { return command.rasterizeMode == ERasterizeMode::Wireframe; });
+    const bool needsDepthPrepass = m_options.hiddenWireframe && hasWireframe;
     stage = FrameClock::now();
-    renderTiles(target, frame, needsDepthPrepass, clearTarget);
+    // 법선 선 band는 자기 행의 타일만 끝나면 그릴 수 있다. 타일 작업이 끝나기를 다 기다리지 않고 같은 작업에서
+    // 이어 그린다. 와이어 band가 먼저 그려야 하는 프레임(와이어 + 법선)은 순서를 지키려고 따로 그린다.
+    m_debugLinesDrawn = false;
+    if (m_debugLinePlan == DebugLinePlan::Parallel)
+        computeDebugLineBands();
+    renderTiles(target, frame, needsDepthPrepass, clearTarget,
+                m_debugLinePlan == DebugLinePlan::Parallel && !hasWireframe);
     if (m_options.collectStats)
     {
         m_stats.rasterMs = elapsedMilliseconds(stage);
@@ -131,15 +139,19 @@ void Renderer::prepareTileReferences()
     // 만들고 전역 배열을 0으로 resize한 뒤 scatter했다. PC 24스레드에서 이 직렬 구간이 프레임마다 약 0.26ms였고
     // 그동안 나머지 스레드는 놀았다. 이제 worker마다 자기 참조만 자기 배열에 타일별로 모은다(worker끼리 독립).
     // 타일 작업은 활성 worker 순서대로 각 worker의 구간을 이어 붙이므로 타일 안 순서는 예전 전역 배열과 같다.
+    // 프레임 경로에서는 binCommands가 각 스레드의 분류 끝에 이미 정렬했다. 여기서는 그 뒤에 참조가 더해진
+    // worker(테스트처럼 binCommands 밖에서 채운 경우)만 정렬하므로 보통 병렬 단계를 열지 않는다.
     m_tileReferenceCount = 0;
     if (m_activeTileWorkers.empty())
         return;
-    sr::jobs::ParallelFor(std::size_t{0}, m_activeTileWorkers.size(),
-                          [&](std::size_t first, std::size_t last)
-                          {
-                              for (auto index = first; index != last; ++index)
-                                  m_activeTileWorkers[index]->SortTileReferences();
-                          });
+    if (!std::ranges::all_of(m_activeTileWorkers, [](const auto *worker) { return worker->tileReferencesSorted; }))
+        sr::jobs::ParallelFor(std::size_t{0}, m_activeTileWorkers.size(),
+                              [&](std::size_t first, std::size_t last)
+                              {
+                                  for (auto index = first; index != last; ++index)
+                                      if (!m_activeTileWorkers[index]->tileReferencesSorted)
+                                          m_activeTileWorkers[index]->SortTileReferences();
+                              });
     for (const auto *worker : m_activeTileWorkers)
         m_tileReferenceCount += worker->sortedTileReferences.size();
 }
@@ -163,6 +175,7 @@ void Renderer::WorkerScratch::SortTileReferences()
     // 끝나면 cursor는 구간의 끝이고 시작은 cursor - count다.
     for (const auto &reference : tileReferences)
         sortedTileReferences[tileScatter[reference.tileIndex].cursor++] = reference.triangle;
+    tileReferencesSorted = true;
 }
 
 void Renderer::gatherTileReferences(std::size_t tile, std::vector<TriangleRef *> &bin) const
@@ -176,8 +189,60 @@ void Renderer::gatherTileReferences(std::size_t tile, std::vector<TriangleRef *>
     }
 }
 
+void Renderer::renderTileRange(RenderTarget &target, const FrameContext &frame, std::size_t first,
+                               std::size_t last, bool needsDepthPrepass, bool clearTiles,
+                               std::vector<TriangleRef *> &gathered, TileBuffer &tileBuffer)
+{
+    for (auto index = first; index != last; ++index)
+    {
+        gatherTileReferences(index, gathered);
+        auto bin = std::span<TriangleRef *>(gathered);
+        auto &stats = m_tileStats[index];
+        stats = {};
+        const int x = static_cast<int>(index % frame.tilesX) * tileSize;
+        const int y = static_cast<int>(index / frame.tilesX) * tileSize;
+        // 타일은 화면을 겹침 없이 덮는다. 빈 타일만 여기서 지운다. 그릴 타일은 Rasterizer가
+        // 지운 값으로 시작하는 L1 타일 버퍼에 그리고 끝에 한 번만 쓴다(먼저 지우고 다시 쓰지 않는다).
+        if (bin.empty())
+        {
+            if (clearTiles)
+                target.ClearRect(x, y, std::min(x + tileSize, m_width), std::min(y + tileSize, m_height));
+            continue;
+        }
+        if (m_options.frontToBack)
+            std::sort(bin.begin(), bin.end(),
+                      [](const auto *a, const auto *b)
+                      {
+                          if (a->maximumInverseW != b->maximumInverseW)
+                              return a->maximumInverseW > b->maximumInverseW;
+                          return a->primitiveId < b->primitiveId;
+                      });
+        Rasterizer rasterizer(target, frame, m_options.collectStats ? &stats : nullptr);
+        rasterizer.BeginTile({x, y, std::min(x + tileSize, m_width), std::min(y + tileSize, m_height)},
+                             m_options.hiZ, clearTiles, &tileBuffer);
+        if (needsDepthPrepass)
+        {
+            // 혼합 모드도 모든 면의 깊이를 먼저 완성해야 뒤쪽 채움 색이 남지 않는다.
+            for (const auto *triangle : bin)
+                rasterizer.DrawTriangle(*triangle, RasterPass::DepthOnly);
+            for (const auto *triangle : bin)
+                if (triangle->sourceCommand->rasterizeMode == ERasterizeMode::Fill)
+                    rasterizer.DrawTriangle(*triangle, RasterPass::ShadeVisible);
+        }
+        else
+        {
+            // 겹친 픽셀(평균 1.8번 덮임)을 매번 셰이딩하지 않는다. 깊이 검사를 끝까지 한 뒤
+            // 마지막에 색을 썼을 삼각형으로만 픽셀당 한 번 셰이딩한다. 같은 식이라 색이 같다.
+            for (const auto *triangle : bin)
+                if (triangle->sourceCommand->rasterizeMode == ERasterizeMode::Fill)
+                    rasterizer.DrawTriangle(*triangle, RasterPass::DepthOwner);
+            rasterizer.ShadeOwners();
+        }
+    }
+}
+
 void Renderer::renderTiles(RenderTarget &target, const FrameContext &frame, bool needsDepthPrepass,
-                           bool clearTiles)
+                           bool clearTiles, bool drawLineBands)
 {
     // scatter join 뒤에만 각 타일의 span을 정렬/래스터한다.
     prepareTileReferences();
@@ -193,59 +258,117 @@ void Renderer::renderTiles(RenderTarget &target, const FrameContext &frame, bool
     // 중앙 타일은 다른 타일의 수십 배라 큰 조각 하나가 끝을 늦췄다(PC 24스레드 타일 단계 사용률 76%).
     // 4타일씩 고정해 처음부터 잘게 나눈다. 타일은 서로 독립이라 결과는 같다.
     constexpr std::size_t tilesPerTask = 4;
+    const auto tileCount = m_tileStats.size();
+    const auto renderChunk = [&](std::size_t first, std::size_t last)
+    {
+        renderTileRange(target, frame, first, last, needsDepthPrepass, clearTiles, m_tileGather.Local(),
+                        m_tileBuffers.Local());
+    };
+    const int bands = drawLineBands ? m_debugLineBands : 0;
+    if (bands == 0)
+    {
+        sr::jobs::ParallelFor<sr::jobs::Split::Fixed>(std::size_t{0}, tileCount, tilesPerTask, renderChunk);
+        return;
+    }
+
+    // 법선 선 band b는 자기 행 [start[b], start[b+1])을 덮는 타일 행이 모두 끝나야 그린다. 예전에는 타일 작업 전체가
+    // 끝나기를 기다린 뒤 band 작업을 따로 열었다. 이제 타일 조각을 더 가져갈 수 없게 된 스레드(타일 작업의 끝
+    // 대기 시간)가 준비된 band부터 그린다. 타일 분배는 위와 같다.
+    const auto tilesX = static_cast<std::size_t>(frame.tilesX);
+    const auto tilesY = static_cast<std::size_t>(frame.tilesY);
+    if (m_tileRowRemaining.size() != tilesY)
+        std::vector<std::atomic<std::uint32_t>>(tilesY).swap(m_tileRowRemaining);
+    for (auto &remaining : m_tileRowRemaining)
+        remaining.store(static_cast<std::uint32_t>(tilesX), std::memory_order_relaxed);
+    std::array<int, maximumLineBands> bandFirstRow{}, bandLastRow{};
+    std::array<std::atomic<int>, maximumLineBands> bandPending{}, ready{};
+    // 서로 다른 스레드가 고치는 카운터는 캐시 줄을 나눠 쓰지 않게 떨어뜨린다(alignas 없이 채움).
+    struct Counters
+    {
+        std::atomic<int> readyTail{0};
+        char pad[64 - sizeof(std::atomic<int>)];
+        std::atomic<int> readyHead{0};
+        std::atomic<bool> aborted{false};
+    } counters;
+    const auto publish = [&](int band)
+    {
+        const int position = counters.readyTail.fetch_add(1, std::memory_order_relaxed);
+        ready[static_cast<std::size_t>(position)].store(band, std::memory_order_release);
+    };
+    std::ranges::fill(m_debugLineBandStats, RenderStats{});
+    for (int band = 0; band < bands; ++band)
+    {
+        const int minY = m_debugLineBandStart[band], maxY = m_debugLineBandStart[band + 1];
+        ready[static_cast<std::size_t>(band)].store(-1, std::memory_order_relaxed);
+        bandFirstRow[band] = minY / tileSize;
+        bandLastRow[band] = maxY > minY ? (maxY - 1) / tileSize : -1;
+        bandPending[band].store(std::max(0, bandLastRow[band] - bandFirstRow[band] + 1), std::memory_order_relaxed);
+    }
+    for (int band = 0; band < bands; ++band)
+        if (bandPending[band].load(std::memory_order_relaxed) == 0)
+            publish(band);
+    // 행의 마지막 타일을 끝낸 스레드가 그 행을 덮는 band의 남은 행 수를 줄인다. 타일 픽셀 쓰기는
+    // 행 카운터(acq_rel) → band 카운터(acq_rel) → ready(release/acquire) 순서로 band를 그리는 스레드에 보인다.
+    const auto finishTiles = [&](std::size_t first, std::size_t last)
+    {
+        while (first != last)
+        {
+            const auto row = first / tilesX;
+            const auto rowEnd = std::min(last, (row + 1) * tilesX);
+            const auto finished = static_cast<std::uint32_t>(rowEnd - first);
+            if (m_tileRowRemaining[row].fetch_sub(finished, std::memory_order_acq_rel) == finished)
+                for (int band = 0; band < bands; ++band)
+                    if (bandFirstRow[band] <= static_cast<int>(row) && static_cast<int>(row) <= bandLastRow[band] &&
+                        bandPending[band].fetch_sub(1, std::memory_order_acq_rel) == 1)
+                        publish(band);
+            first = rowEnd;
+        }
+    };
     sr::jobs::ParallelFor<sr::jobs::Split::Fixed>(
-        std::size_t{0}, m_tileStats.size(), tilesPerTask,
+        std::size_t{0}, tileCount, tilesPerTask,
         [&](std::size_t first, std::size_t last)
         {
-            auto &gathered = m_tileGather.Local();
-            for (auto index = first; index != last; ++index)
+            try
             {
-                gatherTileReferences(index, gathered);
-                auto bin = std::span<TriangleRef *>(gathered);
-                auto &stats = m_tileStats[index];
-                stats = {};
-                const int x = static_cast<int>(index % frame.tilesX) * tileSize;
-                const int y = static_cast<int>(index / frame.tilesX) * tileSize;
-                // 타일은 화면을 겹침 없이 덮는다. 빈 타일만 여기서 지운다. 그릴 타일은 Rasterizer가
-                // 지운 값으로 시작하는 L1 타일 버퍼에 그리고 끝에 한 번만 쓴다(먼저 지우고 다시 쓰지 않는다).
-                if (bin.empty())
+                renderChunk(first, last);
+            }
+            catch (...)
+            {
+                // 끝나지 않을 행의 band를 기다리는 스레드를 풀어 준다.
+                counters.aborted.store(true, std::memory_order_relaxed);
+                throw;
+            }
+            finishTiles(first, last);
+        },
+        [&]
+        {
+            // 타일 조각이 모두 나갔다. 아직 그리는 타일은 다른 스레드가 맡고 있으므로 남은 band는 곧 준비된다.
+            for (unsigned spin = 0;;)
+            {
+                auto head = counters.readyHead.load(std::memory_order_relaxed);
+                if (head >= bands || counters.aborted.load(std::memory_order_relaxed))
+                    return;
+                const int band = ready[static_cast<std::size_t>(head)].load(std::memory_order_acquire);
+                if (band < 0)
                 {
-                    if (clearTiles)
-                        target.ClearRect(x, y, std::min(x + tileSize, m_width), std::min(y + tileSize, m_height));
+                    // 래스터 중인 스레드와 코어 자원을 오래 다투지 않도록 일정 시간 뒤에는 양보한다.
+                    if (++spin < 4096)
+                        _mm_pause();
+                    else
+                        std::this_thread::yield();
                     continue;
                 }
-                if (m_options.frontToBack)
-                    std::sort(bin.begin(), bin.end(),
-                              [](const auto *a, const auto *b)
-                              {
-                                  if (a->maximumInverseW != b->maximumInverseW)
-                                      return a->maximumInverseW > b->maximumInverseW;
-                                  return a->primitiveId < b->primitiveId;
-                              });
-                Rasterizer rasterizer(target, frame, m_options.collectStats ? &stats : nullptr);
-                rasterizer.BeginTile(
-                    {x, y, std::min(x + tileSize, m_width), std::min(y + tileSize, m_height)}, m_options.hiZ,
-                    clearTiles, &m_tileBuffers.Local());
-                if (needsDepthPrepass)
+                if (counters.readyHead.compare_exchange_weak(head, head + 1, std::memory_order_relaxed))
                 {
-                    // 혼합 모드도 모든 면의 깊이를 먼저 완성해야 뒤쪽 채움 색이 남지 않는다.
-                    for (const auto *triangle : bin)
-                        rasterizer.DrawTriangle(*triangle, RasterPass::DepthOnly);
-                    for (const auto *triangle : bin)
-                        if (triangle->sourceCommand->rasterizeMode == ERasterizeMode::Fill)
-                            rasterizer.DrawTriangle(*triangle, RasterPass::ShadeVisible);
-                }
-                else
-                {
-                    // 겹친 픽셀(평균 1.8번 덮임)을 매번 셰이딩하지 않는다. 깊이 검사를 끝까지 한 뒤
-                    // 마지막에 색을 썼을 삼각형으로만 픽셀당 한 번 셰이딩한다. 같은 식이라 색이 같다.
-                    for (const auto *triangle : bin)
-                        if (triangle->sourceCommand->rasterizeMode == ERasterizeMode::Fill)
-                            rasterizer.DrawTriangle(*triangle, RasterPass::DepthOwner);
-                    rasterizer.ShadeOwners();
+                    drawDebugLineBand(target, frame, band);
+                    spin = 0;
                 }
             }
         });
+    // 조각을 하나도 맡지 못한 스레드는 band를 돕지 않는다. 남은 band는(보통 없음) 여기서 그린다.
+    for (auto head = counters.readyHead.load(); head < bands; ++head)
+        drawDebugLineBand(target, frame, ready[static_cast<std::size_t>(head)].load(std::memory_order_acquire));
+    m_debugLinesDrawn = true;
 }
 
 void Renderer::renderLines(RenderTarget &target, const RenderQueue &queue, const FrameContext &frame)
@@ -326,14 +449,13 @@ void Renderer::updateRetainedBinBytes()
     m_stats.retainedBinBytes = bytes;
 }
 
-void Renderer::renderDepthTestedLines(RenderTarget &target, const RenderQueue &queue,
-                                      const FrameContext &frame)
+void Renderer::planDepthTestedLines(const RenderQueue &queue, const FrameContext &frame)
 {
     // 명령 포인터와 bin은 프레임마다 비운다. 준비 슬롯은 큰 프레임에서
     // resize한 현재 범위 전체를 병렬 덮어쓰므로 중복된 전체 초기화는 하지 않는다.
     m_debugLineCommands.clear();
     m_debugLineChunks.clear();
-
+    m_debugLinePlan = DebugLinePlan::Serial;
 
     const auto commands = queue.GetDebugCommands();
     std::size_t totalLines = 0;
@@ -353,10 +475,6 @@ void Renderer::renderDepthTestedLines(RenderTarget &target, const RenderQueue &q
         // 처리에 재사용되지 않도록 이 경로에서만 논리 크기를 비운다.
         m_preparedDebugLines.clear();
         m_debugLineRows.clear();
-        Rasterizer lines(target, frame, m_options.collectStats ? &m_stats : nullptr);
-        for (const auto &command : commands)
-            if (command.depthPolicy == DebugDepthPolicy::DepthTested)
-                lines.DrawDebugPrimitive(command, m_currentLineAlgorithm);
         return;
     }
 
@@ -384,60 +502,88 @@ void Renderer::renderDepthTestedLines(RenderTarget &target, const RenderQueue &q
         }
         firstLine += lineCount;
     }
+    for (auto &counts : m_debugLineRowCounts)
+        counts.assign(static_cast<std::size_t>(m_height), 0u);
+    m_debugLinePlan = DebugLinePlan::Parallel;
+}
 
+Renderer::DebugLineRows Renderer::debugLineRowRange(
+    const std::optional<Rasterizer::PreparedDebugLine> &prepared) const noexcept
+{
     // 선이 걸친 행 구간. 화면 밖/기각 선은 first > last인 빈 구간이다.
     // 과대한 viewport/긴 DDA는 누적 오차를 bbox로 단정하지 않고 모든
     // band에 보낸다. 실제 쓰기는 원래 시작점으로 진행하며 행 범위로 제한한다.
     constexpr DebugLineRows noRows{std::numeric_limits<int>::max(), std::numeric_limits<int>::min()};
     constexpr DebugLineRows allRows{std::numeric_limits<int>::min(), std::numeric_limits<int>::max()};
-    const auto rowRange = [&](const std::optional<Rasterizer::PreparedDebugLine> &prepared)
-    {
-        if (!prepared)
-            return noRows;
-        const auto &line = *prepared;
-        const int startY = static_cast<int>(line.screenA.y), endY = static_cast<int>(line.screenB.y);
-        const int startX = static_cast<int>(line.screenA.x), endX = static_cast<int>(line.screenB.x);
-        const bool longDda = m_currentLineAlgorithm == ELineAlgorithm::DDA &&
-                             std::max(std::abs(endX - startX), std::abs(endY - startY)) > (1 << 20);
-        if (m_width > 524288 || m_height > 524288 || longDda)
-            return allRows;
-        const int minY = std::min(startY, endY), maxY = std::max(startY, endY);
-        if (maxY < 0 || minY >= m_height)
-            return noRows;
-        return DebugLineRows{std::clamp(minY, 0, m_height - 1), std::clamp(maxY, 0, m_height - 1)};
-    };
-    for (auto &counts : m_debugLineRowCounts)
-        counts.assign(static_cast<std::size_t>(m_height), 0u);
+    if (!prepared)
+        return noRows;
+    const auto &line = *prepared;
+    const int startY = static_cast<int>(line.screenA.y), endY = static_cast<int>(line.screenB.y);
+    const int startX = static_cast<int>(line.screenA.x), endX = static_cast<int>(line.screenB.x);
+    const bool longDda = m_currentLineAlgorithm == ELineAlgorithm::DDA &&
+                         std::max(std::abs(endX - startX), std::abs(endY - startY)) > (1 << 20);
+    if (m_width > 524288 || m_height > 524288 || longDda)
+        return allRows;
+    const int minY = std::min(startY, endY), maxY = std::max(startY, endY);
+    if (maxY < 0 || minY >= m_height)
+        return noRows;
+    return DebugLineRows{std::clamp(minY, 0, m_height - 1), std::clamp(maxY, 0, m_height - 1)};
+}
 
+void Renderer::prepareDebugLineChunk(std::size_t chunkIndex)
+{
     // 큰 메시의 법선 명령 하나도 256개 선 단위로 분배한다. 각 chunk는
     // 고유한 원본 순번 슬롯만 쓰며 명령 MVP와 입력 정점은 읽기 전용이다.
-    sr::jobs::ParallelFor(std::size_t{0}, m_debugLineChunks.size(),
-                          [&](std::size_t first, std::size_t last)
-                          {
-                              for (auto chunkIndex = first; chunkIndex != last; ++chunkIndex)
-                              {
-                                  const auto &chunk = m_debugLineChunks[chunkIndex];
-                                  const auto &command = m_debugLineCommands[chunk.commandIndex];
-                                  const auto &vertices = command.command->vertices;
-                                  auto &counts = m_debugLineRowCounts.Local();
-                                  if (counts.size() != static_cast<std::size_t>(m_height))
-                                      counts.assign(static_cast<std::size_t>(m_height), 0u);
-                                  const auto end = chunk.firstLine + chunk.lineCount;
-                                  for (auto line = chunk.firstLine; line < end; ++line)
-                                  {
-                                      const auto index = command.firstLine + line;
-                                      m_preparedDebugLines[index] = Rasterizer::PrepareDepthTestedLine(
-                                          vertices[line * 2], vertices[line * 2 + 1],
-                                          command.modelViewProjection, m_width, m_height);
-                                      const auto rows = rowRange(m_preparedDebugLines[index]);
-                                      m_debugLineRows[index] = rows;
-                                      // 모든 band가 그리는 선은 경계 선택에 영향이 없어 세지 않는다.
-                                      if (rows.first <= rows.last && rows.first >= 0)
-                                          ++counts[static_cast<std::size_t>(rows.first)];
-                                  }
-                              }
-                          });
+    const auto &chunk = m_debugLineChunks[chunkIndex];
+    const auto &command = m_debugLineCommands[chunk.commandIndex];
+    const auto &vertices = command.command->vertices;
+    auto &counts = m_debugLineRowCounts.Local();
+    if (counts.size() != static_cast<std::size_t>(m_height))
+        counts.assign(static_cast<std::size_t>(m_height), 0u);
+    const auto end = chunk.firstLine + chunk.lineCount;
+    for (auto line = chunk.firstLine; line < end; ++line)
+    {
+        const auto index = command.firstLine + line;
+        m_preparedDebugLines[index] = Rasterizer::PrepareDepthTestedLine(
+            vertices[line * 2], vertices[line * 2 + 1], command.modelViewProjection, m_width, m_height);
+        const auto rows = debugLineRowRange(m_preparedDebugLines[index]);
+        m_debugLineRows[index] = rows;
+        // 모든 band가 그리는 선은 경계 선택에 영향이 없어 세지 않는다.
+        if (rows.first <= rows.last && rows.first >= 0)
+            ++counts[static_cast<std::size_t>(rows.first)];
+    }
+}
 
+void Renderer::renderDepthTestedLines(RenderTarget &target, const RenderQueue &queue,
+                                      const FrameContext &frame)
+{
+    // 준비(PrepareDepthTestedLine)와 행별 선 수 집계는 binCommands의 분류 작업 안에서 끝났다.
+    if (m_debugLinePlan == DebugLinePlan::Serial)
+    {
+        Rasterizer lines(target, frame, m_options.collectStats ? &m_stats : nullptr);
+        for (const auto &command : queue.GetDebugCommands())
+            if (command.depthPolicy == DebugDepthPolicy::DepthTested)
+                lines.DrawDebugPrimitive(command, m_currentLineAlgorithm);
+        return;
+    }
+
+    if (!m_debugLinesDrawn)
+    {
+        std::ranges::fill(m_debugLineBandStats, RenderStats{});
+        sr::jobs::ParallelFor(0, m_debugLineBands,
+                              [&](int first, int last)
+                              {
+                                  for (int band = first; band != last; ++band)
+                                      drawDebugLineBand(target, frame, band);
+                              });
+    }
+    if (m_options.collectStats)
+        for (int band = 0; band < m_debugLineBands; ++band)
+            m_stats.MergeCounters(m_debugLineBandStats[band]);
+}
+
+void Renderer::computeDebugLineBands()
+{
     // 고정 64행 band에서는 IronMan 법선이 몰린 한 band가 그리기 시간의 대부분을 차지했다
     // (1080p: 17개 중 한 band 3.27ms, 전체 3.31ms). 행별 선 수의 누적이 같아지도록
     // band 경계를 정한다. 경계와 무관하게 각 행의 픽셀은 한 band만 쓰고, 각 band는
@@ -451,7 +597,8 @@ void Renderer::renderDepthTestedLines(RenderTarget &target, const RenderQueue &q
     for (const auto weight : m_debugLineRowWeights)
         totalWeight += weight;
     const int bandCount = std::min(debugLineBandCount, m_height);
-    std::array<int, debugLineBandCount + 1> bandStart{};
+    auto &bandStart = m_debugLineBandStart;
+    bandStart = {};
     int bands = 0;
     if (totalWeight == 0)
         for (bands = 1; bands < bandCount; ++bands)
@@ -471,28 +618,20 @@ void Renderer::renderDepthTestedLines(RenderTarget &target, const RenderQueue &q
     // bandCount <= maximumLineBands이므로 실제로는 잘리지 않는다. 정적 분석에 범위를 드러낸다.
     bands = std::clamp(bands, 1, debugLineBandCount);
     bandStart[static_cast<std::size_t>(bands)] = m_height;
+    m_debugLineBands = bands;
+}
 
-    std::array<RenderStats, maximumLineBands> bandStats{};
-    sr::jobs::ParallelFor(
-        0, bands,
-        [&](int first, int last)
-        {
-            for (int band = first; band != last; ++band)
-            {
-                const int minY = bandStart[band], maxY = bandStart[band + 1];
-                Rasterizer lines(target, frame, m_options.collectStats ? &bandStats[band] : nullptr);
-                lines.BeginLineRows(minY, maxY);
-                for (std::size_t index = 0; index < m_debugLineRows.size(); ++index)
-                {
-                    const auto rows = m_debugLineRows[index];
-                    if (rows.first < maxY && rows.last >= minY)
-                        lines.DrawPreparedDebugLine(*m_preparedDebugLines[index], m_currentLineAlgorithm);
-                }
-            }
-        });
-    if (m_options.collectStats)
-        for (int band = 0; band < bands; ++band)
-            m_stats.MergeCounters(bandStats[band]);
+void Renderer::drawDebugLineBand(RenderTarget &target, const FrameContext &frame, int band)
+{
+    const int minY = m_debugLineBandStart[band], maxY = m_debugLineBandStart[band + 1];
+    Rasterizer lines(target, frame, m_options.collectStats ? &m_debugLineBandStats[band] : nullptr);
+    lines.BeginLineRows(minY, maxY);
+    for (std::size_t index = 0; index < m_debugLineRows.size(); ++index)
+    {
+        const auto rows = m_debugLineRows[index];
+        if (rows.first < maxY && rows.last >= minY)
+            lines.DrawPreparedDebugLine(*m_preparedDebugLines[index], m_currentLineAlgorithm);
+    }
 }
 
 void Renderer::applyPostProcessing(RenderTarget &target)
