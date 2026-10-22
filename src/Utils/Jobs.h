@@ -12,6 +12,7 @@
 #include <memory>
 #include <mutex>
 #include <new>
+#include <span>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -21,6 +22,7 @@ namespace sr::jobs
 // 범위를 나누는 방식.
 // Adaptive: grain은 최소 조각 크기다. 스레드 수에 맞춰 조각을 키운다.
 // Fixed: 조각을 grain 이하로 고정한다. 항목마다 비용 차이가 큰 작업(타일, 명령)에 쓴다.
+// 항목별 예상 비용을 아는 작업은 ParallelForWeighted를 쓴다.
 enum class Split
 {
     Adaptive,
@@ -58,6 +60,8 @@ struct Job
     void *body = nullptr;
     std::size_t itemCount = 0, chunkSize = 1;
     std::uint32_t chunkCount = 0, participants = 1;
+    // 있으면 크기 chunkCount + 1의 누적 비용(조각 0..i-1의 합). 참여자 구간 경계를 비용이 같아지게 정한다.
+    const std::uint64_t *cumulativeCost = nullptr;
     alignas(64) std::atomic<std::size_t> done{0};
     std::atomic<std::uint32_t> helpers{0};
     std::atomic<bool> failed{false}, ownerWaiting{false};
@@ -79,8 +83,10 @@ bool &IsolatedFlag() noexcept;
 
 namespace detail
 {
+// cumulativeCost가 있으면 grain 1(항목 = 조각)이고 참여자 구간 경계를 비용으로 정한다(ParallelForWeighted).
 template <Split split, class Index, class Body, class Finish>
-void ParallelForImpl(Index begin, Index end, Index grain, Body &body, Finish *finish)
+void ParallelForImpl(Index begin, Index end, Index grain, Body &body, Finish *finish,
+                     const std::uint64_t *cumulativeCost = nullptr)
 {
     if (!(begin < end))
         return;
@@ -121,6 +127,8 @@ void ParallelForImpl(Index begin, Index end, Index grain, Body &body, Finish *fi
     job.itemCount = itemCount;
     job.chunkSize = chunkSize;
     job.chunkCount = static_cast<std::uint32_t>((itemCount - 1) / chunkSize + 1);
+    if (chunkSize == 1)
+        job.cumulativeCost = cumulativeCost;
     Execute(job, threads);
 }
 } // namespace detail
@@ -142,6 +150,28 @@ void ParallelFor(Index begin, std::type_identity_t<Index> end, std::type_identit
                  Finish &&finish)
 {
     detail::ParallelForImpl<split, Index>(begin, end, grain, body, &finish);
+}
+
+// [0, cumulativeCost.size() - 1) 항목을 하나씩 조각으로 삼아 body(first, last)를 병렬로 부른다. 참여자마다
+// 연속 구간을 주는 것은 Fixed와 같지만, 경계를 개수가 아니라 예상 비용이 같아지게 정한다.
+// cumulativeCost[i]는 항목 0..i-1 비용의 합(오름차순)이다. 합이 0이면 개수로 나눈다. 예상이 빗나간 만큼은
+// Fixed처럼 훔치기로 메운다. 비싼 항목이 화면 한곳에 몰린 타일 작업처럼, 이웃 항목을 한 스레드가 이어서 돌아야
+// 캐시를 나눠 쓰는 작업에 쓴다(비싼 순서로 하나씩 나눠 주면 이웃이 스레드마다 흩어진다).
+// finish는 위 ParallelFor와 같다.
+template <class Body> void ParallelForWeighted(std::span<const std::uint64_t> cumulativeCost, Body &&body)
+{
+    if (cumulativeCost.size() < 2)
+        return;
+    detail::ParallelForImpl<Split::Fixed, std::size_t>(
+        0, cumulativeCost.size() - 1, 1, body, static_cast<std::nullptr_t *>(nullptr), cumulativeCost.data());
+}
+template <class Body, class Finish>
+void ParallelForWeighted(std::span<const std::uint64_t> cumulativeCost, Body &&body, Finish &&finish)
+{
+    if (cumulativeCost.size() < 2)
+        return;
+    detail::ParallelForImpl<Split::Fixed, std::size_t>(0, cumulativeCost.size() - 1, 1, body, &finish,
+                                                      cumulativeCost.data());
 }
 
 // 스레드마다 하나씩 만드는 작업 공간. Local()은 처음 부른 스레드에서 기본 생성한다.

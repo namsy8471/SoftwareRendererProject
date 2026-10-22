@@ -3,6 +3,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <initializer_list>
 #include <mutex>
 #include <numeric>
@@ -50,6 +51,54 @@ void coverageTests()
     checkCoverage<sr::jobs::Split::Fixed>(1, 1079, 16);
     checkCoverage<sr::jobs::Split::Fixed>(5, 5, 1);
     checkCoverage<sr::jobs::Split::Fixed>(9, 3, 1);
+}
+
+// 비용 경계로 나눠도 모든 항목을 한 번씩 돈다. 비용이 한 항목에 몰리거나 0이어도(개수로 나눔) 같다.
+void weightedTests()
+{
+    for (const std::size_t count : std::initializer_list<std::size_t>{1, 2, 3, 64, 2040})
+        for (int shape = 0; shape < 4; ++shape)
+        {
+            std::vector<std::uint64_t> cumulative(count + 1);
+            for (std::size_t index = 0; index != count; ++index)
+            {
+                const std::uint64_t cost = shape == 0   ? 0
+                                           : shape == 1 ? 1
+                                           : shape == 2 ? (index == count / 2 ? 1'000'000 : 1)
+                                                        : index * index;
+                cumulative[index + 1] = cumulative[index] + cost;
+            }
+            std::vector<std::atomic<int>> visits(count);
+            sr::jobs::ParallelForWeighted(cumulative,
+                                          [&](std::size_t first, std::size_t last)
+                                          {
+                                              for (auto index = first; index != last; ++index)
+                                                  visits[index].fetch_add(1);
+                                          });
+            for (const auto &visit : visits)
+                check(visit.load() == 1, "weighted split runs every item exactly once");
+        }
+    // finish 훅이 있어도 모든 항목을 한 번씩 돌고, 조각을 맡은 스레드마다 finish가 불린다.
+    std::vector<std::uint64_t> cumulative(2041);
+    for (std::size_t index = 0; index != 2040; ++index)
+        cumulative[index + 1] = cumulative[index] + (index % 97 == 0 ? 500 : 1);
+    std::vector<std::atomic<int>> visits(2040);
+    std::atomic<int> finishes = 0;
+    sr::jobs::ParallelForWeighted(
+        cumulative,
+        [&](std::size_t first, std::size_t last)
+        {
+            for (auto index = first; index != last; ++index)
+                visits[index].fetch_add(1);
+        },
+        [&] { finishes.fetch_add(1); });
+    for (const auto &visit : visits)
+        check(visit.load() == 1, "weighted split with finish runs every item exactly once");
+    check(finishes.load() >= 1, "weighted split calls finish");
+    bool ran = false;
+    sr::jobs::ParallelForWeighted(std::vector<std::uint64_t>{0}, [&](std::size_t, std::size_t)
+                                  { ran = true; });
+    check(!ran, "weighted split with no items does nothing");
 }
 
 void exceptionTests()
@@ -247,6 +296,7 @@ void RegisterJobsTests(TestRegistry &registry)
 {
     registry.Add("jobs.coverage", coverageTests);
     registry.Add("jobs.exceptions", exceptionTests);
+    registry.Add("jobs.weighted", weightedTests);
     registry.Add("jobs.nested_concurrent", nestedAndConcurrentTests);
     registry.Add("jobs.limits", limitTests);
     registry.Add("jobs.isolated", isolatedTests);

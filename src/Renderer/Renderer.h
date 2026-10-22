@@ -55,6 +55,11 @@ class Renderer
     sr::jobs::PerWorker<std::vector<TriangleRef *>> m_tileGather;
     sr::jobs::PerWorker<TileBuffer> m_tileBuffers;
     std::vector<RenderStats> m_tileStats;
+    // 타일 작업 한 조각이 맡는 연속 타일 수(행 순서).
+    static constexpr std::size_t tilesPerTask = 4;
+    // 묶음별 지난 프레임 래스터 시간(steady_clock 틱)과 그 누적 합(크기 묶음 수 + 1, 스레드 구간 경계용).
+    std::vector<std::uint64_t> m_tileChunkCost;
+    std::vector<std::uint64_t> m_tileChunkCostPrefix;
     std::vector<std::uint64_t> m_commandTriangleBases;
     std::vector<unsigned int> m_fxaaSnapshot;
     // 프레임마다 값을 갱신하고 capacity만 재사용한다. worker는 이 저장소를 읽기만 한다.

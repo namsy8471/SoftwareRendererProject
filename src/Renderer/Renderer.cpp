@@ -33,7 +33,13 @@ void Renderer::ensureViewport(int width, int height)
         throw std::length_error("Viewport tile offset count exceeded");
     // 할당 성공 후 viewport를 교체한다.
     std::vector<RenderStats> stats(tileCount);
+    // 비용 기록이 없는 첫 프레임은 합이 0이라 개수로 나눈다.
+    const auto chunkCount = (tileCount + tilesPerTask - 1) / tilesPerTask;
+    std::vector<std::uint64_t> chunkCost(chunkCount);
+    std::vector<std::uint64_t> chunkCostPrefix(chunkCount + 1);
     m_tileStats.swap(stats);
+    m_tileChunkCost.swap(chunkCost);
+    m_tileChunkCostPrefix.swap(chunkCostPrefix);
     m_width = width;
     m_height = height;
     // 빈 target은 진입 전에 거른다. 덧셈 기반 ceil의 int overflow를 피한다.
@@ -256,18 +262,37 @@ void Renderer::renderTiles(RenderTarget &target, const FrameContext &frame, bool
     }
     // auto_partitioner는 1080p 8160타일을 스레드 수에 맞춰 크게 나눈 뒤 훔칠 때만 쪼갠다. IronMan이 걸친
     // 중앙 타일은 다른 타일의 수십 배라 큰 조각 하나가 끝을 늦췄다(PC 24스레드 타일 단계 사용률 76%).
-    // 4타일씩 고정해 처음부터 잘게 나눈다. 타일은 서로 독립이라 결과는 같다.
-    constexpr std::size_t tilesPerTask = 4;
+    // 4타일(tilesPerTask)씩 묶어 처음부터 잘게 나눈다. 타일은 서로 독립이라 결과는 같다.
+    // 스레드마다 화면 순서로 이어진 묶음 구간을 주되, 개수가 아니라 지난 프레임 시간이 같아지게 경계를 정한다.
+    // 개수로 나누면 IronMan이 걸친 중앙 구간을 맡은 스레드가 끝까지 남고, 나머지는 훔친 뒤 기다린다.
+    // 비싼 묶음부터 하나씩 나눠 주는 LPT(1차)는 이웃 묶음이 스레드마다 흩어져 더 느렸다. 순서와 무관하게 픽셀은
+    // 같다.
     const auto tileCount = m_tileStats.size();
-    const auto renderChunk = [&](std::size_t first, std::size_t last)
+    std::uint64_t total = 0;
+    for (std::size_t chunk = 0; chunk != m_tileChunkCost.size(); ++chunk)
     {
-        renderTileRange(target, frame, first, last, needsDepthPrepass, clearTiles, m_tileGather.Local(),
-                        m_tileBuffers.Local());
+        m_tileChunkCostPrefix[chunk] = total;
+        total += m_tileChunkCost[chunk];
+    }
+    m_tileChunkCostPrefix.back() = total;
+    const auto renderChunks = [&](std::size_t firstChunk, std::size_t lastChunk)
+    {
+        auto &gathered = m_tileGather.Local();
+        auto &tileBuffer = m_tileBuffers.Local();
+        for (auto chunk = firstChunk; chunk != lastChunk; ++chunk)
+        {
+            const auto started = FrameClock::now();
+            const auto first = chunk * tilesPerTask;
+            renderTileRange(target, frame, first, std::min(first + tilesPerTask, tileCount),
+                            needsDepthPrepass, clearTiles, gathered, tileBuffer);
+            // 다음 프레임 경계를 정할 비용. 묶음마다 이 스레드만 쓴다.
+            m_tileChunkCost[chunk] = static_cast<std::uint64_t>((FrameClock::now() - started).count());
+        }
     };
     const int bands = drawLineBands ? m_debugLineBands : 0;
     if (bands == 0)
     {
-        sr::jobs::ParallelFor<sr::jobs::Split::Fixed>(std::size_t{0}, tileCount, tilesPerTask, renderChunk);
+        sr::jobs::ParallelForWeighted(m_tileChunkCostPrefix, renderChunks);
         return;
     }
 
@@ -324,13 +349,13 @@ void Renderer::renderTiles(RenderTarget &target, const FrameContext &frame, bool
             first = rowEnd;
         }
     };
-    sr::jobs::ParallelFor<sr::jobs::Split::Fixed>(
-        std::size_t{0}, tileCount, tilesPerTask,
-        [&](std::size_t first, std::size_t last)
+    sr::jobs::ParallelForWeighted(
+        m_tileChunkCostPrefix,
+        [&](std::size_t firstChunk, std::size_t lastChunk)
         {
             try
             {
-                renderChunk(first, last);
+                renderChunks(firstChunk, lastChunk);
             }
             catch (...)
             {
@@ -338,7 +363,7 @@ void Renderer::renderTiles(RenderTarget &target, const FrameContext &frame, bool
                 counters.aborted.store(true, std::memory_order_relaxed);
                 throw;
             }
-            finishTiles(first, last);
+            finishTiles(firstChunk * tilesPerTask, std::min(lastChunk * tilesPerTask, tileCount));
         },
         [&]
         {
