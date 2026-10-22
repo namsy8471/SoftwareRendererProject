@@ -35,7 +35,8 @@ class Rasterizer
     };
 
     Rasterizer(RenderTarget &target, const RenderFrameContext &frame, RenderStats *stats = nullptr)
-        : m_target(target), m_frame(frame), m_stats(stats), m_lineMaxY(target.Height())
+        : m_target(target), m_frame(frame), m_stats(stats), m_lineMaxY(target.Height()),
+          m_ownerScratch(ThreadOwnerScratch())
     {
     }
 
@@ -72,6 +73,10 @@ class Rasterizer
     static SurfaceSample InterpolateSurface(const RasterizerVertex &, const RasterizerVertex &,
                                             const RasterizerVertex &, float, float, float, float);
     static SRMath::vec3 ShadeSurface(const SurfaceSample &, const Material &, const RenderFrameContext &);
+    // 픽셀 4개를 lane 하나씩 맡아 SSE로 한 번에 셰이딩한다. 각 lane은 ShadeSurface와 같은 float 연산을
+    // 같은 순서로 하므로 결과가 비트 단위로 같다(dot은 _mm_dp_ps(0x71)의 (x+y)+(z+0) 순서를 따른다).
+    static void ShadeSurface4(const SurfaceSample (&)[4], const Material *const (&)[4],
+                              const RenderFrameContext &, SRMath::vec3 (&)[4]);
 
   private:
     RenderTarget &m_target;
@@ -84,8 +89,27 @@ class Rasterizer
     std::array<bool, 16> m_blockFull{};
     float m_tileMinimum = 0.f;
     bool m_tileFull = false;
-    // 픽셀마다 마지막으로 색을 쓸 삼각형(재질이 있고 깊이 검사를 통과한 것). 16x16 타일 기준이다.
-    std::array<const PreparedTriangle *, 256> m_owners{};
+    // DepthOwner 패스가 픽셀마다 마지막으로 색을 쓸 삼각형(재질이 있고 깊이 검사를 통과한 것)과
+    // 그때 계산한 barycentric a, b, c와 보간 1/w(q)를 남긴다. 16x16 타일 기준이다.
+    // ShadeOwners는 같은 값을 다시 계산하지 않고 이것을 읽는다. 유효한 칸은 m_ownerMask 비트로만 판단하므로
+    // 배열은 지우지 않는다(타일마다 6 KB 0 초기화를 피하려고 스레드별 저장소를 빌려 쓴다).
+    struct OwnerSample
+    {
+        float a, b, c, q;
+    };
+    struct OwnerScratch
+    {
+        std::array<const PreparedTriangle *, 256> triangles;
+        std::array<OwnerSample, 256> samples;
+    };
+    // 호출 스레드의 저장소. 한 스레드에서 Rasterizer의 DepthOwner→ShadeOwners 구간이 겹치지 않아야 한다
+    // (타일 worker는 타일 하나를 끝낸 뒤 다음 타일을 시작한다).
+    static OwnerScratch &ThreadOwnerScratch() noexcept;
+    // ShadeOwners의 4픽셀 묶음. 보간(InterpolateSurface)과 ShadeSurface4를 같은 번역 단위에서 inline한다.
+    static void ShadeOwnerQuad(const PreparedTriangle *const (&)[4], const OwnerSample *const (&)[4],
+                               const RenderFrameContext &, SRMath::vec3 (&)[4]);
+    OwnerScratch &m_ownerScratch;
+    std::array<std::uint64_t, 4> m_ownerMask{};
 
     // 패스 선택은 삼각형당 한 번만 한다. 픽셀 루프에는 depth-only의 조명 분기를 남기지 않는다.
     template <bool Instrumented, RasterPass Pass> void DrawTriangleImpl(const PreparedTriangle &);
