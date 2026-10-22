@@ -2,7 +2,9 @@
 # - 같은 Windows VM에서 기준(base)과 변경(head)의 srcli를 MSVC Release x64로 각각 빌드하고, 1080p로 번갈아(ABBA...) 실행한다.
 #   절대 수치는 PC와 다르지만 같은 VM에서 짝지어 잰 비율은 비교할 수 있다. 분석은 tools/ci/AB-Report.ps1.
 # - 모드(fill/wire/normal)마다 별도 VM(job)에서 동시에 돈다. 한 모드의 A/B 쌍은 항상 한 VM 안에서만 잰다.
-# - PR: base = PR 브랜치가 갈라진 지점(merge-base), head = PR의 마지막 커밋. 결과는 job 요약과 PR 댓글(하나를 계속 갱신)에 남는다.
+# - PR: `ab-bench` 라벨이 붙은 PR만 돈다(라벨을 붙인 순간 + 그 뒤 push마다). 라벨이 없으면 job이 건너뛰어진다.
+#   PR마다 돌리지 않는 이유: 20분 넘게 걸려 머지를 늦추는데, 채택 판단은 주로 PC A/B로 하고 클라우드는 2% 이상 차이만 가린다.
+#   base = PR 브랜치가 갈라진 지점(merge-base), head = PR의 마지막 커밋. 결과는 job 요약과 PR 댓글(하나를 계속 갱신)에 남는다.
 # - 수동: Actions → Cloud A/B bench → Run workflow 또는
 #     gh workflow run ab-bench.yml --ref <브랜치> -f base=main -f modes=normal -f rounds=60
 # 절대 기준(p95 <= 9ms)은 여기서 판정하지 않는다. 그것은 PC 벤치(windows.yml bench)의 몫이다.
@@ -10,6 +12,8 @@ name: Cloud A/B bench
 
 on:
   pull_request:
+    # labeled: 라벨을 붙이는 순간 바로 돌게 한다. 다른 라벨을 붙일 때는 아래 if 조건이 건너뛴다.
+    types: [opened, synchronize, reopened, labeled]
     paths:
       - 'src/**'
       - 'tools/srcli/**'
@@ -40,8 +44,9 @@ on:
         description: 실행 한 번의 측정 프레임 수
         default: '200'
 
+# 건너뛸 실행(라벨 없음, 다른 라벨)은 자기만의 그룹에 넣어, 이미 돌고 있는 A/B를 취소하지 않게 한다.
 concurrency:
-  group: ab-bench-${{ github.event.pull_request.number || github.ref }}-${{ inputs.base }}-${{ inputs.head }}
+  group: ab-bench-${{ github.event.pull_request.number || github.ref }}-${{ inputs.base }}-${{ inputs.head }}${{ !(github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'ab-bench') && (github.event.action != 'labeled' || github.event.label.name == 'ab-bench'))) && format('-skip-{0}', github.run_id) || '' }}
   cancel-in-progress: true
 
 permissions:
@@ -54,6 +59,8 @@ defaults:
 jobs:
   plan:
     name: Resolve base/head
+    # 수동 실행이거나, PR에 ab-bench 라벨이 있을 때만(다른 라벨을 붙인 이벤트는 제외). plan이 건너뛰면 bench·report도 건너뛴다.
+    if: github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'ab-bench') && (github.event.action != 'labeled' || github.event.label.name == 'ab-bench'))
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
