@@ -2,6 +2,7 @@
 #include "Renderer/RenderCommand.h"
 #include "Graphics/Material.h"
 #include "Platform/Compiler.h"
+#include "Renderer/Tile.h"
 #include <algorithm>
 #include <cmath>
 #include <smmintrin.h>
@@ -350,6 +351,9 @@ void Rasterizer::DrawTriangle(const PreparedTriangle &t, RasterPass pass)
     case RasterPass::ShadeVisible:
         draw.template operator()<RasterPass::ShadeVisible>();
         break;
+    case RasterPass::DepthOwner:
+        draw.template operator()<RasterPass::DepthOwner>();
+        break;
     }
     if (m_hiZ && pass != RasterPass::ShadeVisible)
         RefreshHiZ();
@@ -423,7 +427,13 @@ template <bool Instrumented, RasterPass Pass> void Rasterizer::DrawTriangleImpl(
                     depth[index] = q;
                     ids[index] = t.primitiveId;
                 }
-                if constexpr (Pass != RasterPass::DepthOnly)
+                if constexpr (Pass == RasterPass::DepthOwner)
+                {
+                    // Shaded 패스라면 여기서 색을 썼을 것이다. 덮어쓴 색은 결국 버려지므로 주인만 바꾼다.
+                    if (t.sourceCommand && t.sourceCommand->material)
+                        m_owners[static_cast<std::size_t>(y - m_bounds.minY) * 16 + (x - m_bounds.minX)] = &t;
+                }
+                else if constexpr (Pass != RasterPass::DepthOnly)
                     if (t.sourceCommand && t.sourceCommand->material)
                     {
                         const auto sample = InterpolateSurface(t.rv0, t.rv1, t.rv2, a, b, c, 1.f / q);
@@ -463,6 +473,57 @@ template <bool Instrumented, RasterPass Pass> void Rasterizer::DrawTriangleImpl(
         r1 -= t.dx20Fixed;
         r2 -= t.dx01Fixed;
     }
+}
+
+void Rasterizer::ShadeOwners()
+{
+    static_assert(tileSize == 16);
+    auto surface = m_target.Surface();
+    const PreparedTriangle *current = nullptr;
+    int x0 = 0, y0 = 0;
+    std::int64_t r0 = 0, r1 = 0, r2 = 0;
+    for (int y = m_bounds.minY; y < m_bounds.maxY; ++y)
+        for (int x = m_bounds.minX; x < m_bounds.maxX; ++x)
+        {
+            auto &owner = m_owners[static_cast<std::size_t>(y - m_bounds.minY) * 16 + (x - m_bounds.minX)];
+            const PreparedTriangle *t = owner;
+            if (!t)
+                continue;
+            owner = nullptr;
+            if (t != current)
+            {
+                // DrawTriangleImpl과 같은 시작점과 같은 float 식이다. 래스터에서 이미 성공한 값이다.
+                current = t;
+                x0 = std::max(t->minX, m_bounds.minX);
+                y0 = std::max(t->minY, m_bounds.minY);
+                const auto &p0 = t->rv0.screenPos;
+                const auto &p1 = t->rv1.screenPos;
+                const auto &p2 = t->rv2.screenPos;
+                toFixed(t->dy12 * (x0 + 0.5f - p1.x) - t->dx12 * (y0 + 0.5f - p1.y), r0);
+                toFixed(t->dy20 * (x0 + 0.5f - p2.x) - t->dx20 * (y0 + 0.5f - p2.y), r1);
+                toFixed(t->dy01 * (x0 + 0.5f - p0.x) - t->dx01 * (y0 + 0.5f - p0.y), r2);
+            }
+            // 래스터 루프는 행마다 dx를 빼고 픽셀마다 dy를 더한다. 정수라 곱으로 바꿔도 값이 같다
+            // (DrawTriangleImpl의 budget 검사가 넘침이 없음을 보장한다).
+            const std::int64_t dx = x - x0, dy = y - y0;
+            const std::int64_t w0 = r0 - t->dx12Fixed * dy + t->dy12Fixed * dx;
+            const std::int64_t w1 = r1 - t->dx20Fixed * dy + t->dy20Fixed * dx;
+            const std::int64_t w2 = r2 - t->dx01Fixed * dy + t->dy01Fixed * dx;
+            const float f0 = static_cast<float>(w0) / 256.f;
+            const float f1 = static_cast<float>(w1) / 256.f;
+            const float f2 = static_cast<float>(w2) / 256.f;
+            const float total = f0 + f1 + f2;
+            const float inverse = 1.f / total;
+            const float a = f0 * inverse, b = f1 * inverse, c = f2 * inverse;
+            float q = t->rv0.oneOverW * a;
+            q += t->rv1.oneOverW * b;
+            q += t->rv2.oneOverW * c;
+            const auto sample = InterpolateSurface(t->rv0, t->rv1, t->rv2, a, b, c, 1.f / q);
+            surface.pixels[static_cast<std::size_t>(y) * surface.stridePixels + x] =
+                packColor(ShadeSurface(sample, *t->sourceCommand->material, m_frame));
+            if (m_stats)
+                ++m_stats->shadedPixels;
+        }
 }
 
 bool Rasterizer::ClipLine(SRMath::vec4 &a, SRMath::vec4 &b)

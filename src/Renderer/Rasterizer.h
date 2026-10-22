@@ -60,6 +60,8 @@ class Rasterizer
     // [minY, maxY)를 맡긴 worker끼리는 색상 버퍼를 안전하게 공유할 수 있다.
     void BeginLineRows(int minY, int maxY);
     void DrawTriangle(const PreparedTriangle &, RasterPass);
+    // DepthOwner 패스로 타일의 모든 삼각형을 그린 뒤 부른다. 기록된 픽셀마다 그 삼각형으로 한 번 셰이딩한다.
+    void ShadeOwners();
     void DrawWireTriangle(const PreparedTriangle &, ELineAlgorithm, bool depthTest = true);
     void DrawDebugPrimitive(const DebugPrimitiveCommand &, ELineAlgorithm);
     static std::optional<PreparedDebugLine> PrepareDepthTestedLine(const DebugVertex &, const DebugVertex &,
@@ -82,6 +84,8 @@ class Rasterizer
     std::array<bool, 16> m_blockFull{};
     float m_tileMinimum = 0.f;
     bool m_tileFull = false;
+    // 픽셀마다 마지막으로 색을 쓸 삼각형(재질이 있고 깊이 검사를 통과한 것). 16x16 타일 기준이다.
+    std::array<const PreparedTriangle *, 256> m_owners{};
 
     // 패스 선택은 삼각형당 한 번만 한다. 픽셀 루프에는 depth-only의 조명 분기를 남기지 않는다.
     template <bool Instrumented, RasterPass Pass> void DrawTriangleImpl(const PreparedTriangle &);

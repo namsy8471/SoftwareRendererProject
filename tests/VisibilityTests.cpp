@@ -107,6 +107,8 @@ void drawPrepared(RenderTarget &target, const RenderFrameContext &frame,
                 {x, y, std::min(x + tileSize, target.Width()), std::min(y + tileSize, target.Height())}, hiZ);
             for (const auto &triangle : triangles)
                 rasterizer.DrawTriangle(triangle, pass);
+            if (pass == RasterPass::DepthOwner)
+                rasterizer.ShadeOwners();
         }
 }
 void depthAndHiZTests()
@@ -176,9 +178,10 @@ void variableDepthHiZTests()
     Material red, blue;
     red.ambient = {1.f, .125f, 0.f};
     blue.ambient = {0.f, .25f, 1.f};
-    MeshRenderCommand redCommand{}, blueCommand{};
+    MeshRenderCommand redCommand{}, blueCommand{}, bareCommand{};
     redCommand.material = &red;
     blueCommand.material = &blue;
+    // 재질 없는 삼각형은 깊이만 이기고 색은 쓰지 않는다. 그 아래 색이 남아야 한다.
     const RenderFrameContext frame{SRMath::mat4::identity(), {0.f, 0.f, 5.f}, {}, 3, 3};
     std::mt19937 random(0x48A17u);
     std::uniform_real_distribution<float> position(-1.f, 1.f), factor(.125f, 1.875f);
@@ -221,6 +224,18 @@ void variableDepthHiZTests()
                         "variable-q Hi-Z preserves exact color/depth/owner across orders and passes");
                 rejected += stats.hiZRejected;
             }
+            // 깊이 먼저, 주인 삼각형으로 픽셀당 한 번 셰이딩하는 패스는 Shaded 패스와 색/깊이/ID가 같아야
+            // 한다.
+            image.target.Clear();
+            drawPrepared(image.target, frame, geometry, false, nullptr, RasterPass::Shaded);
+            const auto shaded = snapshot(image.target);
+            for (const bool hiZ : {false, true})
+            {
+                image.target.Clear();
+                drawPrepared(image.target, frame, geometry, hiZ, nullptr, RasterPass::DepthOwner);
+                require(snapshot(image.target) == shaded,
+                        "owner pass shades each pixel once with the same result as the shaded pass");
+            }
         }
     };
 
@@ -253,7 +268,8 @@ void variableDepthHiZTests()
                 std::swap(points[1], points[2]);
             const auto prepared = Rasterizer::Prepare(
                 clipVertex(points[0].x, points[0].y, q[0]), clipVertex(points[1].x, points[1].y, q[1]),
-                clipVertex(points[2].x, points[2].y, q[2]), width, height, triangle, &blueCommand);
+                clipVertex(points[2].x, points[2].y, q[2]), width, height, triangle,
+                triangle % 4 == 3 ? &bareCommand : &blueCommand);
             require(prepared.has_value(), "finite positive random-q triangle prepares");
             geometry.push_back(*prepared);
         }
