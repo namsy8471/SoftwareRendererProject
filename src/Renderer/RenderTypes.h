@@ -19,7 +19,9 @@ enum class RasterPass
 {
     Shaded,
     DepthOnly,
-    ShadeVisible
+    ShadeVisible,
+    // 깊이/ID만 갱신하고 색을 쓸 삼각형을 픽셀마다 기록한다. 셰이딩은 ShadeOwners에서 픽셀당 한 번 한다.
+    DepthOwner
 };
 
 struct TileBounds

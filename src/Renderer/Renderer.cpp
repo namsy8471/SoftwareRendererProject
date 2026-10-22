@@ -228,9 +228,14 @@ void Renderer::renderTiles(RenderTarget &target, const FrameContext &frame, bool
                             rasterizer.DrawTriangle(*triangle, RasterPass::ShadeVisible);
                 }
                 else
+                {
+                    // 겹친 픽셀(평균 1.8번 덮임)을 매번 셰이딩하지 않는다. 깊이 검사를 끝까지 한 뒤
+                    // 마지막에 색을 썼을 삼각형으로만 픽셀당 한 번 셰이딩한다. 같은 식이라 색이 같다.
                     for (const auto *triangle : bin)
                         if (triangle->sourceCommand->rasterizeMode == ERasterizeMode::Fill)
-                            rasterizer.DrawTriangle(*triangle, RasterPass::Shaded);
+                            rasterizer.DrawTriangle(*triangle, RasterPass::DepthOwner);
+                    rasterizer.ShadeOwners();
+                }
             }
         },
         tbb::simple_partitioner());
