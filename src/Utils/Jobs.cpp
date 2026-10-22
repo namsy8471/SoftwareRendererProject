@@ -1,6 +1,7 @@
 #include "Utils/Jobs.h"
 
 #if !defined(SR_JOB_BACKEND_TBB)
+#include <bit>
 #include <chrono>
 #include <cstdio>
 #include <cwchar>
@@ -18,7 +19,8 @@
 // - worker는 (하드웨어 스레드 - 1)개를 처음 쓸 때 만들고 프로세스가 끝날 때까지 둔다. 호출 스레드도 참여한다.
 // - 작업 하나 = 조각 n개. 참여자마다 연속 구간을 주고, 자기 구간을 다 쓰면 남은 것이 가장 많은 구간의
 //   뒤쪽 절반을 훔친다(TBB의 범위 분할 훔치기와 같은 모양을 공유 카운터 없이 만든다).
-// - 일이 끝난 worker는 잠깐 돌며(pause) 다음 작업을 기다리고, 오래 없으면 OS 대기(atomic::wait)로 잠든다.
+// - 일이 끝난 worker는 잠깐 돌며(pause) 다음 작업을 기다리고, 오래 없으면 자기 표식(atomic::wait)에서 잠든다.
+//   작업을 공개하면 필요한 helper 수만큼만 골라 깨운다.
 // - 작업은 고정 칸(slots)에 공개한다. 중첩 작업(스키닝의 primitive 안 정점 분할)과 여러 호출 스레드가
 //   동시에 낸 작업도 각자 칸을 쓴다. 칸이 다 차면 그 작업은 호출 스레드 혼자 처리한다.
 #if defined(_MSC_VER)
@@ -36,6 +38,8 @@ using Clock = std::chrono::steady_clock;
 constexpr auto workerSpin = std::chrono::microseconds(200);
 // 호출 스레드가 다른 참여자의 마지막 조각을 기다리며 도는 시간. 그 뒤에는 OS 대기로 넘어간다.
 constexpr auto ownerSpin = std::chrono::microseconds(50);
+// 잠든 worker 표시(비트 i = worker i+1). worker는 최대 maximumParticipants - 1 = 63개라 64비트 하나로 충분하다.
+static_assert(maximumParticipants <= 65);
 
 constexpr std::uint64_t pack(std::uint32_t first, std::uint32_t last) noexcept
 {
@@ -264,8 +268,7 @@ class Pool
             return;
         }
         m_epoch.fetch_add(1);
-        if (m_sleepers.load() != 0)
-            m_epoch.notify_all();
+        wakeHelpers(job.participants - 1);
 
         const auto completed = participate(job, 0);
         if (job.done.fetch_add(completed) + completed != job.chunkCount)
@@ -366,30 +369,74 @@ class Pool
             const auto seen = m_epoch.load();
             if (helpAny())
                 continue;
-            waitForWork(seen);
+            waitForWork(index, seen);
         }
     }
 
-    void waitForWork(std::uint32_t seen) noexcept
+    // 작업에 필요한 helper 수만큼만 깨운다. 이미 돌며 기다리는 worker는 세대 변화를 스스로 보므로 빼고,
+    // 모자란 만큼 잠든 worker를 하나씩 골라 그 worker의 표식에만 알린다.
+    // PC 1차(1b514d3)는 작업마다 notify_all로 잠든 worker를 모두 깨웠다. 조각 2~4개짜리 작업(정렬, 메시 몇 개)
+    // 에도 23개가 깨어나 200 µs씩 돌았고, 같은 코어의 하이퍼스레드 짝이 하는 래스터를 늦췄다.
+    void wakeHelpers(std::uint32_t wanted) noexcept
     {
+        const auto spinning = m_spinning.load();
+        if (wanted <= spinning)
+            return;
+        auto missing = wanted - spinning;
+        auto mask = m_sleepMask.load();
+        while (missing != 0 && mask != 0)
+        {
+            const auto bit = mask & (~mask + 1);
+            if (!m_sleepMask.compare_exchange_weak(mask, mask & ~bit))
+                continue;
+            auto &wake = m_wake[std::countr_zero(bit)].value;
+            wake.store(1, std::memory_order_release);
+            wake.notify_one();
+            mask &= ~bit;
+            --missing;
+        }
+    }
+
+    void waitForWork(std::size_t index, std::uint32_t seen) noexcept
+    {
+        m_spinning.fetch_add(1, std::memory_order_relaxed);
         const auto start = Clock::now();
         for (unsigned spin = 1;; ++spin)
         {
             if (m_epoch.load(std::memory_order_relaxed) != seen)
+            {
+                m_spinning.fetch_sub(1, std::memory_order_relaxed);
                 return;
+            }
             _mm_pause();
             if ((spin & 1023) == 0 && Clock::now() - start > workerSpin)
                 break;
         }
-        // 공개하는 쪽은 세대 증가 → sleepers 읽기, 여기서는 sleepers 증가 → 세대 비교(wait) 순서다.
-        m_sleepers.fetch_add(1);
-        m_epoch.wait(seen);
-        m_sleepers.fetch_sub(1, std::memory_order_relaxed);
+        m_spinning.fetch_sub(1, std::memory_order_relaxed);
+
+        // 공개하는 쪽은 세대 증가 → 표시 읽기, 여기서는 표시 세우기 → 세대 비교 순서라(seq_cst)
+        // 둘 중 하나는 상대의 쓰기를 본다.
+        const auto bit = std::uint64_t{1} << (index - 1);
+        auto &wake = m_wake[index - 1].value;
+        m_sleepMask.fetch_or(bit);
+        if (m_epoch.load() != seen && (m_sleepMask.fetch_and(~bit) & bit) != 0)
+            return; // 아무도 고르기 전에 표시를 스스로 거뒀다.
+        // 표시를 거둔 쪽(공개하는 쪽)이 곧 표식을 세운다.
+        while (wake.load(std::memory_order_acquire) == 0)
+            wake.wait(0);
+        wake.store(0, std::memory_order_relaxed);
     }
+
+    struct alignas(64) WakeFlag
+    {
+        std::atomic<std::uint32_t> value{0};
+    };
 
     Slot m_slots[slotCount];
     alignas(64) std::atomic<std::uint32_t> m_epoch{0};
-    alignas(64) std::atomic<std::uint32_t> m_sleepers{0};
+    alignas(64) std::atomic<std::uint32_t> m_spinning{0};
+    alignas(64) std::atomic<std::uint64_t> m_sleepMask{0};
+    WakeFlag m_wake[maximumParticipants];
     std::size_t m_workers = 0;
     // 닫는 중인 칸 표시. 실제 작업으로 쓰지 않는다.
     Job m_closing;
