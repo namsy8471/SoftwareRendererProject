@@ -202,11 +202,14 @@ void Renderer::renderTiles(RenderTarget &target, const FrameContext &frame, bool
                 stats = {};
                 const int x = static_cast<int>(index % frame.tilesX) * tileSize;
                 const int y = static_cast<int>(index / frame.tilesX) * tileSize;
-                // 타일은 화면을 겹침 없이 덮는다. 래스터 직전에 지워 값이 캐시에 남은 채로 쓴다.
-                if (clearTiles)
-                    target.ClearRect(x, y, std::min(x + tileSize, m_width), std::min(y + tileSize, m_height));
+                // 타일은 화면을 겹침 없이 덮는다. 빈 타일만 여기서 지운다. 그릴 타일은 Rasterizer가
+                // 지운 값으로 시작하는 L1 타일 버퍼에 그리고 끝에 한 번만 쓴다(먼저 지우고 다시 쓰지 않는다).
                 if (bin.empty())
+                {
+                    if (clearTiles)
+                        target.ClearRect(x, y, std::min(x + tileSize, m_width), std::min(y + tileSize, m_height));
                     continue;
+                }
                 if (m_options.frontToBack)
                     std::sort(bin.begin(), bin.end(),
                               [](const auto *a, const auto *b)
@@ -217,7 +220,8 @@ void Renderer::renderTiles(RenderTarget &target, const FrameContext &frame, bool
                               });
                 Rasterizer rasterizer(target, frame, m_options.collectStats ? &stats : nullptr);
                 rasterizer.BeginTile(
-                    {x, y, std::min(x + tileSize, m_width), std::min(y + tileSize, m_height)}, m_options.hiZ);
+                    {x, y, std::min(x + tileSize, m_width), std::min(y + tileSize, m_height)}, m_options.hiZ,
+                    clearTiles, &m_tileBuffers.local());
                 if (needsDepthPrepass)
                 {
                     // 혼합 모드도 모든 면의 깊이를 먼저 완성해야 뒤쪽 채움 색이 남지 않는다.
