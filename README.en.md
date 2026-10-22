@@ -38,15 +38,15 @@ Since 2026-10-20, an AI (Claude) writes and optimizes the code. Changes are judg
 
 ## AI work summary (2026-10-20 to 10-22)
 
-**Bottom line: the 100 fps goal at 1920×1080 is met in all three modes.** On the PC (MSVC Release x64, 24 threads) the slow-frame times (p95) are fill 3.42 ms, wire 3.92 ms and normal 7.47 ms, all inside the p95 ≤ 9 ms bar. Against the first 1080p measurement on 2026-10-21, mean frame time fell by 47–55%.
+**Bottom line: the 100 fps goal at 1920×1080 is met in all three modes.** On the PC (MSVC Release x64, 24 threads) the slow-frame times (p95) are fill 3.39 ms, wire 4.15 ms and normal 6.05 ms, all inside the p95 ≤ 9 ms bar. Against the first 1080p measurement on 2026-10-21, mean frame time fell by 54–56%.
 
-| Mode | First (2026-10-21) mean / p95 | Now (main, 2026-10-22) mean / p95 | Mean time | Mean fps |
+| Mode | First (2026-10-21) mean / p95 | Now (main 8df4d1b) mean / p95 | Mean time | Mean fps |
 |---|---|---|---|---|
-| fill | 6.66 / 7.90 ms | 3.10 / 3.42 ms | **−53.5%** | 150 → **323** |
-| wire | 7.27 / 8.56 ms | 3.27 / 3.92 ms | **−55.0%** | 138 → **306** |
-| normal | 11.27 / 12.69 ms (missed the bar) | 5.99 / 7.47 ms | **−46.8%** | 89 → **167** |
+| fill | 6.66 / 7.90 ms | 2.95 / 3.39 ms | **−55.8%** | 150 → **339** |
+| wire | 7.27 / 8.56 ms | 3.33 / 4.15 ms | **−54.2%** | 138 → **300** |
+| normal | 11.27 / 12.69 ms (missed the bar) | 5.14 / 6.05 ms | **−54.4%** | 89 → **195** |
 
-> "First" is `RendererTests --benchmark` just before PR #6 (600 frames, median of 6 runs); "now" is the PR #27 measurement (`srcli bench`, interleaved base/head A/B). They were taken on different days with different tools, so the cumulative change is approximate; the per-PR A/B results below are the exact evidence. Every change kept the pixel hash identical (no visible change).
+> "First" is `RendererTests --benchmark` just before PR #6 (600 frames, median of 6 runs); "now" is a PC A/B (`srcli bench`) of main with #31 merged (8df4d1b) interleaved with main right after #27 (c152e76). In that run #28–#32 together gave fill −11.2%, wire −2.6% (inconclusive) and normal −15.2%. They were taken on different days with different tools, so the cumulative change is approximate; the per-PR A/B results below are the exact evidence. Every change kept the pixel hash identical (no visible change).
 
 ### 1. Optimizations (adopted)
 
@@ -63,6 +63,10 @@ Each PR was measured on the same PC with base and head interleaved, and adopted 
 | #24 | Finish depth testing first, then shade each pixel once (shaded pixels 312,670 → 181,480) | −6.2% | no change | −4.0% |
 | #26 | Shade four pixels at a time in SSE lanes (bit-identical) | −4.0% | n.s. | −2.8% (n.s.) |
 | #27 | Draw in a 16×16 tile buffer and drop the screen-sized triangle ID plane (16 → 8 bytes per pixel) | **−13.3%** | **−8.7%** | **−6.8%** |
+| #28 | Replace oneTBB with an own job system (`sr::jobs`) and drop the dependency | same (n.s.) | same (n.s.) | same (n.s.) |
+| #30 | Sort tile references and prepare normal lines inside the binning job; draw normal-line bands as soon as their tile rows finish (joins removed) | −3.4% | no change | **−8.4%** |
+| #32 | Hybrid CPU: shorter wait spin on E-cores, pool threads opted out of Windows power throttling (EcoQoS) | n.s. | n.s. | −6.3% |
+| #31 | Split tile chunks per thread by last frame's cost (screen order kept) | −2.9% | no change | −2.3% |
 
 Each PR's commit messages hold the VTune and VS CPU Usage hotspots before/after, the MSVC assembly (/FAs) before/after, and the test results.
 
@@ -79,6 +83,9 @@ Changes that were not at least 2% faster, or were slower, were dropped and the r
 | SSE stores for ClearRect and tile buffer copy | No difference (all n.s.) | The cost is cold-memory writes, not call overhead |
 | Wire bands of 8/4 rows | +6% / +9% slower | Lines get walked again in every band they touch |
 | LTCG | 2–4% faster, but full build 27 s → 113 s | |
+| Hand out the costliest tile chunks first (LPT) | PC fill +7.0% slower | Neighbouring tiles land on different cores and lose their cache |
+| Pin pool threads to cores (P-cores first) | PC fill +7.0%, wire +20.4%, normal +10.4% slower | Once pinned, Windows cannot move a busy thread to a P-core |
+| 300 us spin + 5 ms yield before sleeping | fill +19.9%, wire +53.0% slower | yield became the top hotspot |
 
 ### 3. Tools and docs for AI work
 
@@ -112,7 +119,7 @@ Changes that were not at least 2% faster, or were slower, were dropped and the r
 | 4 | #15 | Dependency-free glTF 2.0 loader (`.gltf`/`.glb`, hierarchy, materials, skin and animation data) |
 | 5 | #16 | Animation: quaternions, glTF keyframe playback, CPU skeletal skinning (SSE/AVX, identical results) |
 
-Also: Framework split into Scene, FrameRunner, Win32App and SceneRenderCollector (#9), and a fix for `vec2`/`vec3` `==` reporting equal vectors as different (#12).
+Also: Framework split into Scene, FrameRunner, Win32App and SceneRenderCollector (#9), and a fix for `vec2`/`vec3` `==` reporting equal vectors as different (#12). Parallel work now runs on the own job system (`sr::jobs`, #28) instead of oneTBB.
 
 ## Preview
 
