@@ -169,6 +169,7 @@
 | `ImageCodecTests.cpp` | `codecs.*`: 형식별 fixture 해시, 손상·상한, PNG 왕복 |
 | `GltfTests.cpp` | `gltf.*`: base64, wrap, 계층, 오류·견고성, 렌더 |
 | `AnimationTests.cpp` | `animation.*`: 쿼터니언, 샘플링, 스키닝(스칼라 = AVX), Animator, 장면 연결 |
+| `JobsTests.cpp` | `jobs.*`: `sr::jobs` 범위 분할(모든 항목 정확히 한 번), 예외 전달, 중첩·동시 호출, `ConcurrencyLimit`, `IsolatedRunner`, `PerWorker` |
 | `IOTests.cpp` | `io.*`: JSON 파싱·쓰기, 파일 함수, BackgroundLoader |
 | `ProjectTests.cpp` | `project.*`: 프로젝트/씬 JSON 왕복, 형식 오류, 생성·가져오기, ProjectSession |
 | `RendererCoreTests.cpp` | `renderer.*`: 클리핑, 작업자 격리, 명령 캐시, 타일 참조, 래스터 경로, Phong, FXAA |

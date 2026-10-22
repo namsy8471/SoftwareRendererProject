@@ -33,6 +33,11 @@ else()
   find_package(TBB REQUIRED)
   set(SR_TBB_TARGET TBB::tbb)
 endif()
+find_package(Threads REQUIRED)
+
+# --- 작업 스케줄러: 기본은 자체 스레드 풀(src/Utils/Jobs.cpp). TBB는 같은 API의 비교용 백엔드 ---
+set(SR_JOB_BACKEND "Native" CACHE STRING "sr::jobs backend: Native (own thread pool) or TBB (comparison)")
+set_property(CACHE SR_JOB_BACKEND PROPERTY STRINGS Native TBB)
 
 # --- 공통 컴파일 설정 ---
 add_library(sr_options INTERFACE)
@@ -79,7 +84,10 @@ file(GLOB_RECURSE SR_CORE_SOURCES CONFIGURE_DEPENDS
      "${CMAKE_SOURCE_DIR}/src/IO/*.cpp" "${CMAKE_SOURCE_DIR}/src/Project/*.cpp"
      "${CMAKE_SOURCE_DIR}/src/Animation/*.cpp")
 add_library(sr_core STATIC ${SR_CORE_SOURCES})
-target_link_libraries(sr_core PUBLIC sr_options ${SR_TBB_TARGET})
+target_link_libraries(sr_core PUBLIC sr_options ${SR_TBB_TARGET} Threads::Threads)
+if(SR_JOB_BACKEND STREQUAL "TBB")
+  target_compile_definitions(sr_core PUBLIC SR_JOB_BACKEND_TBB)
+endif()
 # AVX 구현만 AVX로 컴파일한다(런타임 CPUID로 선택). 다른 파일에 AVX가 섞이지 않게 한다.
 if(MSVC)
   set_source_files_properties("${CMAKE_SOURCE_DIR}/src/Math/SIMD_AVX.cpp"

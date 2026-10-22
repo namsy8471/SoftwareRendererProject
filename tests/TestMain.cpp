@@ -110,6 +110,7 @@ int main(int argc, char **argv)
 
         TestRegistry registry;
         RegisterMathTests(registry);
+        RegisterJobsTests(registry);
         RegisterAssetTests(registry);
         RegisterImageCodecTests(registry);
         RegisterRenderTargetTests(registry);

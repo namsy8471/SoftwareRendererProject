@@ -20,6 +20,7 @@
     <ClCompile Include="src\Scene\GameObject.cpp" />
     <ClCompile Include="src\Scene\Scene.cpp" />
     <ClCompile Include="src\Utils\PerformanceAnalyzer.cpp" />
+    <ClCompile Include="src\Utils\Jobs.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="SoftrendererProject.h" />
