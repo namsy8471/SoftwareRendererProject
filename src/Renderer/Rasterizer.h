@@ -11,6 +11,15 @@ struct DebugPrimitiveCommand;
 struct DebugVertex;
 struct Material;
 
+// 16x16 타일 하나의 색/깊이/ID 작업 버퍼(4KB). L1에 머무르며 worker마다 하나를 재사용한다.
+// Rasterizer 안에 두면 스택에 Rasterizer를 두는 함수가 16KB를 넘어 /analyze C6262에 걸린다.
+struct TileBuffer
+{
+    std::array<float, 256> depth;
+    std::array<std::uint64_t, 256> ids;
+    std::array<unsigned int, 256> color;
+};
+
 // 타깃은 빌려 쓰며 한 인스턴스는 한 타일 worker에서만 사용한다.
 class Rasterizer
 {
@@ -38,7 +47,12 @@ class Rasterizer
         : m_target(target), m_frame(frame), m_stats(stats), m_lineMaxY(target.Height()),
           m_ownerScratch(ThreadOwnerScratch())
     {
+        useTarget();
     }
+    Rasterizer(const Rasterizer &) = delete;
+    Rasterizer &operator=(const Rasterizer &) = delete;
+    // 타일 버퍼에 남은 값을 타깃에 쓴다.
+    ~Rasterizer() { EndTile(); }
 
     static RasterizerVertex ToRasterizerVertex(const ShadedVertex &, int width, int height);
     static std::optional<PreparedTriangle> Prepare(const ShadedVertex &, const ShadedVertex &,
@@ -55,7 +69,11 @@ class Rasterizer
                                                          const RasterizerVertex &, int width, int height,
                                                          std::uint64_t primitiveId,
                                                          const MeshRenderCommand *command);
-    void BeginTile(TileBounds bounds, bool hiZ);
+    // buffer를 주면 16x16 이하 타일은 색/깊이/ID를 그 타일 버퍼에서 그리고 EndTile에서 타깃에 한 번 쓴다.
+    // cleared면 타깃을 읽지 않고 Clear와 같은 값으로 시작한다(타깃의 그 영역은 EndTile이 덮는다).
+    // buffer가 없으면 예전처럼 타깃에 바로 그린다(cleared는 무시하므로 호출자가 먼저 지운다).
+    void BeginTile(TileBounds bounds, bool hiZ, bool cleared = false, TileBuffer *buffer = nullptr);
+    void EndTile();
     // 선의 픽셀 위상을 바꾸지 않고 담당 행만 그린다. Bresenham은 원래
     // 정수 오차 상태를 복원해 건너뛰며 DDA는 순차 누적을 유지한다. 서로 겹치지 않는
     // [minY, maxY)를 맡긴 worker끼리는 색상 버퍼를 안전하게 공유할 수 있다.
@@ -110,11 +128,20 @@ class Rasterizer
                                const RenderFrameContext &, SRMath::vec3 (&)[4]);
     OwnerScratch &m_ownerScratch;
     std::array<std::uint64_t, 4> m_ownerMask{};
+    // 픽셀 (x, y)는 base[(y - m_originY) * stride + (x - m_originX)]다. 타일 버퍼거나 타깃 전체다.
+    float *m_depthBase = nullptr;
+    std::uint64_t *m_idBase = nullptr;
+    unsigned int *m_colorBase = nullptr;
+    std::size_t m_depthStride = 0, m_colorStride = 0;
+    int m_originX = 0, m_originY = 0;
+    bool m_local = false;
+    TileBuffer *m_tile = nullptr;
 
     // 패스 선택은 삼각형당 한 번만 한다. 픽셀 루프에는 depth-only의 조명 분기를 남기지 않는다.
     template <bool Instrumented, RasterPass Pass> void DrawTriangleImpl(const PreparedTriangle &);
     bool IsOccluded(const PreparedTriangle &);
     void RefreshHiZ();
+    void useTarget();
     void DrawScreenLine(SRMath::vec2 a, SRMath::vec2 b, float qa, float qb, std::uint32_t bgrx,
                         ELineAlgorithm, bool depthTest, float slopeX = 0.f, float slopeY = 0.f);
     static bool ClipLine(SRMath::vec4 &a, SRMath::vec4 &b);

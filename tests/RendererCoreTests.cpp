@@ -1082,6 +1082,61 @@ void renderSmoke(const TestContext &context)
         check(memory.target.Width() == size, "resize dimensions");
     }
 }
+// 앱/srcli는 ID 면 없는 타깃(Attach(..., false))에 그린다. 색과 깊이, 채운 픽셀 수가 ID 면이 있는 타깃과 같아야 한다.
+void primitiveIdPlaneOptional(const TestContext &context)
+{
+    constexpr int width = 200, height = 150; // 16의 배수가 아닌 크기로 가장자리 타일도 확인한다.
+    std::vector<unsigned int> withPixels(width * height), withoutPixels(width * height);
+    RenderTarget with, without;
+    check(with.Attach({withPixels, width, height, width}).has_value() &&
+              without.Attach({withoutPixels, width, height, width}, false).has_value(),
+          "id plane optional attachment");
+    check(with.HasPrimitiveIds() && !without.HasPrimitiveIds() && without.PrimitiveIds().empty() &&
+              without.Depth().size() == withPixels.size(),
+          "target without id plane keeps depth only");
+    std::array<bool, 256> keys{};
+    Camera camera({0.f, 1.f, 8.f});
+    camera.SetCameraYaw(std::numbers::pi_v<float>);
+    camera.Update(0.f, keys, static_cast<float>(width) / height);
+    const std::array<DirectionalLight, 1> lights{DirectionalLight{{0.f, -1.f, 0.f}, {1.f, 1.f, 1.f}}};
+    auto object = loadObject(context.root / "assets" / "IronMan", {0.f, 0.f, 0.f}, 0.04f);
+    object->Update(0.016f, true);
+    for (int variant = 0; variant < 5; ++variant)
+        for (int mode = 0; mode < 3; ++mode)
+            for (bool clearInRenderer : {false, true})
+            {
+                DebugFlags flags{};
+                flags.bShowWireframe = mode == 1;
+                flags.bShowNormal = mode == 2;
+                RenderOptions options;
+                options.collectStats = true;
+                options.hiZ = variant == 1 || variant == 3;
+                options.frontToBack = variant == 2 || variant == 3;
+                options.hiddenWireframe = variant == 4;
+                RenderQueue queue;
+                SceneRenderCollector().Collect(*object, camera.GetFrustum(), flags, queue);
+                const auto render = [&](RenderTarget &target)
+                {
+                    Renderer renderer;
+                    renderer.SetOptions(options);
+                    if (clearInRenderer)
+                        renderer.ClearAndRenderScene(target, queue, camera.GetViewParams(), lights);
+                    else
+                    {
+                        target.Clear();
+                        renderer.RenderScene(target, queue, camera.GetViewParams(), lights);
+                    }
+                    return renderer.GetStats().finalFilledPixels;
+                };
+                const auto filledWith = render(with);
+                const auto filledWithout = render(without);
+                check(withPixels == withoutPixels && std::ranges::equal(with.Depth(), without.Depth()),
+                      "target without id plane renders identical color and depth");
+                // X-ray 와이어는 면을 채우지 않는다(0개).
+                check(filledWith == filledWithout && (filledWith > 0) == (mode != 1 || variant == 4),
+                      "filled pixel count without id plane matches the id count");
+            }
+}
 } // namespace
 
 void sr::test::RegisterRendererTests(TestRegistry &registry)
@@ -1096,4 +1151,5 @@ void sr::test::RegisterRendererTests(TestRegistry &registry)
                  { RendererTestAccess::phongLighting(context.root); });
     registry.Add("renderer.fxaaBasics", fxaaTests);
     registry.Add("renderer.smoke", renderSmoke);
+    registry.Add("renderer.primitiveIdPlaneOptional", primitiveIdPlaneOptional);
 }

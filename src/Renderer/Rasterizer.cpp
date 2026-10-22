@@ -245,13 +245,66 @@ std::optional<PreparedTriangle> Rasterizer::PrepareRaster(const RasterizerVertex
     return t;
 }
 
-void Rasterizer::BeginTile(TileBounds bounds, bool hiZ)
+void Rasterizer::useTarget()
 {
+    const auto surface = m_target.Surface();
+    m_depthBase = m_target.Depth().data();
+    // ID 면이 없는 타깃이면 nullptr다. 그런 타깃의 삼각형은 타일 버퍼로만 그린다(DrawTriangle).
+    m_idBase = m_target.HasPrimitiveIds() ? m_target.PrimitiveIds().data() : nullptr;
+    m_colorBase = surface.pixels.data();
+    m_depthStride = static_cast<std::size_t>(m_target.Width());
+    m_colorStride = surface.stridePixels;
+    m_originX = m_originY = 0;
+    m_local = false;
+}
+
+void Rasterizer::BeginTile(TileBounds bounds, bool hiZ, bool cleared, TileBuffer *buffer)
+{
+    EndTile();
     bounds.minX = std::clamp(bounds.minX, 0, m_target.Width());
     bounds.minY = std::clamp(bounds.minY, 0, m_target.Height());
     bounds.maxX = std::clamp(bounds.maxX, bounds.minX, m_target.Width());
     bounds.maxY = std::clamp(bounds.maxY, bounds.minY, m_target.Height());
     m_bounds = bounds;
+    const int width = bounds.maxX - bounds.minX, height = bounds.maxY - bounds.minY;
+    if (buffer && !m_target.Empty() && width > 0 && height > 0 && width <= 16 && height <= 16)
+    {
+        m_tile = buffer;
+        // 타일 버퍼는 L1에 있다. 타깃은 EndTile에서 행마다 한 번만 쓴다.
+        if (cleared)
+        {
+            m_tile->depth.fill(RenderTarget::emptyDepth);
+            m_tile->ids.fill(RenderTarget::emptyOwner);
+            m_tile->color.fill(0u);
+        }
+        else
+        {
+            const auto surface = m_target.Surface();
+            const bool ids = m_target.HasPrimitiveIds();
+            for (int y = 0; y < height; ++y)
+            {
+                const auto row = static_cast<std::size_t>(bounds.minY + y);
+                const auto first = row * m_target.Width() + bounds.minX;
+                std::copy_n(m_target.Depth().data() + first, width, m_tile->depth.data() + y * 16);
+                if (ids)
+                    std::copy_n(m_target.PrimitiveIds().data() + first, width, m_tile->ids.data() + y * 16);
+                else
+                    // ID 면이 없으면 이미 그려진 픽셀의 주인은 가장 작은 ID(0)로 본다. 같은 깊이면 먼저 그린 쪽이 남는다.
+                    for (int x = 0; x < width; ++x)
+                        m_tile->ids[y * 16 + x] =
+                            m_tile->depth[y * 16 + x] == RenderTarget::emptyDepth ? RenderTarget::emptyOwner : 0;
+                std::copy_n(surface.pixels.data() + row * surface.stridePixels + bounds.minX, width,
+                            m_tile->color.data() + y * 16);
+            }
+        }
+        m_depthBase = m_tile->depth.data();
+        m_idBase = m_tile->ids.data();
+        m_colorBase = m_tile->color.data();
+        m_depthStride = m_colorStride = 16;
+        m_originX = bounds.minX;
+        m_originY = bounds.minY;
+        m_local = true;
+    }
     // 4x4 요약 16개는 최대 16x16 타일만 표현한다.
     m_hiZ = hiZ && !m_target.Empty() && bounds.maxX > bounds.minX && bounds.maxY > bounds.minY &&
             bounds.maxX - bounds.minX <= 16 && bounds.maxY - bounds.minY <= 16;
@@ -262,10 +315,28 @@ void Rasterizer::BeginTile(TileBounds bounds, bool hiZ)
         RefreshHiZ();
 }
 
+void Rasterizer::EndTile()
+{
+    if (!m_local || !m_tile)
+        return;
+    const auto surface = m_target.Surface();
+    const int width = m_bounds.maxX - m_bounds.minX;
+    const bool ids = m_target.HasPrimitiveIds();
+    for (int y = 0; y < m_bounds.maxY - m_bounds.minY; ++y)
+    {
+        const auto row = static_cast<std::size_t>(m_bounds.minY + y);
+        const auto first = row * m_target.Width() + m_bounds.minX;
+        std::copy_n(m_tile->depth.data() + y * 16, width, m_target.Depth().data() + first);
+        if (ids)
+            std::copy_n(m_tile->ids.data() + y * 16, width, m_target.PrimitiveIds().data() + first);
+        std::copy_n(m_tile->color.data() + y * 16, width,
+                    surface.pixels.data() + row * surface.stridePixels + m_bounds.minX);
+    }
+    useTarget();
+}
+
 void Rasterizer::RefreshHiZ()
 {
-    const auto depth = m_target.Depth();
-    const auto ids = m_target.PrimitiveIds();
     m_tileFull = true;
     m_tileMinimum = std::numeric_limits<float>::infinity();
     for (int by = 0; by < 4; ++by)
@@ -281,9 +352,9 @@ void Rasterizer::RefreshHiZ()
             for (int y = y0; y < y1; ++y)
                 for (int x = x0; x < x1; ++x)
                 {
-                    const auto index = static_cast<std::size_t>(y) * m_target.Width() + x;
-                    const float q = depth[index];
-                    if (ids[index] == noPrimitive || !(q > 0.f) || !std::isfinite(q))
+                    const auto index = static_cast<std::size_t>(y - m_originY) * m_depthStride + (x - m_originX);
+                    const float q = m_depthBase[index];
+                    if (m_idBase[index] == noPrimitive || !(q > 0.f) || !std::isfinite(q))
                         full = false;
                     minimum = std::min(minimum, q);
                 }
@@ -331,7 +402,7 @@ bool Rasterizer::IsOccluded(const PreparedTriangle &t)
 
 void Rasterizer::DrawTriangle(const PreparedTriangle &t, RasterPass pass)
 {
-    if (m_target.Empty())
+    if (m_target.Empty() || !m_idBase)
         return;
     if (m_hiZ && pass != RasterPass::ShadeVisible && IsOccluded(t))
         return;
@@ -397,9 +468,9 @@ template <bool Instrumented, RasterPass Pass> void Rasterizer::DrawTriangleImpl(
     if (!smallEdges && (!safeEdge(r0, t.dx12Fixed, t.dy12Fixed) || !safeEdge(r1, t.dx20Fixed, t.dy20Fixed) ||
                         !safeEdge(r2, t.dx01Fixed, t.dy01Fixed)))
         return;
-    auto depth = m_target.Depth();
-    auto ids = m_target.PrimitiveIds();
-    auto surface = m_target.Surface();
+    float *const depth = m_depthBase;
+    std::uint64_t *const ids = m_idBase;
+    unsigned int *const colors = m_colorBase;
     // edge 값이 이미 덮였다고 판정된 픽셀 하나를 처리한다. float 연산 순서는 기존과 같다.
     const auto shadePixel = [&](int x, int y, std::int64_t w0, std::int64_t w1, std::int64_t w2)
                                 SR_FORCEINLINE_LAMBDA
@@ -417,7 +488,7 @@ template <bool Instrumented, RasterPass Pass> void Rasterizer::DrawTriangleImpl(
             float q = t.rv0.oneOverW * a;
             q += t.rv1.oneOverW * b;
             q += t.rv2.oneOverW * c;
-            const auto index = static_cast<std::size_t>(y) * m_target.Width() + x;
+            const auto index = static_cast<std::size_t>(y - m_originY) * m_depthStride + (x - m_originX);
             const bool finite = std::isfinite(q) && q > 0.f;
             const bool visible = Pass == RasterPass::ShadeVisible
                                      ? ids[index] == t.primitiveId && depth[index] == q
@@ -445,7 +516,7 @@ template <bool Instrumented, RasterPass Pass> void Rasterizer::DrawTriangleImpl(
                     if (t.sourceCommand && t.sourceCommand->material)
                     {
                         const auto sample = InterpolateSurface(t.rv0, t.rv1, t.rv2, a, b, c, 1.f / q);
-                        surface.pixels[static_cast<std::size_t>(y) * surface.stridePixels + x] =
+                        colors[static_cast<std::size_t>(y - m_originY) * m_colorStride + (x - m_originX)] =
                             packColor(ShadeSurface(sample, *t.sourceCommand->material, m_frame));
                         if constexpr (Instrumented)
                             ++m_stats->shadedPixels;
@@ -492,7 +563,6 @@ Rasterizer::OwnerScratch &Rasterizer::ThreadOwnerScratch() noexcept
 void Rasterizer::ShadeOwners()
 {
     static_assert(tileSize == 16);
-    auto surface = m_target.Surface();
     // a, b, c, q는 DrawTriangleImpl<DepthOwner>가 이 픽셀을 마지막으로 통과시킬 때 계산한 값 그대로다.
     // 이전처럼 edge 시작값(toFixed)과 정수 edge 값, 1/total을 다시 계산하지 않는다. 같은 값이라 색이 같다.
     // 픽셀 4개씩(삼각형·재질이 달라도 된다) SSE lane에 나눠 셰이딩하고, 남은 3개 이하는 스칼라로 한다.
@@ -500,7 +570,7 @@ void Rasterizer::ShadeOwners()
     {
         const int x = m_bounds.minX + static_cast<int>(cell & 15);
         const int y = m_bounds.minY + static_cast<int>(cell >> 4);
-        surface.pixels[static_cast<std::size_t>(y) * surface.stridePixels + x] = packColor(color);
+        m_colorBase[static_cast<std::size_t>(y - m_originY) * m_colorStride + (x - m_originX)] = packColor(color);
     };
     std::size_t pending[4] = {};
     int count = 0;
@@ -709,6 +779,7 @@ void Rasterizer::DrawScreenLine(SRMath::vec2 a, SRMath::vec2 b, float qa, float 
 
 void Rasterizer::BeginLineRows(int minY, int maxY)
 {
+    EndTile();
     m_lineMinY = std::clamp(minY, 0, m_target.Height());
     m_lineMaxY = std::clamp(maxY, m_lineMinY, m_target.Height());
 }

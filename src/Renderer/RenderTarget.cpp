@@ -6,7 +6,7 @@
 #include <tbb/blocked_range.h>
 #include <tbb/parallel_for.h>
 
-std::expected<void, RenderTargetError> RenderTarget::Attach(PixelSurfaceView surface)
+std::expected<void, RenderTargetError> RenderTarget::Attach(PixelSurfaceView surface, bool keepPrimitiveIds)
 {
     Detach();
     if (surface.width < 0 || surface.height < 0)
@@ -33,7 +33,8 @@ std::expected<void, RenderTargetError> RenderTarget::Attach(PixelSurfaceView sur
     try
     {
         m_depth.assign(pixelCount, emptyDepth);
-        m_primitiveIds.assign(pixelCount, emptyOwner);
+        if (keepPrimitiveIds)
+            m_primitiveIds.assign(pixelCount, emptyOwner);
     }
     catch (const std::bad_alloc &)
     {
@@ -69,19 +70,22 @@ void RenderTarget::clearRows(int firstRow, int lastRow) noexcept
     const auto first = static_cast<std::size_t>(firstRow) * width;
     const auto count = static_cast<std::size_t>(lastRow - firstRow) * width;
     std::ranges::fill(std::span(m_depth).subspan(first, count), emptyDepth);
-    std::ranges::fill(std::span(m_primitiveIds).subspan(first, count), emptyOwner);
+    if (!m_primitiveIds.empty())
+        std::ranges::fill(std::span(m_primitiveIds).subspan(first, count), emptyOwner);
 }
 
 void RenderTarget::ClearRect(int minX, int minY, int maxX, int maxY) noexcept
 {
     const auto width = static_cast<std::size_t>(maxX - minX);
+    const bool ids = !m_primitiveIds.empty();
     for (int y = minY; y < maxY; ++y)
     {
         const auto row = static_cast<std::size_t>(y) * m_surface.stridePixels + minX;
         std::ranges::fill(m_surface.pixels.subspan(row, width), 0u);
         const auto first = static_cast<std::size_t>(y) * m_surface.width + minX;
         std::ranges::fill(std::span(m_depth).subspan(first, width), emptyDepth);
-        std::ranges::fill(std::span(m_primitiveIds).subspan(first, width), emptyOwner);
+        if (ids)
+            std::ranges::fill(std::span(m_primitiveIds).subspan(first, width), emptyOwner);
     }
 }
 

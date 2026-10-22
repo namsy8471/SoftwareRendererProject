@@ -137,7 +137,8 @@ std::expected<RunResult, std::string> Run(const RunConfig &config)
 
     std::vector<unsigned int> pixels(static_cast<std::size_t>(config.width) * config.height);
     RenderTarget target;
-    if (!target.Attach({pixels, config.width, config.height, static_cast<std::size_t>(config.width)}))
+    // 매 프레임 지우고 그리므로 삼각형 ID를 화면 크기로 보관하지 않는다(픽셀당 8바이트 쓰기 절약, 화면 동일).
+    if (!target.Attach({pixels, config.width, config.height, static_cast<std::size_t>(config.width)}, false))
         return std::unexpected("render target allocation failed");
 
     using Clock = std::chrono::steady_clock;

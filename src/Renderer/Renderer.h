@@ -52,6 +52,7 @@ class Renderer
     std::size_t m_tileReferenceCount = 0;
     // 타일 작업이 활성 worker들의 구간을 이어 붙이는 스레드별 작업 공간. capacity만 재사용한다.
     tbb::enumerable_thread_specific<std::vector<TriangleRef *>> m_tileGather;
+    tbb::enumerable_thread_specific<TileBuffer> m_tileBuffers;
     std::vector<RenderStats> m_tileStats;
     std::vector<std::uint64_t> m_commandTriangleBases;
     std::vector<unsigned int> m_fxaaSnapshot;
