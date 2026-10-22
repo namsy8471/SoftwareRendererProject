@@ -4,6 +4,8 @@
 // MSVC(MSBuild)와 GCC/Clang(CMake) 양쪽에서 같은 의미로 빌드된다.
 #if defined(_MSC_VER)
 #define SR_FORCEINLINE __forceinline
+#define SR_FORCEINLINE_LAMBDA [[msvc::forceinline]]
 #else
 #define SR_FORCEINLINE inline __attribute__((always_inline))
+#define SR_FORCEINLINE_LAMBDA __attribute__((always_inline))
 #endif

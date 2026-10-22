@@ -7,12 +7,15 @@
 #include <limits>
 #include <stdexcept>
 #include <tbb/parallel_for.h>
+#include <xmmintrin.h>
 #include <tbb/blocked_range.h>
 
 Renderer::WorkerScratch::WorkerScratch()
 {
     // 준비 구조가 커졌으므로 작은 초기 용량으로 시작하고 실제 high-water를 재사용한다.
     triangles.reserve(512);
+    vertexCache.resize(vertexCacheSize);
+    vertexTags.resize(vertexCacheSize);
 }
 void Renderer::WorkerScratch::BeginFrame()
 {
@@ -32,22 +35,16 @@ void Renderer::WorkerScratch::BeginFrame()
     clipOutput.clear();
     clippedVertices.clear();
 }
-void Renderer::WorkerScratch::BeginCommand(std::size_t vertexCount)
+void Renderer::WorkerScratch::BeginCommand()
 {
-    // 기존 size-only API는 항상 새 세대를 만든다. 할당 실패 전부터 키를
-    // 무효화해 부분 확장된 저장소가 다음 호출에서 cache hit가 되지 않게 한다.
+    // 항상 새 세대를 만든다. 이전 세대의 칸은 stamp가 달라 모두 무효가 된다.
     transformCacheValid = false;
     if (++commandStamp == 0)
     {
-        std::ranges::fill(vertexStamps, 0);
+        for (auto &tag : vertexTags)
+            tag.stamp = 0;
         commandStamp = 1;
     }
-    // 두 resize 사이에 할당 실패가 나도 다음 호출에서 각각 부족한 저장소를
-    // 복구한다. 한 벡터의 크기를 다른 벡터의 용량 보장으로 사용하지 않는다.
-    if (shadedVertices.size() < vertexCount)
-        shadedVertices.resize(vertexCount);
-    if (vertexStamps.size() < vertexCount)
-        vertexStamps.resize(vertexCount, 0);
 }
 bool Renderer::WorkerScratch::BeginCachedCommand(const MeshRenderCommand &command,
                                                  const SRMath::mat4 &viewProjection)
@@ -69,13 +66,12 @@ bool Renderer::WorkerScratch::BeginCachedCommand(const MeshRenderCommand &comman
             key.worldBits[index] = std::bit_cast<std::uint32_t>(command.worldTransform.cols[column][row]);
             key.viewProjectionBits[index] = std::bit_cast<std::uint32_t>(viewProjection.cols[column][row]);
         }
-    if (transformCacheValid && transformCacheKey == key &&
-        shadedVertices.size() >= key.vertexCount && vertexStamps.size() >= key.vertexCount)
+    if (transformCacheValid && transformCacheKey == key)
         return true;
 
     // Octree의 index 부분집합과 material은 정점 변환에 영향을 주지 않는다.
     // worker/명령 순서를 바꾸지 않고 같은 키에서만 세대와 두 행렬을 유지한다.
-    BeginCommand(key.vertexCount);
+    BeginCommand();
     const SRMath::mat4 mvp = viewProjection * command.worldTransform;
     const auto inverseTransposeWorld =
         command.rasterizeMode == ERasterizeMode::Fill
@@ -99,29 +95,32 @@ ShadedVertex Renderer::shadeVertex(const Vertex &vertex, const SRMath::mat4 &wor
     result.texcoord = vertex.texcoord;
     return result;
 }
-const ShadedVertex &Renderer::cachedVertex(unsigned int index, const MeshRenderCommand &command,
-                                           const SRMath::mat4 &modelViewProjection,
-                                           const SRMath::mat4 &normalMatrix, WorkerScratch &scratch)
+void Renderer::fillVertex(std::uint32_t index, const MeshRenderCommand &command,
+                          const SRMath::mat4 &modelViewProjection, const SRMath::mat4 &normalMatrix,
+                          WorkerScratch &scratch, int width, int height)
 {
-    if (scratch.vertexStamps[index] != scratch.commandStamp)
+    const auto slot = index & (WorkerScratch::vertexCacheSize - 1);
+    auto &vertex = scratch.vertexCache[slot].shaded;
+    if (command.rasterizeMode == ERasterizeMode::Wireframe)
     {
-        if (command.rasterizeMode == ERasterizeMode::Wireframe)
-        {
-            // X-ray/숨은 선 모두 clip 좌표와 1/w만 사용한다. 법선 디버그는
-            // 별도 명령이므로 world/normal/UV 변환을 여기서 반복하지 않는다.
-            // mode도 캐시 키에 포함해 Fill과 섞이지 않으며 미사용 속성은 0이다.
-            ShadedVertex vertex{};
-            vertex.posClip =
-                modelViewProjection * SRMath::vec4(command.sourceMesh->vertices[index].position, 1.0f);
-            scratch.shadedVertices[index] = vertex;
-        }
-        else
-            scratch.shadedVertices[index] =
-                shadeVertex(command.sourceMesh->vertices[index], command.worldTransform, modelViewProjection,
-                            normalMatrix);
-        scratch.vertexStamps[index] = scratch.commandStamp;
+        // X-ray/숨은 선 모두 clip 좌표와 1/w만 사용한다. 법선 디버그는
+        // 별도 명령이므로 world/normal/UV 변환을 여기서 반복하지 않는다.
+        // mode도 캐시 키에 포함해 Fill과 섞이지 않으며 미사용 속성은 0이다.
+        ShadedVertex wire{};
+        wire.posClip = modelViewProjection * SRMath::vec4(command.sourceMesh->vertices[index].position, 1.0f);
+        vertex = wire;
     }
-    return scratch.shadedVertices[index];
+    else
+        vertex = shadeVertex(command.sourceMesh->vertices[index], command.worldTransform, modelViewProjection,
+                             normalMatrix);
+    // processCommand와 Rasterizer::Prepare가 꼭짓점마다 하던 계산을 같은 식 그대로 옮겼다.
+    auto &setup = scratch.vertexCache[slot].setup;
+    setup.finiteClip = std::isfinite(vertex.posClip.x) && std::isfinite(vertex.posClip.y) &&
+                       std::isfinite(vertex.posClip.z) && std::isfinite(vertex.posClip.w);
+    setup.outcode = computeOutcode(vertex.posClip);
+    setup.ndc = SRMath::vec3(vertex.posClip) / vertex.posClip.w;
+    setup.raster = Rasterizer::ToRasterizerVertex(vertex, width, height);
+    scratch.vertexTags[slot] = {scratch.commandStamp, index};
 }
 void Renderer::prepareFrame()
 {
@@ -180,34 +179,68 @@ void Renderer::processCommand(const MeshRenderCommand &cmd, const FrameContext &
     const auto &mvp = scratch.modelViewProjection;
     const auto &inverseTransposeWorld = scratch.normalMatrix;
     const auto indices = cmd.indicesToDraw;
+    std::array<WorkerScratch::CachedVertex, 3> conflict;
+    const Vertex *const meshVertices = mesh->vertices.data();
+    const std::size_t meshVertexCount = mesh->vertices.size();
     for (size_t i = 0; i < indices.size(); i += 3)
     {
+        // 정점 번호는 메시 전체에 흩어져 있어 miss 때 읽는 메시 정점이 L2 밖에 있기 쉽다.
+        // 8삼각형 앞의 정점을 미리 당겨 둔다. 캐시 검사 뒤에만 당기면 그 분기가 더 비쌌다(채움 +2.9%).
+        // prefetch는 값에 영향이 없다.
+        constexpr std::size_t prefetchAhead = 3 * 8;
+        if (i + prefetchAhead < indices.size())
+            for (std::size_t corner = 0; corner < 3; ++corner)
+            {
+                const auto ahead = indices[i + prefetchAhead + corner];
+                if (ahead < meshVertexCount)
+                    _mm_prefetch(reinterpret_cast<const char *>(meshVertices + ahead), _MM_HINT_T0);
+            }
         uint32_t i0 = indices[i];
         uint32_t i1 = indices[i + 1];
         uint32_t i2 = indices[i + 2];
 
-        if (i0 >= mesh->vertices.size() || i1 >= mesh->vertices.size() || i2 >= mesh->vertices.size())
+        // fillVertex 호출 뒤에는 컴파일러가 메시가 그대로라고 보지 못해 size()(48B 나눗셈)를 매번 다시
+        // 계산했다. 이 명령 동안 메시 정점 배열은 바뀌지 않으므로 위에서 읽어 둔 값과 같다.
+        if (i0 >= meshVertexCount || i1 >= meshVertexCount || i2 >= meshVertexCount)
             continue;
 
-        const auto &sv0 = cachedVertex(i0, cmd, mvp, inverseTransposeWorld, scratch);
-        const auto &sv1 = cachedVertex(i1, cmd, mvp, inverseTransposeWorld, scratch);
-        const auto &sv2 = cachedVertex(i2, cmd, mvp, inverseTransposeWorld, scratch);
-
-        const SRMath::vec4 &v0Clip = sv0.posClip;
-        const SRMath::vec4 &v1Clip = sv1.posClip;
-        const SRMath::vec4 &v2Clip = sv2.posClip;
+        // 서로 다른 두 정점이 같은 칸을 쓰면 나중에 채운 정점이 앞의 것을 덮는다. 그때만 복사본으로 처리한다.
+        constexpr auto mask = WorkerScratch::vertexCacheSize - 1;
+        const WorkerScratch::CachedVertex *c0, *c1, *c2;
+        if (((i0 ^ i1) & mask) && ((i0 ^ i2) & mask) && ((i1 ^ i2) & mask)) [[likely]]
+        {
+            c0 = &cachedVertex(i0, cmd, mvp, inverseTransposeWorld, scratch, m_width, m_height);
+            c1 = &cachedVertex(i1, cmd, mvp, inverseTransposeWorld, scratch, m_width, m_height);
+            c2 = &cachedVertex(i2, cmd, mvp, inverseTransposeWorld, scratch, m_width, m_height);
+        }
+        else
+        {
+            // 같은 정점이 두 번 나오는 퇴화 삼각형도 이 경로로 온다(값은 같다).
+            conflict[0] = cachedVertex(i0, cmd, mvp, inverseTransposeWorld, scratch, m_width, m_height);
+            conflict[1] = cachedVertex(i1, cmd, mvp, inverseTransposeWorld, scratch, m_width, m_height);
+            conflict[2] = cachedVertex(i2, cmd, mvp, inverseTransposeWorld, scratch, m_width, m_height);
+            c0 = &conflict[0];
+            c1 = &conflict[1];
+            c2 = &conflict[2];
+        }
+        const auto &sv0 = c0->shaded;
+        const auto &sv1 = c1->shaded;
+        const auto &sv2 = c2->shaded;
+        const auto &setup0 = c0->setup;
+        const auto &setup1 = c1->setup;
+        const auto &setup2 = c2->setup;
 
         const auto finiteClip = [](const SRMath::vec4 &clip)
         {
             return std::isfinite(clip.x) && std::isfinite(clip.y) && std::isfinite(clip.z) &&
                    std::isfinite(clip.w);
         };
-        if (!finiteClip(v0Clip) || !finiteClip(v1Clip) || !finiteClip(v2Clip))
+        if (!setup0.finiteClip || !setup1.finiteClip || !setup2.finiteClip)
             continue;
 
-        const auto outcode0 = computeOutcode(v0Clip);
-        const auto outcode1 = computeOutcode(v1Clip);
-        const auto outcode2 = computeOutcode(v2Clip);
+        const auto outcode0 = setup0.outcode;
+        const auto outcode1 = setup1.outcode;
+        const auto outcode2 = setup2.outcode;
 
         // 같은 clip 평면 밖에 있는 삼각형은 교차 계산 없이 기각할 수 있다.
         if ((outcode0 & outcode1 & outcode2) != 0)
@@ -239,16 +272,25 @@ void Renderer::processCommand(const MeshRenderCommand &cmd, const FrameContext &
                  (!finiteClip(a.posClip) || !finiteClip(b.posClip) || !finiteClip(c.posClip))) ||
                 a.posClip.w <= 0.f || b.posClip.w <= 0.f || c.posClip.w <= 0.f)
                 continue;
-            const auto aNdc = SRMath::vec3(a.posClip) / a.posClip.w;
-            const auto bNdc = SRMath::vec3(b.posClip) / b.posClip.w;
-            const auto cNdc = SRMath::vec3(c.posClip) / c.posClip.w;
+            const auto aNdc = triviallyAccepted ? setup0.ndc : SRMath::vec3(a.posClip) / a.posClip.w;
+            const auto bNdc = triviallyAccepted ? setup1.ndc : SRMath::vec3(b.posClip) / b.posClip.w;
+            const auto cNdc = triviallyAccepted ? setup2.ndc : SRMath::vec3(c.posClip) / c.posClip.w;
             const float area = (bNdc.x - aNdc.x) * (cNdc.y - aNdc.y) - (bNdc.y - aNdc.y) * (cNdc.x - aNdc.x);
             // 기존 좌표계에서 앞면은 NDC의 CW(음수 면적)다.
             if (!std::isfinite(area) || area >= 0.f)
                 continue;
             const auto primitiveId =
                 (triangleBase + static_cast<std::uint64_t>(i / 3)) * 16 + static_cast<std::uint64_t>(fan);
-            binTriangle(cmd, a, b, c, frame, scratch, primitiveId);
+            if (triviallyAccepted)
+            {
+                // 세 정점은 위에서 유한하고 w > 0임을 확인했다(Prepare의 첫 검사와 같다).
+                // 풀의 다음 자리에 바로 준비하고, 성공했을 때만 확정한다(복사 없음).
+                if (Rasterizer::PrepareRasterInto(scratch.triangles.Slot(), setup0.raster, setup1.raster,
+                                                  setup2.raster, m_width, m_height, primitiveId, &cmd))
+                    binPrepared(cmd, scratch.triangles.Commit(), frame, scratch);
+            }
+            else
+                binTriangle(cmd, a, b, c, frame, scratch, primitiveId);
         }
     }
 }
@@ -257,14 +299,14 @@ void Renderer::binTriangle(const MeshRenderCommand &cmd, const ShadedVertex &v0,
                            std::uint64_t primitiveId)
 {
     const auto prepared = Rasterizer::Prepare(v0, v1, v2, m_width, m_height, primitiveId, &cmd);
-    if (!prepared)
-        return;
-
-    // 숨은 선 모드에서는 같은 준비 결과를 depth-only 면 패스에도 전달한다. 병렬로
-    // 늘어나는 concurrent_vector는 기존 요소를 옮기지 않아 bin 포인터가 유효하다.
-    auto it = scratch.triangles.emplace_back(*prepared);
-    TriangleRef *finalTri = &(*it);
-
+    if (prepared)
+        binPrepared(cmd, &scratch.triangles.emplace_back(*prepared), frame, scratch);
+}
+void Renderer::binPrepared(const MeshRenderCommand &cmd, TriangleRef *finalTri, const FrameContext &frame,
+                           WorkerScratch &scratch)
+{
+    // 숨은 선 모드에서는 같은 준비 결과를 depth-only 면 패스에도 전달한다.
+    // finalTri는 worker 풀에 확정된 자리라 프레임 끝까지 주소가 유효하다.
     if (cmd.rasterizeMode == ERasterizeMode::Wireframe)
     {
         // 행 worker가 매번 전체 삼각형 풀을 훑지 않도록 겹치는 band만 기록한다.

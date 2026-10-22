@@ -4,6 +4,7 @@
 #include "Platform/Compiler.h"
 #include <algorithm>
 #include <cmath>
+#include <smmintrin.h>
 #include <limits>
 #include <utility>
 
@@ -19,9 +20,18 @@ bool finiteClip(const SRMath::vec4 &p)
 
 std::uint32_t packColor(const SRMath::vec3 &c)
 {
-    const auto channel = [](float value) -> std::uint32_t
-    { return std::isfinite(value) ? static_cast<std::uint32_t>(std::clamp(value, 0.f, 1.f) * 255.f) : 0u; };
-    return (channel(c.x) << 16) | (channel(c.y) << 8) | channel(c.z);
+    // 채널마다 "isfinite(v) ? uint32(clamp(v, 0, 1) * 255) : 0"을 세 채널 한 번에 계산한다.
+    // 유한한 v에서 max(min(v, 1), 0)은 std::clamp와 값이 같다(-0만 다르지만 * 255 후 절삭하면 둘 다 0).
+    // NaN/inf 채널은 |v| < inf 마스크로 0이 된다. 모든 2^32 float에서 기존 식과 같음을 확인했다.
+    const __m128 finite = _mm_cmplt_ps(_mm_andnot_ps(_mm_set1_ps(-0.f), c.m128),
+                                       _mm_set1_ps(std::numeric_limits<float>::infinity()));
+    const __m128 clamped = _mm_max_ps(_mm_min_ps(c.m128, _mm_set1_ps(1.f)), _mm_setzero_ps());
+    const __m128i channels =
+        _mm_and_si128(_mm_cvttps_epi32(_mm_mul_ps(clamped, _mm_set1_ps(255.f))), _mm_castps_si128(finite));
+    // [r, g, b, w] → [b, g, r, w]로 바꿔 바이트로 줄이면 하위 3바이트가 b | g << 8 | r << 16이다.
+    const __m128i bgr = _mm_shuffle_epi32(channels, _MM_SHUFFLE(3, 0, 1, 2));
+    const __m128i bytes = _mm_packus_epi16(_mm_packus_epi32(bgr, bgr), _mm_setzero_si128());
+    return static_cast<std::uint32_t>(_mm_cvtsi128_si32(bytes)) & 0x00FFFFFFu;
 }
 
 // 큰 화면에서도 고정소수점 signed overflow를 만들지 않는다. 2^60 여유는
@@ -29,7 +39,9 @@ std::uint32_t packColor(const SRMath::vec3 &c)
 bool toFixed(float input, std::int64_t &result)
 {
     const float scaled = input * 256.f;
-    if (!std::isfinite(scaled) || std::abs(static_cast<double>(scaled)) >= 0x1p60)
+    // 2^60은 float와 double 모두 정확히 표현되므로 float 비교 하나가 기존
+    // "!isfinite || |double| >= 2^60"과 같다. NaN은 비교가 거짓이라 거부되고 inf는 2^60 이상이다.
+    if (!(std::abs(scaled) < 0x1p60f))
         return false;
     result = static_cast<std::int64_t>(scaled);
     return true;
@@ -173,18 +185,28 @@ std::optional<PreparedTriangle> Rasterizer::Prepare(const ShadedVertex &a, const
     for (const auto *v : {&a, &b, &c})
         if (!finiteClip(v->posClip) || !(v->posClip.w > 0.f))
             return std::nullopt;
-    PreparedTriangle t{};
+    return PrepareRaster(ToRasterizerVertex(a, width, height), ToRasterizerVertex(b, width, height),
+                         ToRasterizerVertex(c, width, height), width, height, primitiveId, command);
+}
+
+bool Rasterizer::PrepareRasterInto(PreparedTriangle &t, const RasterizerVertex &a, const RasterizerVertex &b,
+                                   const RasterizerVertex &c, int width, int height,
+                                   std::uint64_t primitiveId, const MeshRenderCommand *command)
+{
+    if (width <= 0 || height <= 0 || primitiveId == noPrimitive)
+        return false;
     t.sourceCommand = command;
     t.primitiveId = primitiveId;
-    t.rv0 = ToRasterizerVertex(a, width, height);
-    t.rv1 = ToRasterizerVertex(b, width, height);
-    t.rv2 = ToRasterizerVertex(c, width, height);
+    t.rv0 = a;
+    t.rv1 = b;
+    t.rv2 = c;
     for (const auto *v : {&t.rv0, &t.rv1, &t.rv2})
-        if (!std::isfinite(v->screenPos.x) || !std::isfinite(v->screenPos.y) || !std::isfinite(v->oneOverW) ||
-            !(v->oneOverW > 0.f) ||
-            std::abs(static_cast<double>(v->screenPos.x)) >= std::numeric_limits<int>::max() ||
-            std::abs(static_cast<double>(v->screenPos.y)) >= std::numeric_limits<int>::max())
-            return std::nullopt;
+        // |x| >= INT_MAX(2^31 - 1)는 float에서 |x| >= 2^31과 같다(2^31 바로 아래 float는 2^31 - 128).
+        // 그래서 "!isfinite || |double| >= INT_MAX"를 float 비교 하나로 쓴다. NaN은 비교가 거짓이라 거부된다.
+        // 1/w는 isfinite와 > 0 둘 다 필요하므로 "0 < 1/w < inf"로 같은 판정을 한다.
+        if (!(std::abs(v->screenPos.x) < 0x1p31f) || !(std::abs(v->screenPos.y) < 0x1p31f) ||
+            !(v->oneOverW > 0.f && v->oneOverW < std::numeric_limits<float>::infinity()))
+            return false;
     const auto &p0 = t.rv0.screenPos;
     const auto &p1 = t.rv1.screenPos;
     const auto &p2 = t.rv2.screenPos;
@@ -195,7 +217,7 @@ std::optional<PreparedTriangle> Rasterizer::Prepare(const ShadedVertex &a, const
     t.maxX = std::min(width - 1, static_cast<int>(std::max(p0.x, std::max(p1.x, p2.x))));
     t.maxY = std::min(height - 1, static_cast<int>(std::max(p0.y, std::max(p1.y, p2.y))));
     if (t.minX > t.maxX || t.minY > t.maxY)
-        return std::nullopt;
+        return false;
     t.dx01 = p0.x - p1.x;
     t.dy01 = p0.y - p1.y;
     t.dx12 = p1.x - p2.x;
@@ -204,8 +226,20 @@ std::optional<PreparedTriangle> Rasterizer::Prepare(const ShadedVertex &a, const
     t.dy20 = p2.y - p0.y;
     if (!toFixed(t.dx01, t.dx01Fixed) || !toFixed(t.dy01, t.dy01Fixed) || !toFixed(t.dx12, t.dx12Fixed) ||
         !toFixed(t.dy12, t.dy12Fixed) || !toFixed(t.dx20, t.dx20Fixed) || !toFixed(t.dy20, t.dy20Fixed))
-        return std::nullopt;
+        return false;
     t.maximumInverseW = std::max(t.rv0.oneOverW, std::max(t.rv1.oneOverW, t.rv2.oneOverW));
+    return true;
+}
+
+std::optional<PreparedTriangle> Rasterizer::PrepareRaster(const RasterizerVertex &a,
+                                                          const RasterizerVertex &b,
+                                                          const RasterizerVertex &c, int width, int height,
+                                                          std::uint64_t primitiveId,
+                                                          const MeshRenderCommand *command)
+{
+    PreparedTriangle t;
+    if (!PrepareRasterInto(t, a, b, c, width, height, primitiveId, command))
+        return std::nullopt;
     return t;
 }
 
@@ -346,59 +380,80 @@ template <bool Instrumented, RasterPass Pass> void Rasterizer::DrawTriangleImpl(
                               std::abs(static_cast<double>(dy)) * (x1 - x0 + 1.);
         return budget < 0x1p62;
     };
-    if (!safeEdge(r0, t.dx12Fixed, t.dy12Fixed) || !safeEdge(r1, t.dx20Fixed, t.dy20Fixed) ||
-        !safeEdge(r2, t.dx01Fixed, t.dy01Fixed))
+    // 보통은 모든 값이 2^56 미만이고 bbox가 작아 budget이 63 * 2^56 < 2^62로 막힌다.
+    // 이때는 double 9번 곱셈/덧셈 없이 정수 OR 한 번으로 같은 판정(통과)을 낸다.
+    // toFixed가 |값| < 2^60을 보장하므로 부호 반전은 넘치지 않는다.
+    const auto magnitude = [](std::int64_t v) { return static_cast<std::uint64_t>(v < 0 ? -v : v); };
+    const bool smallEdges = (magnitude(r0) | magnitude(r1) | magnitude(r2) | magnitude(t.dx12Fixed) |
+                             magnitude(t.dy12Fixed) | magnitude(t.dx20Fixed) | magnitude(t.dy20Fixed) |
+                             magnitude(t.dx01Fixed) | magnitude(t.dy01Fixed)) < (std::uint64_t{1} << 56) &&
+                            (x1 - x0) + (y1 - y0) < 60;
+    if (!smallEdges && (!safeEdge(r0, t.dx12Fixed, t.dy12Fixed) || !safeEdge(r1, t.dx20Fixed, t.dy20Fixed) ||
+                        !safeEdge(r2, t.dx01Fixed, t.dy01Fixed)))
         return;
     auto depth = m_target.Depth();
     auto ids = m_target.PrimitiveIds();
     auto surface = m_target.Surface();
+    // edge 값이 이미 덮였다고 판정된 픽셀 하나를 처리한다. float 연산 순서는 기존과 같다.
+    const auto shadePixel = [&](int x, int y, std::int64_t w0, std::int64_t w1, std::int64_t w2)
+                                SR_FORCEINLINE_LAMBDA
+    {
+        const float f0 = static_cast<float>(w0) / 256.f;
+        const float f1 = static_cast<float>(w1) / 256.f;
+        const float f2 = static_cast<float>(w2) / 256.f;
+        const float total = f0 + f1 + f2;
+        if (std::isfinite(total) && total >= 1e-5f)
+        {
+            if constexpr (Instrumented)
+                ++m_stats->coveragePassed;
+            const float inverse = 1.f / total;
+            const float a = f0 * inverse, b = f1 * inverse, c = f2 * inverse;
+            float q = t.rv0.oneOverW * a;
+            q += t.rv1.oneOverW * b;
+            q += t.rv2.oneOverW * c;
+            const auto index = static_cast<std::size_t>(y) * m_target.Width() + x;
+            const bool finite = std::isfinite(q) && q > 0.f;
+            const bool visible = Pass == RasterPass::ShadeVisible
+                                     ? ids[index] == t.primitiveId && depth[index] == q
+                                     : q > depth[index] || (q == depth[index] && t.primitiveId < ids[index]);
+            if (finite && visible)
+            {
+                if constexpr (Pass != RasterPass::ShadeVisible)
+                {
+                    depth[index] = q;
+                    ids[index] = t.primitiveId;
+                }
+                if constexpr (Pass != RasterPass::DepthOnly)
+                    if (t.sourceCommand && t.sourceCommand->material)
+                    {
+                        const auto sample = InterpolateSurface(t.rv0, t.rv1, t.rv2, a, b, c, 1.f / q);
+                        surface.pixels[static_cast<std::size_t>(y) * surface.stridePixels + x] =
+                            packColor(ShadeSurface(sample, *t.sourceCommand->material, m_frame));
+                        if constexpr (Instrumented)
+                            ++m_stats->shadedPixels;
+                    }
+            }
+            else if constexpr (Instrumented)
+                ++m_stats->depthRejected;
+        }
+    };
     for (int y = y0; y <= y1; ++y)
     {
         auto w0 = r0, w1 = r1, w2 = r2;
-        for (int x = x0; x <= x1; ++x)
+        int x = x0;
+        // 덮인 구간 앞의 빈 픽셀은 edge만 진행한다.
+        while (x <= x1 && (w0 | w1 | w2) < 0)
         {
-            if ((w0 | w1 | w2) >= 0)
-            {
-                const float f0 = static_cast<float>(w0) / 256.f;
-                const float f1 = static_cast<float>(w1) / 256.f;
-                const float f2 = static_cast<float>(w2) / 256.f;
-                const float total = f0 + f1 + f2;
-                if (std::isfinite(total) && total >= 1e-5f)
-                {
-                    if constexpr (Instrumented)
-                        ++m_stats->coveragePassed;
-                    const float inverse = 1.f / total;
-                    const float a = f0 * inverse, b = f1 * inverse, c = f2 * inverse;
-                    float q = t.rv0.oneOverW * a;
-                    q += t.rv1.oneOverW * b;
-                    q += t.rv2.oneOverW * c;
-                    const auto index = static_cast<std::size_t>(y) * m_target.Width() + x;
-                    const bool finite = std::isfinite(q) && q > 0.f;
-                    const bool visible =
-                        Pass == RasterPass::ShadeVisible
-                            ? ids[index] == t.primitiveId && depth[index] == q
-                            : q > depth[index] || (q == depth[index] && t.primitiveId < ids[index]);
-                    if (finite && visible)
-                    {
-                        if constexpr (Pass != RasterPass::ShadeVisible)
-                        {
-                            depth[index] = q;
-                            ids[index] = t.primitiveId;
-                        }
-                        if constexpr (Pass != RasterPass::DepthOnly)
-                            if (t.sourceCommand && t.sourceCommand->material)
-                            {
-                                const auto sample = InterpolateSurface(t.rv0, t.rv1, t.rv2, a, b, c, 1.f / q);
-                                surface.pixels[static_cast<std::size_t>(y) * surface.stridePixels + x] =
-                                    packColor(ShadeSurface(sample, *t.sourceCommand->material, m_frame));
-                                if constexpr (Instrumented)
-                                    ++m_stats->shadedPixels;
-                            }
-                    }
-                    else if constexpr (Instrumented)
-                        ++m_stats->depthRejected;
-                }
-            }
+            w0 += t.dy12Fixed;
+            w1 += t.dy20Fixed;
+            w2 += t.dy01Fixed;
+            ++x;
+        }
+        // 세 edge 함수는 x에 대해 정수 일차식이므로 행의 덮임 구간은 하나다.
+        // 구간을 벗어나면 그 행의 나머지 픽셀은 볼 필요가 없다.
+        for (; x <= x1 && (w0 | w1 | w2) >= 0; ++x)
+        {
+            shadePixel(x, y, w0, w1, w2);
             // 퇴화/zero-weight 픽셀도 반드시 edge를 진행한다.
             w0 += t.dy12Fixed;
             w1 += t.dy20Fixed;
