@@ -152,7 +152,7 @@
 | --- | --- |
 | `AssetLoadError.h` | **AssetLoadError**: 메시지·경로·행 번호. 로더 공통 오류 타입 |
 | `FixedCapacityVector.h` | `sr::FixedCapacityVector`: `std::inplace_vector`가 없을 때 쓰는 고정 용량 버퍼 |
-| `Jobs.h` · `Jobs.cpp` | `sr::jobs`: 자체 스레드 풀과 병렬 작업 API(`ParallelFor` Adaptive/Fixed 분할과 스레드별 마무리 `finish` 훅, `PerWorker<T>` 스레드별 작업 공간(`Local`/`Find`), `ConcurrencyLimit`, `MaxConcurrency`, `IsolatedRunner`). 호출 측은 스케줄러를 직접 include하지 않는다 |
+| `Jobs.h` · `Jobs.cpp` | `sr::jobs`: 자체 스레드 풀과 병렬 작업 API(`ParallelFor` Adaptive/Fixed 분할과 스레드별 마무리 `finish` 훅, 항목별 예상 비용으로 구간 경계를 정하는 `ParallelForWeighted`, `PerWorker<T>` 스레드별 작업 공간(`Local`/`Find`), `ConcurrencyLimit`, `MaxConcurrency`, `IsolatedRunner`). 호출 측은 스케줄러를 직접 include하지 않는다 |
 | `ImageFile.h` · `ImageFile.cpp` | 골든·srcli용 이미지: `CopySurface`, `WritePng`/`ReadPng`, `HashPixels`(픽셀 해시), `Compare`(허용 오차 diff) |
 | `PerformanceAnalyzer.h` · `PerformanceAnalyzer.cpp` | **PerformanceAnalyzer**: Win32App의 프레임 delta time과 초당 평균 FPS |
 | `Utils.h` | `GetExecutableDirectory`, `MakeAssetPath`(실행 파일 옆 `assets/`) |

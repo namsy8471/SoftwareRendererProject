@@ -328,8 +328,8 @@ class Pool
             {threads, m_workers + 1, static_cast<std::size_t>(job.chunkCount), maximumParticipants}));
         for (std::uint32_t index = 0; index < job.participants; ++index)
         {
-            const auto first = static_cast<std::uint64_t>(job.chunkCount) * index / job.participants;
-            const auto last = static_cast<std::uint64_t>(job.chunkCount) * (index + 1) / job.participants;
+            const auto first = rangeStart(job, index);
+            const auto last = rangeStart(job, index + 1);
             job.ranges[index].bounds.store(
                 pack(static_cast<std::uint32_t>(first), static_cast<std::uint32_t>(last)),
                 std::memory_order_relaxed);
@@ -363,6 +363,22 @@ class Pool
     }
 
   private:
+    // 참여자 index 구간의 첫 조각. 누적 비용이 있으면 비용 합이 total * index / participants에 처음 닿는
+    // 조각, 없으면 개수로 나눈 자리다. index == participants면 chunkCount.
+    static std::uint64_t rangeStart(const Job &job, std::uint32_t index) noexcept
+    {
+        if (index >= job.participants)
+            return job.chunkCount;
+        const auto *cost = job.cumulativeCost;
+        const auto total = cost ? cost[job.chunkCount] : 0;
+        if (total == 0)
+            return static_cast<std::uint64_t>(job.chunkCount) * index / job.participants;
+        // 128비트 없이 total * index를 넘치지 않게 나눈다.
+        const auto target =
+            total / job.participants * index + total % job.participants * index / job.participants;
+        return static_cast<std::uint64_t>(std::lower_bound(cost, cost + job.chunkCount, target) - cost);
+    }
+
     struct alignas(64) Slot
     {
         std::atomic<Job *> job{nullptr};
