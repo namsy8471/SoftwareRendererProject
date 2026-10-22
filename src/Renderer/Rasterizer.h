@@ -73,6 +73,10 @@ class Rasterizer
     static SurfaceSample InterpolateSurface(const RasterizerVertex &, const RasterizerVertex &,
                                             const RasterizerVertex &, float, float, float, float);
     static SRMath::vec3 ShadeSurface(const SurfaceSample &, const Material &, const RenderFrameContext &);
+    // 픽셀 4개를 lane 하나씩 맡아 SSE로 한 번에 셰이딩한다. 각 lane은 ShadeSurface와 같은 float 연산을
+    // 같은 순서로 하므로 결과가 비트 단위로 같다(dot은 _mm_dp_ps(0x71)의 (x+y)+(z+0) 순서를 따른다).
+    static void ShadeSurface4(const SurfaceSample (&)[4], const Material *const (&)[4],
+                              const RenderFrameContext &, SRMath::vec3 (&)[4]);
 
   private:
     RenderTarget &m_target;
@@ -101,6 +105,9 @@ class Rasterizer
     // 호출 스레드의 저장소. 한 스레드에서 Rasterizer의 DepthOwner→ShadeOwners 구간이 겹치지 않아야 한다
     // (타일 worker는 타일 하나를 끝낸 뒤 다음 타일을 시작한다).
     static OwnerScratch &ThreadOwnerScratch() noexcept;
+    // ShadeOwners의 4픽셀 묶음. 보간(InterpolateSurface)과 ShadeSurface4를 같은 번역 단위에서 inline한다.
+    static void ShadeOwnerQuad(const PreparedTriangle *const (&)[4], const OwnerSample *const (&)[4],
+                               const RenderFrameContext &, SRMath::vec3 (&)[4]);
     OwnerScratch &m_ownerScratch;
     std::array<std::uint64_t, 4> m_ownerMask{};
 

@@ -495,25 +495,50 @@ void Rasterizer::ShadeOwners()
     auto surface = m_target.Surface();
     // a, b, c, q는 DrawTriangleImpl<DepthOwner>가 이 픽셀을 마지막으로 통과시킬 때 계산한 값 그대로다.
     // 이전처럼 edge 시작값(toFixed)과 정수 edge 값, 1/total을 다시 계산하지 않는다. 같은 값이라 색이 같다.
+    // 픽셀 4개씩(삼각형·재질이 달라도 된다) SSE lane에 나눠 셰이딩하고, 남은 3개 이하는 스칼라로 한다.
+    const auto store = [&](std::size_t cell, const SRMath::vec3 &color) SR_FORCEINLINE_LAMBDA
+    {
+        const int x = m_bounds.minX + static_cast<int>(cell & 15);
+        const int y = m_bounds.minY + static_cast<int>(cell >> 4);
+        surface.pixels[static_cast<std::size_t>(y) * surface.stridePixels + x] = packColor(color);
+    };
+    std::size_t pending[4] = {};
+    int count = 0;
+    std::size_t shaded = 0;
     for (std::size_t word = 0; word < m_ownerMask.size(); ++word)
     {
         std::uint64_t bits = m_ownerMask[word];
         m_ownerMask[word] = 0;
         while (bits)
         {
-            const std::size_t cell = word * 64 + static_cast<std::size_t>(std::countr_zero(bits));
+            pending[count++] = word * 64 + static_cast<std::size_t>(std::countr_zero(bits));
             bits &= bits - 1;
-            const PreparedTriangle *t = m_ownerScratch.triangles[cell];
-            const OwnerSample &s = m_ownerScratch.samples[cell];
-            const int x = m_bounds.minX + static_cast<int>(cell & 15);
-            const int y = m_bounds.minY + static_cast<int>(cell >> 4);
-            const auto sample = InterpolateSurface(t->rv0, t->rv1, t->rv2, s.a, s.b, s.c, 1.f / s.q);
-            surface.pixels[static_cast<std::size_t>(y) * surface.stridePixels + x] =
-                packColor(ShadeSurface(sample, *t->sourceCommand->material, m_frame));
-            if (m_stats)
-                ++m_stats->shadedPixels;
+            if (count < 4)
+                continue;
+            count = 0;
+            const PreparedTriangle *const triangles[4] = {
+                m_ownerScratch.triangles[pending[0]], m_ownerScratch.triangles[pending[1]],
+                m_ownerScratch.triangles[pending[2]], m_ownerScratch.triangles[pending[3]]};
+            const OwnerSample *const samples[4] = {
+                &m_ownerScratch.samples[pending[0]], &m_ownerScratch.samples[pending[1]],
+                &m_ownerScratch.samples[pending[2]], &m_ownerScratch.samples[pending[3]]};
+            SRMath::vec3 colors[4];
+            ShadeOwnerQuad(triangles, samples, m_frame, colors);
+            for (int i = 0; i < 4; ++i)
+                store(pending[i], colors[i]);
+            shaded += 4;
         }
     }
+    for (int i = 0; i < count; ++i)
+    {
+        const PreparedTriangle *t = m_ownerScratch.triangles[pending[i]];
+        const OwnerSample &s = m_ownerScratch.samples[pending[i]];
+        const auto sample = InterpolateSurface(t->rv0, t->rv1, t->rv2, s.a, s.b, s.c, 1.f / s.q);
+        store(pending[i], ShadeSurface(sample, *t->sourceCommand->material, m_frame));
+        ++shaded;
+    }
+    if (m_stats)
+        m_stats->shadedPixels += shaded;
 }
 
 bool Rasterizer::ClipLine(SRMath::vec4 &a, SRMath::vec4 &b)

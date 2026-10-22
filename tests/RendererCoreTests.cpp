@@ -846,6 +846,25 @@ struct RendererTestAccess
                                         originalPhong(sample, testMaterial, camera, raw)),
                               "prepared Phong matches independent per-pixel shader bitwise");
                     }
+            // 4-lane 셰이더: 표면·재질 조합을 lane마다 다르게(같은 재질 broadcast 경로 포함) 넣어 lane별로 비교한다.
+            for (const auto &camera : cameras)
+                for (std::size_t rotation = 0; rotation < 4; ++rotation)
+                    for (const bool sharedMaterial : {false, true})
+                    {
+                        const Renderer::FrameContext context{SRMath::mat4::identity(), camera, ready, 1, 1};
+                        Rasterizer::SurfaceSample lanes[4];
+                        const Material *laneMaterials[4];
+                        for (std::size_t i = 0; i < 4; ++i)
+                        {
+                            lanes[i] = surfaces[(i + rotation) % 4];
+                            laneMaterials[i] = &materials[sharedMaterial ? rotation : (i * 3 + rotation) % 4];
+                        }
+                        SRMath::vec3 colors[4];
+                        Rasterizer::ShadeSurface4(lanes, laneMaterials, context, colors);
+                        for (std::size_t i = 0; i < 4; ++i)
+                            check(sameColor(colors[i], Rasterizer::ShadeSurface(lanes[i], *laneMaterials[i], context)),
+                                  "4-lane Phong matches the scalar shader bitwise in every lane");
+                    }
         };
         compareShader({});
         for (const auto &direction : directions)
