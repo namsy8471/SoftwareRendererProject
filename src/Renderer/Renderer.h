@@ -1,6 +1,7 @@
 #pragma once
 #include <vector>
 #include <array>
+#include <bit>
 #include <cstdint>
 #include <span>
 #include <optional>
@@ -105,11 +106,8 @@ class Renderer
         std::vector<TileScatterState> tileScatter;
         std::vector<std::size_t> touchedTileIds;
         ClipBuffer clipInput, clipOutput, clippedVertices;
-        std::vector<ShadedVertex> shadedVertices;
-        std::vector<std::uint64_t> vertexStamps;
-        // 정점 하나는 평균 여섯 삼각형이 공유한다. clip 검사, NDC, 화면 정점(1/w, 원근 보정 속성)을
-        // 삼각형 꼭짓점마다가 아니라 정점마다 한 번만 계산해 둔다. 같은 함수에 같은 입력이라 값은 같다.
-        // shadedVertices와 함께 채우므로 vertexStamps 하나로 둘 다의 유효성을 판단한다.
+        // 정점 하나는 평균 여섯 삼각형이 공유한다. 정점 셰이딩과 clip 검사, NDC, 화면 정점(1/w, 원근 보정
+        // 속성)을 꼭짓점마다가 아니라 정점마다 한 번만 계산해 둔다. 같은 함수에 같은 입력이라 값은 같다.
         struct VertexSetup
         {
             RasterizerVertex raster;
@@ -117,7 +115,24 @@ class Renderer
             std::uint8_t outcode = 0;
             bool finiteClip = false;
         };
-        std::vector<VertexSetup> vertexSetups;
+        struct CachedVertex
+        {
+            ShadedVertex shaded;
+            VertexSetup setup;
+        };
+        struct VertexTag
+        {
+            std::uint64_t stamp = 0;
+            std::uint32_t index = 0;
+        };
+        // 메시 크기 배열(IronMan 약 13만 정점 x 176B = 23MB를 worker마다) 대신 정점 번호 하위 비트로 칸을
+        // 고르는 direct-mapped 캐시다. 명령 하나는 많아야 768개 정점을 쓰므로 4096칸(약 0.8MB)이면 충돌이
+        // 드물고, worker의 L2에 남아 miss 때 DRAM 왕복 없이 쓴다. 칸은 (stamp, index)가 모두 같을 때만
+        // 유효하다.
+        static constexpr std::size_t vertexCacheSize = 4096;
+        static_assert(std::has_single_bit(vertexCacheSize));
+        std::vector<CachedVertex> vertexCache;
+        std::vector<VertexTag> vertexTags;
         std::uint64_t commandStamp = 0;
         // 한 worker의 현재 프레임에서 마지막으로 처리한 키 하나만 재사용한다.
         // 포인터는 queue와 같은 수명 계약으로 빌리며 프레임 밖으로 재사용하지 않는다.
@@ -127,7 +142,12 @@ class Renderer
         SRMath::mat4 normalMatrix = SRMath::mat4::identity();
         WorkerScratch();
         void BeginFrame();
-        void BeginCommand(std::size_t vertexCount);
+        void BeginCommand();
+        [[nodiscard]] bool IsCached(std::uint32_t index) const noexcept
+        {
+            const auto &tag = vertexTags[index & (vertexCacheSize - 1)];
+            return tag.stamp == commandStamp && tag.index == index;
+        }
         bool BeginCachedCommand(const MeshRenderCommand &, const SRMath::mat4 &viewProjection);
     };
     tbb::enumerable_thread_specific<WorkerScratch> m_workerScratch;
@@ -150,20 +170,18 @@ class Renderer
     void binPrepared(const MeshRenderCommand &, TriangleRef *, const FrameContext &, WorkerScratch &);
     static ShadedVertex shadeVertex(const Vertex &, const SRMath::mat4 &, const SRMath::mat4 &,
                                     const SRMath::mat4 &);
-    // 정점의 약 80%는 이미 이 명령에서 계산됐다. hit는 stamp 비교 하나로 끝내도록 인라인하고,
+    // 정점의 약 80%는 이미 이 명령에서 계산됐다. hit는 tag 비교 하나로 끝내도록 인라인하고,
     // 함수 호출(prologue/epilogue)은 miss(fillVertex)일 때만 한다.
-    // miss는 shadedVertices와 vertexSetups를 함께 채우고 stamp를 찍는다.
-    static SR_FORCEINLINE const ShadedVertex &cachedVertex(unsigned int index,
-                                                           const MeshRenderCommand &command,
-                                                           const SRMath::mat4 &modelViewProjection,
-                                                           const SRMath::mat4 &normalMatrix,
-                                                           WorkerScratch &scratch, int width, int height)
+    // 반환한 참조는 같은 칸을 쓰는 다른 정점을 채우기 전까지만 유효하다.
+    static SR_FORCEINLINE const WorkerScratch::CachedVertex &cachedVertex(
+        std::uint32_t index, const MeshRenderCommand &command, const SRMath::mat4 &modelViewProjection,
+        const SRMath::mat4 &normalMatrix, WorkerScratch &scratch, int width, int height)
     {
-        if (scratch.vertexStamps[index] != scratch.commandStamp)
+        if (!scratch.IsCached(index))
             fillVertex(index, command, modelViewProjection, normalMatrix, scratch, width, height);
-        return scratch.shadedVertices[index];
+        return scratch.vertexCache[index & (WorkerScratch::vertexCacheSize - 1)];
     }
-    static void fillVertex(unsigned int, const MeshRenderCommand &, const SRMath::mat4 &,
+    static void fillVertex(std::uint32_t, const MeshRenderCommand &, const SRMath::mat4 &,
                            const SRMath::mat4 &, WorkerScratch &, int width, int height);
     static std::uint8_t computeOutcode(const SRMath::vec4 &) noexcept;
     static ShadedVertex interpolate(const ShadedVertex &, const ShadedVertex &, float);

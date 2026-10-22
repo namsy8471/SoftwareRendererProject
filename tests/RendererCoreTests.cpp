@@ -119,31 +119,25 @@ struct RendererTestAccess
     static void workerIsolation()
     {
         Renderer::WorkerScratch first, second;
-        first.BeginCommand(3);
+        first.BeginCommand();
         first.triangles.emplace_back(TriangleRef{});
-        first.vertexStamps[0] = first.commandStamp;
+        first.vertexTags[0] = {first.commandStamp, 0};
+        check(first.IsCached(0) && !first.IsCached(Renderer::WorkerScratch::vertexCacheSize),
+              "a slot is valid only for the vertex index stored in its tag");
         first.BeginFrame();
         check(first.triangles.empty(), "frame must release triangle references");
-        first.BeginCommand(1);
-        check(first.vertexStamps[0] != first.commandStamp, "stale command stamp");
-        check(first.shadedVertices.size() == 3, "high-watermark capacity");
-        check(second.commandStamp == 0 && second.shadedVertices.empty(), "worker isolation");
+        first.BeginCommand();
+        check(!first.IsCached(0), "stale command stamp");
+        check(first.vertexCache.size() == Renderer::WorkerScratch::vertexCacheSize &&
+                  first.vertexTags.size() == Renderer::WorkerScratch::vertexCacheSize,
+              "fixed-size vertex cache");
+        check(second.commandStamp == 0, "worker isolation");
+        second.BeginCommand();
+        check(!second.IsCached(0), "a new worker's first command starts with an empty cache");
         first.commandStamp = std::numeric_limits<std::uint64_t>::max();
-        first.vertexStamps[0] = 1;
-        first.BeginCommand(3);
-        check(first.commandStamp == 1 && first.vertexStamps[0] == 0, "stamp wrap");
-
-        // shadedVertices 확장 뒤 stamp 할당만 실패한 중간 상태를 실제 OOM 없이 재현한다.
-        // 다음 명령은 각 배열의 크기를 독립적으로 복구해야 한다(성능 실험과 별도 안전성 회귀).
-        Renderer::WorkerScratch interruptedGrowth;
-        interruptedGrowth.shadedVertices.resize(17);
-        interruptedGrowth.vertexStamps.resize(3);
-        interruptedGrowth.BeginCommand(17);
-        check(interruptedGrowth.shadedVertices.size() >= 17 && interruptedGrowth.vertexStamps.size() >= 17,
-              "command recovers mismatched cache sizes after partial allocation failure");
-        check(std::ranges::all_of(interruptedGrowth.vertexStamps,
-                                  [&](auto stamp) { return stamp != interruptedGrowth.commandStamp; }),
-              "recovered vertex stamps never claim initialized cache values");
+        first.vertexTags[0] = {1, 0};
+        first.BeginCommand();
+        check(first.commandStamp == 1 && first.vertexTags[0].stamp == 0, "stamp wrap");
 
         Renderer a, b;
         a.m_workerScratch.local().triangles.emplace_back(TriangleRef{});
@@ -191,15 +185,16 @@ struct RendererTestAccess
                         Renderer::shadeVertex(cmd.sourceMesh->vertices[i], cmd.worldTransform, mvp, normal);
                 else
                     expected.posClip = mvp * SRMath::vec4(cmd.sourceMesh->vertices[i].position, 1.f);
-                const auto &actual =
-                    Renderer::cachedVertex(static_cast<unsigned int>(i), cmd, scratch.modelViewProjection,
+                const auto &cached =
+                    Renderer::cachedVertex(static_cast<std::uint32_t>(i), cmd, scratch.modelViewProjection,
                                            scratch.normalMatrix, scratch, size, size);
-                check(std::ranges::equal(vertexComponents(actual), vertexComponents(expected), sameFloat),
+                check(std::ranges::equal(vertexComponents(cached.shaded), vertexComponents(expected),
+                                         sameFloat),
                       "reused vertex cache is bitwise equal to direct shading");
-                check(scratch.vertexStamps[i] == scratch.commandStamp,
+                check(scratch.IsCached(static_cast<std::uint32_t>(i)),
                       "cache slot carries current transform stamp");
-                // 같은 stamp로 setup도 함께 채워진다. 직접 계산과 비트까지 같아야 한다.
-                const auto &setup = scratch.vertexSetups[i];
+                // 같은 칸에 setup도 함께 채워진다. 직접 계산과 비트까지 같아야 한다.
+                const auto &setup = cached.setup;
                 const auto raster = Rasterizer::ToRasterizerVertex(expected, size, size);
                 check(setup.outcode == Renderer::computeOutcode(expected.posClip) &&
                           sameFloat(setup.raster.screenPos.x, raster.screenPos.x) &&
@@ -221,14 +216,14 @@ struct RendererTestAccess
         begin(command, identity, false);
         begin(command, identity, true);
         // 값이 우연히 같다는 비교뿐 아니라 기존 슬롯을 실제로 읽는지 직접 증명한다.
-        const auto saved = scratch.shadedVertices[0];
-        scratch.shadedVertices[0].texcoord.x = .9375f;
+        const auto saved = scratch.vertexCache[0];
+        scratch.vertexCache[0].shaded.texcoord.x = .9375f;
         check(scratch.BeginCachedCommand(command, identity), "same transform key really hits");
         check(Renderer::cachedVertex(0, command, scratch.modelViewProjection, scratch.normalMatrix, scratch,
                                      64, 64)
-                      .texcoord.x == .9375f,
+                      .shaded.texcoord.x == .9375f,
               "cache hit does not recompute an already stamped vertex");
-        scratch.shadedVertices[0] = saved;
+        scratch.vertexCache[0] = saved;
         const std::array<unsigned int, 3> subset{1, 3, 2};
         command.material = &alternateMaterial;
         command.indicesToDraw = subset;
@@ -295,28 +290,17 @@ struct RendererTestAccess
         mesh.vertices[0].texcoord.y = .875f;
         begin(command, identity, false);
         check(independent.commandStamp == independentStamp, "independent worker stamp remains unchanged");
-        scratch.BeginCommand(mesh.vertices.size());
+        scratch.BeginCommand();
         check(!scratch.transformCacheValid, "legacy BeginCommand invalidates transform reuse");
         begin(command, identity, false);
         scratch.commandStamp = std::numeric_limits<std::uint64_t>::max();
-        std::ranges::fill(scratch.vertexStamps, 1);
+        for (auto &tag : scratch.vertexTags)
+            tag.stamp = 1;
         command.worldTransform[3][2] = .1f;
         check(!scratch.BeginCachedCommand(command, identity) && scratch.commandStamp == 1 &&
-                  std::ranges::all_of(scratch.vertexStamps, [](auto stamp) { return stamp == 0; }),
+                  std::ranges::all_of(scratch.vertexTags, [](const auto &tag) { return tag.stamp == 0; }),
               "cache miss stamp wrap invalidates every old vertex slot before reuse");
         verify(scratch, command, identity);
-        // 부분 할당 실패 뒤 상태를 주입한다. 거대 할당/OOM은 실제로 발생시키지 않는다.
-        scratch.BeginFrame();
-        scratch.shadedVertices.resize(mesh.vertices.size() + 8);
-        scratch.vertexStamps.resize(1);
-        begin(command, identity, false);
-        check(scratch.vertexStamps.size() >= mesh.vertices.size(),
-              "cached command repairs partial cache growth");
-        scratch.vertexStamps.resize(1);
-        begin(command, identity, false);
-        check(scratch.vertexStamps.size() >= mesh.vertices.size(),
-              "otherwise matching key cannot hit undersized cache storage");
-
         // 행렬의 NaN payload도 비교 연산이 아닌 bit key로 취급하며 finite 기각은 그대로다.
         vp = identity;
         vp[0][0] = std::bit_cast<float>(std::uint32_t{0x7FC00001});
@@ -335,12 +319,12 @@ struct RendererTestAccess
         const auto firstCommand = command;
         renderer.processCommand(firstCommand, frame, actualWorker, 0);
         const auto stamp = actualWorker.commandStamp;
-        check(actualWorker.vertexStamps[3] != stamp, "first subset leaves unused vertex unshaded");
+        check(!actualWorker.IsCached(3), "first subset leaves unused vertex unshaded");
         command.indicesToDraw = subset;
         command.material = &mesh.material;
         const auto secondCommand = command;
         renderer.processCommand(secondCommand, frame, actualWorker, 1);
-        check(actualWorker.commandStamp == stamp && actualWorker.vertexStamps[3] == stamp,
+        check(actualWorker.commandStamp == stamp && actualWorker.IsCached(3),
               "processCommand reuses transform cache and lazily shades newly referenced vertices");
         verify(actualWorker, command, identity, 32); // renderer 뷰포트 크기로 채운 setup이다.
         check(actualWorker.triangles.size() == 2 &&
@@ -348,6 +332,43 @@ struct RendererTestAccess
                   actualWorker.triangles[1].sourceCommand == &secondCommand &&
                   actualWorker.triangles[0].primitiveId == 0 && actualWorker.triangles[1].primitiveId == 16,
               "cache hit does not reuse previous command material ownership or primitive identity");
+
+        // direct-mapped 칸 충돌: 번호가 vertexCacheSize만큼 다른 정점은 같은 칸을 쓴다. 한 삼각형의
+        // 세 꼭짓점이 모두 같은 칸이어도, 칸을 나눠 쓰는 경우와 결과가 비트까지 같아야 한다.
+        constexpr std::uint32_t slots = Renderer::WorkerScratch::vertexCacheSize;
+        Mesh wide;
+        wide.vertices.resize(2 * slots + 3, mesh.vertices[3]);
+        wide.vertices[0] = mesh.vertices[0];
+        wide.vertices[slots] = mesh.vertices[1];
+        wide.vertices[2 * slots] = mesh.vertices[2];
+        wide.vertices[2 * slots + 1] = mesh.vertices[0];
+        wide.vertices[2 * slots + 2] = mesh.vertices[1];
+        wide.vertices[3] = mesh.vertices[2];
+        const std::array<unsigned int, 6> colliding{0, slots, 2 * slots, 2 * slots + 1, 2 * slots + 2, 3};
+        MeshRenderCommand wideCommand{&wide, colliding, identity, &mesh.material};
+        Renderer collider;
+        collider.ensureViewport(32, 32);
+        auto &collidingWorker = collider.m_workerScratch.local();
+        collider.processCommand(wideCommand, frame, collidingWorker, 0);
+        const auto expectedTriangle = Rasterizer::Prepare(
+            Renderer::shadeVertex(mesh.vertices[0], identity, identity, identity),
+            Renderer::shadeVertex(mesh.vertices[1], identity, identity, identity),
+            Renderer::shadeVertex(mesh.vertices[2], identity, identity, identity), 32, 32, 0, &wideCommand);
+        const auto sameTriangle = [&](const TriangleRef &actual, std::uint64_t id)
+        {
+            return expectedTriangle && actual.primitiveId == id &&
+                   std::bit_cast<std::uint32_t>(actual.rv0.screenPos.x) ==
+                       std::bit_cast<std::uint32_t>(expectedTriangle->rv0.screenPos.x) &&
+                   std::bit_cast<std::uint32_t>(actual.rv1.screenPos.y) ==
+                       std::bit_cast<std::uint32_t>(expectedTriangle->rv1.screenPos.y) &&
+                   std::bit_cast<std::uint32_t>(actual.rv2.oneOverW) ==
+                       std::bit_cast<std::uint32_t>(expectedTriangle->rv2.oneOverW) &&
+                   actual.dx01Fixed == expectedTriangle->dx01Fixed &&
+                   actual.dy20Fixed == expectedTriangle->dy20Fixed;
+        };
+        check(collidingWorker.triangles.size() == 2 && sameTriangle(collidingWorker.triangles[0], 0) &&
+                  sameTriangle(collidingWorker.triangles[1], 16),
+              "triangles whose corners share one cache slot match the non-colliding result");
     }
     static void flatTileReferenceLayout()
     {

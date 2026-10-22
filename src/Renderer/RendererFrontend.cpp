@@ -13,6 +13,8 @@ Renderer::WorkerScratch::WorkerScratch()
 {
     // 준비 구조가 커졌으므로 작은 초기 용량으로 시작하고 실제 high-water를 재사용한다.
     triangles.reserve(512);
+    vertexCache.resize(vertexCacheSize);
+    vertexTags.resize(vertexCacheSize);
 }
 void Renderer::WorkerScratch::BeginFrame()
 {
@@ -32,24 +34,16 @@ void Renderer::WorkerScratch::BeginFrame()
     clipOutput.clear();
     clippedVertices.clear();
 }
-void Renderer::WorkerScratch::BeginCommand(std::size_t vertexCount)
+void Renderer::WorkerScratch::BeginCommand()
 {
-    // 기존 size-only API는 항상 새 세대를 만든다. 할당 실패 전부터 키를
-    // 무효화해 부분 확장된 저장소가 다음 호출에서 cache hit가 되지 않게 한다.
+    // 항상 새 세대를 만든다. 이전 세대의 칸은 stamp가 달라 모두 무효가 된다.
     transformCacheValid = false;
     if (++commandStamp == 0)
     {
-        std::ranges::fill(vertexStamps, 0);
+        for (auto &tag : vertexTags)
+            tag.stamp = 0;
         commandStamp = 1;
     }
-    // 두 resize 사이에 할당 실패가 나도 다음 호출에서 각각 부족한 저장소를
-    // 복구한다. 한 벡터의 크기를 다른 벡터의 용량 보장으로 사용하지 않는다.
-    if (shadedVertices.size() < vertexCount)
-        shadedVertices.resize(vertexCount);
-    if (vertexStamps.size() < vertexCount)
-        vertexStamps.resize(vertexCount, 0);
-    if (vertexSetups.size() < vertexCount)
-        vertexSetups.resize(vertexCount);
 }
 bool Renderer::WorkerScratch::BeginCachedCommand(const MeshRenderCommand &command,
                                                  const SRMath::mat4 &viewProjection)
@@ -71,13 +65,12 @@ bool Renderer::WorkerScratch::BeginCachedCommand(const MeshRenderCommand &comman
             key.worldBits[index] = std::bit_cast<std::uint32_t>(command.worldTransform.cols[column][row]);
             key.viewProjectionBits[index] = std::bit_cast<std::uint32_t>(viewProjection.cols[column][row]);
         }
-    if (transformCacheValid && transformCacheKey == key && shadedVertices.size() >= key.vertexCount &&
-        vertexStamps.size() >= key.vertexCount && vertexSetups.size() >= key.vertexCount)
+    if (transformCacheValid && transformCacheKey == key)
         return true;
 
     // Octree의 index 부분집합과 material은 정점 변환에 영향을 주지 않는다.
     // worker/명령 순서를 바꾸지 않고 같은 키에서만 세대와 두 행렬을 유지한다.
-    BeginCommand(key.vertexCount);
+    BeginCommand();
     const SRMath::mat4 mvp = viewProjection * command.worldTransform;
     const auto inverseTransposeWorld =
         command.rasterizeMode == ERasterizeMode::Fill
@@ -101,11 +94,12 @@ ShadedVertex Renderer::shadeVertex(const Vertex &vertex, const SRMath::mat4 &wor
     result.texcoord = vertex.texcoord;
     return result;
 }
-void Renderer::fillVertex(unsigned int index, const MeshRenderCommand &command,
+void Renderer::fillVertex(std::uint32_t index, const MeshRenderCommand &command,
                           const SRMath::mat4 &modelViewProjection, const SRMath::mat4 &normalMatrix,
                           WorkerScratch &scratch, int width, int height)
 {
-    auto &vertex = scratch.shadedVertices[index];
+    const auto slot = index & (WorkerScratch::vertexCacheSize - 1);
+    auto &vertex = scratch.vertexCache[slot].shaded;
     if (command.rasterizeMode == ERasterizeMode::Wireframe)
     {
         // X-ray/숨은 선 모두 clip 좌표와 1/w만 사용한다. 법선 디버그는
@@ -119,13 +113,13 @@ void Renderer::fillVertex(unsigned int index, const MeshRenderCommand &command,
         vertex = shadeVertex(command.sourceMesh->vertices[index], command.worldTransform, modelViewProjection,
                              normalMatrix);
     // processCommand와 Rasterizer::Prepare가 꼭짓점마다 하던 계산을 같은 식 그대로 옮겼다.
-    auto &setup = scratch.vertexSetups[index];
+    auto &setup = scratch.vertexCache[slot].setup;
     setup.finiteClip = std::isfinite(vertex.posClip.x) && std::isfinite(vertex.posClip.y) &&
                        std::isfinite(vertex.posClip.z) && std::isfinite(vertex.posClip.w);
     setup.outcode = computeOutcode(vertex.posClip);
     setup.ndc = SRMath::vec3(vertex.posClip) / vertex.posClip.w;
     setup.raster = Rasterizer::ToRasterizerVertex(vertex, width, height);
-    scratch.vertexStamps[index] = scratch.commandStamp;
+    scratch.vertexTags[slot] = {scratch.commandStamp, index};
 }
 void Renderer::prepareFrame()
 {
@@ -184,6 +178,7 @@ void Renderer::processCommand(const MeshRenderCommand &cmd, const FrameContext &
     const auto &mvp = scratch.modelViewProjection;
     const auto &inverseTransposeWorld = scratch.normalMatrix;
     const auto indices = cmd.indicesToDraw;
+    std::array<WorkerScratch::CachedVertex, 3> conflict;
     for (size_t i = 0; i < indices.size(); i += 3)
     {
         uint32_t i0 = indices[i];
@@ -193,12 +188,31 @@ void Renderer::processCommand(const MeshRenderCommand &cmd, const FrameContext &
         if (i0 >= mesh->vertices.size() || i1 >= mesh->vertices.size() || i2 >= mesh->vertices.size())
             continue;
 
-        const auto &sv0 = cachedVertex(i0, cmd, mvp, inverseTransposeWorld, scratch, m_width, m_height);
-        const auto &sv1 = cachedVertex(i1, cmd, mvp, inverseTransposeWorld, scratch, m_width, m_height);
-        const auto &sv2 = cachedVertex(i2, cmd, mvp, inverseTransposeWorld, scratch, m_width, m_height);
-        const auto &setup0 = scratch.vertexSetups[i0];
-        const auto &setup1 = scratch.vertexSetups[i1];
-        const auto &setup2 = scratch.vertexSetups[i2];
+        // 서로 다른 두 정점이 같은 칸을 쓰면 나중에 채운 정점이 앞의 것을 덮는다. 그때만 복사본으로 처리한다.
+        constexpr auto mask = WorkerScratch::vertexCacheSize - 1;
+        const WorkerScratch::CachedVertex *c0, *c1, *c2;
+        if (((i0 ^ i1) & mask) && ((i0 ^ i2) & mask) && ((i1 ^ i2) & mask)) [[likely]]
+        {
+            c0 = &cachedVertex(i0, cmd, mvp, inverseTransposeWorld, scratch, m_width, m_height);
+            c1 = &cachedVertex(i1, cmd, mvp, inverseTransposeWorld, scratch, m_width, m_height);
+            c2 = &cachedVertex(i2, cmd, mvp, inverseTransposeWorld, scratch, m_width, m_height);
+        }
+        else
+        {
+            // 같은 정점이 두 번 나오는 퇴화 삼각형도 이 경로로 온다(값은 같다).
+            conflict[0] = cachedVertex(i0, cmd, mvp, inverseTransposeWorld, scratch, m_width, m_height);
+            conflict[1] = cachedVertex(i1, cmd, mvp, inverseTransposeWorld, scratch, m_width, m_height);
+            conflict[2] = cachedVertex(i2, cmd, mvp, inverseTransposeWorld, scratch, m_width, m_height);
+            c0 = &conflict[0];
+            c1 = &conflict[1];
+            c2 = &conflict[2];
+        }
+        const auto &sv0 = c0->shaded;
+        const auto &sv1 = c1->shaded;
+        const auto &sv2 = c2->shaded;
+        const auto &setup0 = c0->setup;
+        const auto &setup1 = c1->setup;
+        const auto &setup2 = c2->setup;
 
         const auto finiteClip = [](const SRMath::vec4 &clip)
         {
