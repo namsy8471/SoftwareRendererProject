@@ -2,6 +2,7 @@
 #include "Renderer/RenderQueue.h"
 #include "Renderer/RenderCommand.h"
 #include "Graphics/Mesh.h"
+#include "Math/AABB.h"
 #include "Utils/Jobs.h"
 #include <algorithm>
 #include <cmath>
@@ -112,33 +113,45 @@ void clipPolyAgainstPlane(ClipPoly &outPoly, const ClipPoly &inPoly, int plane) 
         }
     }
 }
-} // namespace
 
-ShadowMap::ShadowMap()
+struct PoissonSample
 {
-    Clear();
-}
+    float x, y;
+};
 
-void ShadowMap::Clear() noexcept
+// 16 precomputed Poisson disk sample offsets on the unit circle
+constexpr std::array<PoissonSample, 16> POISSON_DISK_16 = {{
+    {-0.94201624f, -0.39906216f},
+    { 0.94558609f, -0.76890725f},
+    {-0.09418410f, -0.92938870f},
+    { 0.34495938f,  0.29387760f},
+    {-0.91588581f,  0.45771432f},
+    {-0.81544232f, -0.87912464f},
+    {-0.38277543f,  0.27676845f},
+    { 0.97484398f,  0.75648379f},
+    { 0.44323325f, -0.97511554f},
+    { 0.53742981f, -0.47373420f},
+    {-0.26496911f, -0.41893023f},
+    { 0.79197514f,  0.19090188f},
+    {-0.24188840f,  0.99706507f},
+    {-0.81409955f,  0.91437590f},
+    { 0.19984126f,  0.78641367f},
+    { 0.14383161f, -0.14100790f}
+}};
+
+void rasterizeCommandsToDepth(const RenderQueue &queue,
+                              const SRMath::mat4 &lightVP,
+                              std::vector<float> &depthBuffer,
+                              int width,
+                              int height)
 {
-    const std::size_t targetSize = static_cast<std::size_t>(width) * height;
-    if (depthBuffer.size() != targetSize)
-        depthBuffer.assign(targetSize, 1.0f);
-    else
-        std::fill(depthBuffer.begin(), depthBuffer.end(), 1.0f);
-}
-
-void ShadowMap::Render(const RenderQueue &queue, const SRMath::mat4 &lightVP)
-{
-    lightViewProjection = lightVP;
-    Clear();
-
     const auto &commands = queue.GetRenderCommands();
-    if (commands.empty())
+    if (commands.empty() || depthBuffer.empty())
         return;
 
     const float fWidth = static_cast<float>(width);
     const float fHeight = static_cast<float>(height);
+    const bool isOrtho = (std::abs(lightVP[3][3] - 1.0f) < 1e-5f && std::abs(lightVP[2][3]) < 1e-5f);
 
     sr::jobs::ParallelFor(std::size_t{0}, commands.size(), [&](std::size_t firstCmd, std::size_t lastCmd) {
         ClipPoly polyA, polyB;
@@ -152,13 +165,17 @@ void ShadowMap::Render(const RenderQueue &queue, const SRMath::mat4 &lightVP)
             const Mesh &mesh = *cmd.sourceMesh;
             const auto &indices = cmd.indicesToDraw;
             const auto &vertices = mesh.vertices;
-            const SRMath::mat4 mvp = lightViewProjection * cmd.worldTransform;
+            const SRMath::mat4 mvp = lightVP * cmd.worldTransform;
             const std::size_t triangleCount = indices.size() / 3;
 
             const auto rasterizeTriangle = [&](const SRMath::vec4 &v0, const SRMath::vec4 &v1, const SRMath::vec4 &v2) {
-                const float invW0 = 1.0f / v0.w;
-                const float invW1 = 1.0f / v1.w;
-                const float invW2 = 1.0f / v2.w;
+                float invW0 = 1.0f, invW1 = 1.0f, invW2 = 1.0f;
+                if (!isOrtho)
+                {
+                    invW0 = 1.0f / v0.w;
+                    invW1 = 1.0f / v1.w;
+                    invW2 = 1.0f / v2.w;
+                }
 
                 const float xn0 = v0.x * invW0, yn0 = v0.y * invW0, zn0 = v0.z * invW0;
                 const float xn1 = v1.x * invW1, yn1 = v1.y * invW1, zn1 = v1.z * invW1;
@@ -292,14 +309,19 @@ void ShadowMap::Render(const RenderQueue &queue, const SRMath::mat4 &lightVP)
     });
 }
 
-float ShadowMap::SampleVisibility(const SRMath::vec3 &positionWorld,
-                                  const SRMath::vec3 &normalWorld,
-                                  const SRMath::vec3 &lightDir) const noexcept
+float sampleSinglePassVisibility(const SRMath::mat4 &lightVP,
+                                 const std::vector<float> &depthBuf,
+                                 int width,
+                                 int height,
+                                 const SRMath::vec3 &positionWorld,
+                                 const SRMath::vec3 &normalWorld,
+                                 const SRMath::vec3 &lightDir,
+                                 float filterRadiusTexels) noexcept
 {
-    if (depthBuffer.empty())
+    if (depthBuf.empty())
         return 1.0f;
 
-    const SRMath::vec4 clipPos = lightViewProjection * SRMath::vec4(positionWorld, 1.0f);
+    const SRMath::vec4 clipPos = lightVP * SRMath::vec4(positionWorld, 1.0f);
     if (clipPos.w <= 0.0f)
         return 1.0f;
 
@@ -316,41 +338,205 @@ float ShadowMap::SampleVisibility(const SRMath::vec3 &positionWorld,
         return 1.0f;
 
     const float nDotL = std::max(0.0f, SRMath::dot(normalWorld, lightDir));
-    const float bias = std::max(0.0025f * (1.0f - nDotL), 0.0005f);
+    const float bias = std::max(0.0035f * (1.0f - nDotL), 0.0008f);
 
     const float w = static_cast<float>(width);
     const float h = static_cast<float>(height);
-    const float xTex = us * w - 0.5f;
-    const float yTex = vs * h - 0.5f;
+    const float du = filterRadiusTexels / w;
+    const float dv = filterRadiusTexels / h;
 
-    const float floorX = std::floor(xTex);
-    const float floorY = std::floor(yTex);
-    const int x0 = static_cast<int>(floorX);
-    const int y0 = static_cast<int>(floorY);
-    const int x1 = x0 + 1;
-    const int y1 = y0 + 1;
+    float visibility = 0.0f;
+    for (int i = 0; i < 16; ++i)
+    {
+        const float uSample = std::clamp(us + POISSON_DISK_16[i].x * du, 0.0f, 1.0f);
+        const float vSample = std::clamp(vs + POISSON_DISK_16[i].y * dv, 0.0f, 1.0f);
 
-    const float fx = xTex - floorX;
-    const float fy = yTex - floorY;
+        const int px = std::clamp(static_cast<int>(uSample * w), 0, width - 1);
+        const int py = std::clamp(static_cast<int>(vSample * h), 0, height - 1);
 
-    const int i0 = std::clamp(x0, 0, width - 1);
-    const int i1 = std::clamp(x1, 0, width - 1);
-    const int j0 = std::clamp(y0, 0, height - 1);
-    const int j1 = std::clamp(y1, 0, height - 1);
+        const float sampledDepth = depthBuf[static_cast<std::size_t>(py) * width + px];
+        if (ds - bias <= sampledDepth)
+            visibility += 1.0f;
+    }
 
-    const float d00 = depthBuffer[static_cast<std::size_t>(j0) * width + i0];
-    const float d10 = depthBuffer[static_cast<std::size_t>(j0) * width + i1];
-    const float d01 = depthBuffer[static_cast<std::size_t>(j1) * width + i0];
-    const float d11 = depthBuffer[static_cast<std::size_t>(j1) * width + i1];
+    return visibility * (1.0f / 16.0f);
+}
+} // namespace
 
-    const float s00 = (ds - bias <= d00) ? 1.0f : 0.0f;
-    const float s10 = (ds - bias <= d10) ? 1.0f : 0.0f;
-    const float s01 = (ds - bias <= d01) ? 1.0f : 0.0f;
-    const float s11 = (ds - bias <= d11) ? 1.0f : 0.0f;
+ShadowMap::ShadowMap()
+{
+    Clear();
+}
 
-    const float s0 = s00 * (1.0f - fx) + s10 * fx;
-    const float s1 = s01 * (1.0f - fx) + s11 * fx;
-    return s0 * (1.0f - fy) + s1 * fy;
+void ShadowMap::Clear() noexcept
+{
+    const std::size_t targetSize = static_cast<std::size_t>(width) * height;
+    if (depthBuffer.size() != targetSize)
+        depthBuffer.assign(targetSize, 1.0f);
+    else
+        std::fill(depthBuffer.begin(), depthBuffer.end(), 1.0f);
+
+    if (useCascades)
+    {
+        for (auto &cascade : cascades)
+        {
+            if (cascade.depthBuffer.size() != targetSize)
+                cascade.depthBuffer.assign(targetSize, 1.0f);
+            else
+                std::fill(cascade.depthBuffer.begin(), cascade.depthBuffer.end(), 1.0f);
+        }
+    }
+}
+
+void ShadowMap::Render(const RenderQueue &queue, const SRMath::mat4 &lightVP)
+{
+    lightViewProjection = lightVP;
+    useCascades = false;
+    Clear();
+    rasterizeCommandsToDepth(queue, lightViewProjection, depthBuffer, width, height);
+}
+
+void ShadowMap::RenderCascades(const RenderQueue &queue,
+                               const SRMath::vec3 &lightDir,
+                               const SRMath::mat4 &camView,
+                               const SRMath::mat4 &camProj,
+                               float shadowNear,
+                               float shadowFar,
+                               const AABB &/*sceneBounds*/)
+{
+    useCascades = true;
+    cameraView = camView;
+    Clear();
+
+    // 1. Calculate cascade split distances using practical split scheme (lambda = 0.75)
+    constexpr float lambda = 0.75f;
+    std::array<float, cascadeCount + 1> splitDistances;
+    splitDistances[0] = shadowNear;
+    for (int i = 1; i < cascadeCount; ++i)
+    {
+        const float p = static_cast<float>(i) / static_cast<float>(cascadeCount);
+        const float logDist = shadowNear * std::pow(shadowFar / shadowNear, p);
+        const float uniformDist = shadowNear + (shadowFar - shadowNear) * p;
+        splitDistances[i] = lambda * logDist + (1.0f - lambda) * uniformDist;
+        cascades[i - 1].splitDepth = splitDistances[i];
+    }
+    splitDistances[cascadeCount] = shadowFar;
+    cascades[cascadeCount - 1].splitDepth = shadowFar;
+
+    const auto invCamOpt = SRMath::inverse(camProj * camView);
+    if (!invCamOpt)
+        return;
+    const SRMath::mat4 invCam = *invCamOpt;
+
+    const SRMath::vec3 lightUp = std::abs(lightDir.y) > 0.99f ? SRMath::vec3(0.f, 0.f, 1.f) : SRMath::vec3(0.f, 1.f, 0.f);
+
+    const auto getNDC_Z = [&](float z) {
+        return (z * (shadowFar + shadowNear) - 2.0f * shadowFar * shadowNear) / (z * (shadowFar - shadowNear));
+    };
+
+    // 2. Render each cascade with texel snapping
+    for (int c = 0; c < cascadeCount; ++c)
+    {
+        const float nearZ = splitDistances[c];
+        const float farZ = splitDistances[c + 1];
+
+        const float ndcNearZ = std::clamp(getNDC_Z(nearZ), -1.0f, 1.0f);
+        const float ndcFarZ = std::clamp(getNDC_Z(farZ), -1.0f, 1.0f);
+
+        const std::array<SRMath::vec4, 8> ndcCorners = {{
+            {-1.f, -1.f, ndcNearZ, 1.f}, { 1.f, -1.f, ndcNearZ, 1.f},
+            {-1.f,  1.f, ndcNearZ, 1.f}, { 1.f,  1.f, ndcNearZ, 1.f},
+            {-1.f, -1.f, ndcFarZ,  1.f}, { 1.f, -1.f, ndcFarZ,  1.f},
+            {-1.f,  1.f, ndcFarZ,  1.f}, { 1.f,  1.f, ndcFarZ,  1.f}
+        }};
+
+        SRMath::vec3 frustumCenter(0.f);
+        std::array<SRMath::vec3, 8> worldCorners;
+        for (int k = 0; k < 8; ++k)
+        {
+            SRMath::vec4 wc = invCam * ndcCorners[k];
+            const float invW = (std::abs(wc.w) > 1e-6f) ? (1.0f / wc.w) : 1.0f;
+            worldCorners[k] = SRMath::vec3(wc.x * invW, wc.y * invW, wc.z * invW);
+            frustumCenter = frustumCenter + worldCorners[k];
+        }
+        frustumCenter = frustumCenter * (1.0f / 8.0f);
+
+        float sphereRadius = 0.0f;
+        for (int k = 0; k < 8; ++k)
+        {
+            sphereRadius = std::max(sphereRadius, SRMath::length(worldCorners[k] - frustumCenter));
+        }
+        sphereRadius = std::max(sphereRadius, 1.0f);
+
+        const float worldUnitsPerTexel = (2.0f * sphereRadius) / static_cast<float>(width);
+
+        const SRMath::vec3 lightEye = frustumCenter + lightDir * (sphereRadius * 3.0f);
+        const SRMath::mat4 lightView = SRMath::lookAt(lightEye, frustumCenter, lightUp);
+
+        const SRMath::vec4 centerLS = lightView * SRMath::vec4(frustumCenter, 1.0f);
+        const float snappedX = std::floor(centerLS.x / worldUnitsPerTexel) * worldUnitsPerTexel;
+        const float snappedY = std::floor(centerLS.y / worldUnitsPerTexel) * worldUnitsPerTexel;
+
+        const float minX = snappedX - sphereRadius;
+        const float maxX = snappedX + sphereRadius;
+        const float minY = snappedY - sphereRadius;
+        const float maxY = snappedY + sphereRadius;
+        const float zNearOrtho = 0.1f;
+        const float zFarOrtho = sphereRadius * 6.0f;
+
+        const SRMath::mat4 lightProj = SRMath::ortho(minX, maxX, minY, maxY, zNearOrtho, zFarOrtho);
+        cascades[c].viewProjection = lightProj * lightView;
+
+        rasterizeCommandsToDepth(queue, cascades[c].viewProjection, cascades[c].depthBuffer, width, height);
+    }
+}
+
+float ShadowMap::SampleVisibility(const SRMath::vec3 &positionWorld,
+                                  const SRMath::vec3 &normalWorld,
+                                  const SRMath::vec3 &lightDir,
+                                  float viewDepth) const noexcept
+{
+    if (!useCascades)
+    {
+        return sampleSinglePassVisibility(lightViewProjection, depthBuffer, width, height,
+                                          positionWorld, normalWorld, lightDir, 2.0f);
+    }
+
+    float zView = viewDepth;
+    if (zView < 0.0f)
+    {
+        const SRMath::vec4 pView = cameraView * SRMath::vec4(positionWorld, 1.0f);
+        zView = -pView.z;
+    }
+
+    int cascadeIdx = cascadeCount - 1;
+    for (int c = 0; c < cascadeCount; ++c)
+    {
+        if (zView <= cascades[c].splitDepth)
+        {
+            cascadeIdx = c;
+            break;
+        }
+    }
+
+    const float split = cascades[cascadeIdx].splitDepth;
+    const float blendBand = std::max(1.0f, split * 0.15f);
+    const float blendStart = split - blendBand;
+
+    const float vis0 = sampleSinglePassVisibility(cascades[cascadeIdx].viewProjection,
+                                                 cascades[cascadeIdx].depthBuffer,
+                                                 width, height, positionWorld, normalWorld, lightDir, 2.0f);
+
+    if (cascadeIdx < cascadeCount - 1 && zView > blendStart)
+    {
+        const float t = std::clamp((zView - blendStart) / blendBand, 0.0f, 1.0f);
+        const float vis1 = sampleSinglePassVisibility(cascades[cascadeIdx + 1].viewProjection,
+                                                     cascades[cascadeIdx + 1].depthBuffer,
+                                                     width, height, positionWorld, normalWorld, lightDir, 2.0f);
+        return (1.0f - t) * vis0 + t * vis1;
+    }
+
+    return vis0;
 }
 
 __m128 ShadowMap::SampleVisibility4(const Lanes3 &normal,
@@ -360,26 +546,17 @@ __m128 ShadowMap::SampleVisibility4(const Lanes3 &normal,
     __m128 px = position.x, py = position.y, pz = position.z, pw = _mm_setzero_ps();
     _MM_TRANSPOSE4_PS(px, py, pz, pw);
     SRMath::vec3 p0, p1, p2, p3;
-    p0.m128 = px;
-    p1.m128 = py;
-    p2.m128 = pz;
-    p3.m128 = pw;
+    p0.m128 = px; p1.m128 = py; p2.m128 = pz; p3.m128 = pw;
 
     __m128 nx = normal.x, ny = normal.y, nz = normal.z, nw = _mm_setzero_ps();
     _MM_TRANSPOSE4_PS(nx, ny, nz, nw);
     SRMath::vec3 n0, n1, n2, n3;
-    n0.m128 = nx;
-    n1.m128 = ny;
-    n2.m128 = nz;
-    n3.m128 = nw;
+    n0.m128 = nx; n1.m128 = ny; n2.m128 = nz; n3.m128 = nw;
 
     __m128 lx = lightDir.x, ly = lightDir.y, lz = lightDir.z, lw = _mm_setzero_ps();
     _MM_TRANSPOSE4_PS(lx, ly, lz, lw);
     SRMath::vec3 l0, l1, l2, l3;
-    l0.m128 = lx;
-    l1.m128 = ly;
-    l2.m128 = lz;
-    l3.m128 = lw;
+    l0.m128 = lx; l1.m128 = ly; l2.m128 = lz; l3.m128 = lw;
 
     alignas(16) float vis[4];
     vis[0] = SampleVisibility(p0, n0, l0);

@@ -172,7 +172,8 @@ void Renderer::renderScene(RenderTarget &target, const RenderQueue &queue, const
                 zFar = zNear + 20.0f;
 
             const SRMath::mat4 lightProj = SRMath::ortho(minX, maxX, minY, maxY, zNear, zFar);
-            m_shadowMap->Render(queue, lightProj * lightView);
+            m_shadowMap->lightViewProjection = lightProj * lightView;
+            m_shadowMap->RenderCascades(queue, lightDir, view.view, view.projection, 0.2f, 80.0f, sceneBounds);
         }
         else
         {
