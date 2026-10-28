@@ -468,68 +468,23 @@ template <bool Instrumented, RasterPass Pass> void Rasterizer::DrawTriangleImpl(
     if (!smallEdges && (!safeEdge(r0, t.dx12Fixed, t.dy12Fixed) || !safeEdge(r1, t.dx20Fixed, t.dy20Fixed) ||
                         !safeEdge(r2, t.dx01Fixed, t.dy01Fixed)))
         return;
-    float *const depth = m_depthBase;
-    std::uint64_t *const ids = m_idBase;
-    unsigned int *const colors = m_colorBase;
-    // edge 값이 이미 덮였다고 판정된 픽셀 하나를 처리한다. float 연산 순서는 기존과 같다.
-    const auto shadePixel = [&](int x, int y, std::int64_t w0, std::int64_t w1, std::int64_t w2)
-                                SR_FORCEINLINE_LAMBDA
+    const bool hasMaterial = (t.sourceCommand != nullptr && t.sourceCommand->material != nullptr);
+    const std::ptrdiff_t firstRowOffset =
+        static_cast<std::ptrdiff_t>(y0 - m_originY) * static_cast<std::ptrdiff_t>(m_depthStride) - m_originX;
+    float *depthRow = m_depthBase + firstRowOffset;
+    std::uint64_t *idRow = m_idBase + firstRowOffset;
+    [[maybe_unused]] unsigned int *colorRow = nullptr;
+    if constexpr (Pass != RasterPass::DepthOnly && Pass != RasterPass::DepthOwner)
     {
-        const float f0 = static_cast<float>(w0) / 256.f;
-        const float f1 = static_cast<float>(w1) / 256.f;
-        const float f2 = static_cast<float>(w2) / 256.f;
-        const float total = f0 + f1 + f2;
-        if (std::isfinite(total) && total >= 1e-5f)
-        {
-            if constexpr (Instrumented)
-                ++m_stats->coveragePassed;
-            const float inverse = 1.f / total;
-            const float a = f0 * inverse, b = f1 * inverse, c = f2 * inverse;
-            float q = t.rv0.oneOverW * a;
-            q += t.rv1.oneOverW * b;
-            q += t.rv2.oneOverW * c;
-            const auto index = static_cast<std::size_t>(y - m_originY) * m_depthStride + (x - m_originX);
-            const bool finite = std::isfinite(q) && q > 0.f;
-            const bool visible = Pass == RasterPass::ShadeVisible
-                                     ? ids[index] == t.primitiveId && depth[index] == q
-                                     : q > depth[index] || (q == depth[index] && t.primitiveId < ids[index]);
-            if (finite && visible)
-            {
-                if constexpr (Pass != RasterPass::ShadeVisible)
-                {
-                    depth[index] = q;
-                    ids[index] = t.primitiveId;
-                }
-                if constexpr (Pass == RasterPass::DepthOwner)
-                {
-                    // Shaded 패스라면 여기서 색을 썼을 것이다. 덮어쓴 색은 결국 버려지므로 주인만 바꾼다.
-                    if (t.sourceCommand && t.sourceCommand->material)
-                    {
-                        const auto cell =
-                            static_cast<std::size_t>(y - m_bounds.minY) * 16 + (x - m_bounds.minX);
-                        m_ownerScratch.triangles[cell] = &t;
-                        m_ownerScratch.samples[cell] = {a, b, c, q};
-                        m_ownerMask[cell >> 6] |= std::uint64_t{1} << (cell & 63);
-                    }
-                }
-                else if constexpr (Pass != RasterPass::DepthOnly)
-                    if (t.sourceCommand && t.sourceCommand->material)
-                    {
-                        auto sample = InterpolateSurface(t.rv0, t.rv1, t.rv2, a, b, c, 1.f / q);
-                        if (t.sourceCommand->material->normalTexture)
-                            ComputeTriangleTangentFrame(t, sample.tangentWorld, sample.bitangentWorld);
-                        if (m_frame.mipmapping)
-                            sample.lod = ComputeTriangleLod(t);
-                        colors[static_cast<std::size_t>(y - m_originY) * m_colorStride + (x - m_originX)] =
-                            packColor(ShadeSurface(sample, *t.sourceCommand->material, m_frame));
-                        if constexpr (Instrumented)
-                            ++m_stats->shadedPixels;
-                    }
-            }
-            else if constexpr (Instrumented)
-                ++m_stats->depthRejected;
-        }
-    };
+        colorRow = m_colorBase + (static_cast<std::ptrdiff_t>(y0 - m_originY) *
+                                      static_cast<std::ptrdiff_t>(m_colorStride) -
+                                  m_originX);
+    }
+    [[maybe_unused]] std::size_t cellRow = 0;
+    if constexpr (Pass == RasterPass::DepthOwner)
+    {
+        cellRow = static_cast<std::size_t>(y0 - m_bounds.minY) * 16 - static_cast<std::size_t>(m_bounds.minX);
+    }
     for (int y = y0; y <= y1; ++y)
     {
         auto w0 = r0, w1 = r1, w2 = r2;
@@ -544,9 +499,62 @@ template <bool Instrumented, RasterPass Pass> void Rasterizer::DrawTriangleImpl(
         }
         // 세 edge 함수는 x에 대해 정수 일차식이므로 행의 덮임 구간은 하나다.
         // 구간을 벗어나면 그 행의 나머지 픽셀은 볼 필요가 없다.
+        // float 연산 순서는 기존과 같다.
         for (; x <= x1 && (w0 | w1 | w2) >= 0; ++x)
         {
-            shadePixel(x, y, w0, w1, w2);
+            const float f0 = static_cast<float>(w0) / 256.f;
+            const float f1 = static_cast<float>(w1) / 256.f;
+            const float f2 = static_cast<float>(w2) / 256.f;
+            const float total = f0 + f1 + f2;
+            if (std::isfinite(total) && total >= 1e-5f)
+            {
+                if constexpr (Instrumented)
+                    ++m_stats->coveragePassed;
+                const float inverse = 1.f / total;
+                const float a = f0 * inverse, b = f1 * inverse, c = f2 * inverse;
+                float q = t.rv0.oneOverW * a;
+                q += t.rv1.oneOverW * b;
+                q += t.rv2.oneOverW * c;
+                const bool finite = std::isfinite(q) && q > 0.f;
+                const bool visible = Pass == RasterPass::ShadeVisible
+                                         ? idRow[x] == t.primitiveId && depthRow[x] == q
+                                         : q > depthRow[x] || (q == depthRow[x] && t.primitiveId < idRow[x]);
+                if (finite && visible)
+                {
+                    if constexpr (Pass != RasterPass::ShadeVisible)
+                    {
+                        depthRow[x] = q;
+                        idRow[x] = t.primitiveId;
+                    }
+                    if constexpr (Pass == RasterPass::DepthOwner)
+                    {
+                        // Shaded 패스라면 여기서 색을 썼을 것이다. 덮어쓴 색은 결국 버려지므로 주인만 바꾼다.
+                        if (hasMaterial)
+                        {
+                            const std::size_t cell = cellRow + static_cast<std::size_t>(x);
+                            m_ownerScratch.triangles[cell] = &t;
+                            m_ownerScratch.samples[cell] = {a, b, c, q};
+                            m_ownerMask[cell >> 6] |= std::uint64_t{1} << (cell & 63);
+                        }
+                    }
+                    else if constexpr (Pass != RasterPass::DepthOnly)
+                    {
+                        if (hasMaterial)
+                        {
+                            auto sample = InterpolateSurface(t.rv0, t.rv1, t.rv2, a, b, c, 1.f / q);
+                            if (t.sourceCommand->material->normalTexture)
+                                ComputeTriangleTangentFrame(t, sample.tangentWorld, sample.bitangentWorld);
+                            if (m_frame.mipmapping)
+                                sample.lod = ComputeTriangleLod(t);
+                            colorRow[x] = packColor(ShadeSurface(sample, *t.sourceCommand->material, m_frame));
+                            if constexpr (Instrumented)
+                                ++m_stats->shadedPixels;
+                        }
+                    }
+                }
+                else if constexpr (Instrumented)
+                    ++m_stats->depthRejected;
+            }
             // 퇴화/zero-weight 픽셀도 반드시 edge를 진행한다.
             w0 += t.dy12Fixed;
             w1 += t.dy20Fixed;
@@ -555,6 +563,12 @@ template <bool Instrumented, RasterPass Pass> void Rasterizer::DrawTriangleImpl(
         r0 -= t.dx12Fixed;
         r1 -= t.dx20Fixed;
         r2 -= t.dx01Fixed;
+        depthRow += m_depthStride;
+        idRow += m_depthStride;
+        if constexpr (Pass != RasterPass::DepthOnly && Pass != RasterPass::DepthOwner)
+            colorRow += m_colorStride;
+        if constexpr (Pass == RasterPass::DepthOwner)
+            cellRow += 16;
     }
 }
 
