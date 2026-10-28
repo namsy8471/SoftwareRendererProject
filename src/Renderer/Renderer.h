@@ -15,6 +15,7 @@
 #include "Renderer/RenderTarget.h"
 #include "Renderer/Rasterizer.h"
 #include "Renderer/ShadowMap.h"
+#include "Graphics/IBL.h" 
 #include "Utils/FixedCapacityVector.h"
 #include "Utils/Jobs.h"
 #include "Platform/Compiler.h"
@@ -70,6 +71,8 @@ class Renderer
     std::vector<PreparedPointLight> m_preparedPointLights;
     std::vector<PreparedSpotLight> m_preparedSpotLights;
     std::unique_ptr<ShadowMap> m_shadowMap;
+    std::shared_ptr<sr::IBLMap> m_defaultIblMap;
+    std::shared_ptr<sr::IBLMap> m_customIblMap;
 
     static constexpr std::size_t debugLineChunkSize = 256;
     struct DebugLineCommand
@@ -247,6 +250,11 @@ class Renderer
     void SetLineAlgorithm(ELineAlgorithm algorithm) noexcept { m_currentLineAlgorithm = algorithm; }
     void SetAAAlgorithm(EAAAlgorithm algorithm) noexcept { m_currentAAAlgorithm = algorithm; }
     void SetOptions(RenderOptions options) noexcept { m_options = options; }
+    void SetIBLMap(std::shared_ptr<sr::IBLMap> iblMap) noexcept { m_customIblMap = std::move(iblMap); }
+    [[nodiscard]] const std::shared_ptr<sr::IBLMap> &GetIBLMap() const noexcept
+    {
+        return m_customIblMap ? m_customIblMap : m_defaultIblMap;
+    }
     [[nodiscard]] RenderOptions GetOptions() const noexcept { return m_options; }
     [[nodiscard]] const RenderStats &GetStats() const noexcept { return m_stats; }
 

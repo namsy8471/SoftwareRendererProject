@@ -7,6 +7,7 @@
 #include "Renderer/RenderCommand.h"
 #include "Renderer/Tile.h"
 #include "Renderer/ShadowMap.h"
+#include "Graphics/IBL.h" 
 #include <algorithm>
 #include <cmath>
 #include <smmintrin.h>
@@ -421,8 +422,42 @@ SRMath::vec3 ShadeSurfacePBR(const Rasterizer::SurfaceSample &surface, const Mat
     }
 
     SRMath::vec3 ambient = baseColor * material.ambient * occlusion;
+    if (frame.ibl && frame.iblMap != nullptr)
+    {
+        const auto *ibl = static_cast<const sr::IBLMap *>(frame.iblMap);
+
+        // 1. Diffuse IBL
+        const SRMath::vec3 irradiance = ibl->sh.Evaluate(surfaceNormal);
+        const float oneMinusNdotV = 1.0f - NdotV;
+        const float f2 = oneMinusNdotV * oneMinusNdotV;
+        const float f5 = f2 * f2 * oneMinusNdotV;
+        const SRMath::vec3 maxF{std::max(1.0f - roughness, F0.x),
+                                std::max(1.0f - roughness, F0.y),
+                                std::max(1.0f - roughness, F0.z)};
+        const SRMath::vec3 F_rough = F0 + (maxF - F0) * f5;
+        const SRMath::vec3 kD_ibl = (SRMath::vec3(1.0f, 1.0f, 1.0f) - F_rough) * (1.0f - metallic);
+        const SRMath::vec3 diffuseIBL = kD_ibl * baseColor * irradiance;
+
+        // 2. Specular IBL
+        const SRMath::vec3 R = SRMath::normalize(surfaceNormal * (2.0f * SRMath::dot(surfaceNormal, viewDir)) - viewDir);
+        const SRMath::vec3 prefilteredColor = ibl->SampleSpecular(R, roughness);
+        const SRMath::vec2 envBRDF = sr::EnvBRDFApprox(NdotV, roughness);
+        const SRMath::vec3 specularIBL =
+            prefilteredColor * (F0 * envBRDF.x + SRMath::vec3(envBRDF.y, envBRDF.y, envBRDF.y));
+
+        ambient = (diffuseIBL + specularIBL) * occlusion;
+    }
+
     SRMath::vec3 color = ambient + totalDirect + emissive;
-    color.clamp(0.0f, 1.0f);
+
+    if (frame.tonemap)
+    {
+        color = sr::ACESFilm(color);
+    }
+    else
+    {
+        color.clamp(0.0f, 1.0f);
+    }
 
     if (frame.srgbGamma)
     {
@@ -593,7 +628,10 @@ SRMath::vec3 Rasterizer::ShadeSurface(const SurfaceSample &surface, const Materi
     color += totalSpecularColor;
 
     // 최종 색상의 각 채널(R, G, B)을 0.0과 1.0 사이로 클램핑합니다.
-    color.clamp(0.f, 1.0f);
+    if (frame.tonemap)
+        color = sr::ACESFilm(color);
+    else
+        color.clamp(0.f, 1.0f);
 
     if (frame.srgbGamma)
     {
@@ -674,6 +712,48 @@ inline Lanes3 Schlick_F4(__m128 VdotH, const Lanes3 &F0) noexcept
     return {_mm_add_ps(F0.x, _mm_mul_ps(_mm_sub_ps(one, F0.x), f5)),
             _mm_add_ps(F0.y, _mm_mul_ps(_mm_sub_ps(one, F0.y), f5)),
             _mm_add_ps(F0.z, _mm_mul_ps(_mm_sub_ps(one, F0.z), f5))};
+}
+
+inline void EnvBRDFApprox4(__m128 NdotV, __m128 roughness, __m128 &scaleA, __m128 &biasB) noexcept
+{
+    const __m128 r_x = _mm_add_ps(_mm_mul_ps(roughness, _mm_set1_ps(-1.0f)), _mm_set1_ps(1.0f));
+    const __m128 r_y = _mm_add_ps(_mm_mul_ps(roughness, _mm_set1_ps(-0.0275f)), _mm_set1_ps(0.0425f));
+    const __m128 r_z = _mm_add_ps(_mm_mul_ps(roughness, _mm_set1_ps(-0.572f)), _mm_set1_ps(1.04f));
+    const __m128 r_w = _mm_add_ps(_mm_mul_ps(roughness, _mm_set1_ps(0.022f)), _mm_set1_ps(-0.04f));
+
+    alignas(16) float nv[4];
+    _mm_store_ps(nv, NdotV);
+    alignas(16) float e[4];
+    for (int i = 0; i < 4; ++i)
+        e[i] = std::exp2(-9.28f * nv[i]);
+    const __m128 expTerm = _mm_load_ps(e);
+
+    const __m128 r_x2 = _mm_mul_ps(r_x, r_x);
+    const __m128 minTerm = _mm_min_ps(r_x2, expTerm);
+    const __m128 a004 = _mm_add_ps(_mm_mul_ps(minTerm, r_x), r_y);
+
+    scaleA = _mm_max_ps(_mm_setzero_ps(), _mm_add_ps(_mm_mul_ps(_mm_set1_ps(-1.04f), a004), r_z));
+    biasB = _mm_max_ps(_mm_setzero_ps(), _mm_add_ps(_mm_mul_ps(_mm_set1_ps(0.04f), a004), r_w));
+}
+
+inline Lanes3 ACESFilm4(const Lanes3 &v) noexcept
+{
+    const __m128 zero = _mm_setzero_ps();
+    const __m128 one = _mm_set1_ps(1.0f);
+    const __m128 a = _mm_set1_ps(2.51f);
+    const __m128 b = _mm_set1_ps(0.03f);
+    const __m128 c = _mm_set1_ps(2.43f);
+    const __m128 d = _mm_set1_ps(0.59f);
+    const __m128 e = _mm_set1_ps(0.14f);
+
+    auto mapLane = [&](__m128 x) {
+        x = _mm_max_ps(zero, x);
+        const __m128 num = _mm_mul_ps(x, _mm_add_ps(_mm_mul_ps(a, x), b));
+        const __m128 den = _mm_add_ps(_mm_mul_ps(x, _mm_add_ps(_mm_mul_ps(c, x), d)), e);
+        return _mm_max_ps(zero, _mm_min_ps(one, _mm_div_ps(num, den)));
+    };
+
+    return Lanes3{mapLane(v.x), mapLane(v.y), mapLane(v.z)};
 }
 
 void ShadeLanesPBR(const Lanes3 &normal, const Lanes3 &position, const float (&u)[4], const float (&v)[4],
@@ -944,13 +1024,97 @@ void ShadeLanesPBR(const Lanes3 &normal, const Lanes3 &position, const float (&u
         }
     }
 
-    const Lanes3 ambient{_mm_mul_ps(_mm_mul_ps(base.x, ambMat.x), occ),
-                         _mm_mul_ps(_mm_mul_ps(base.y, ambMat.y), occ),
-                         _mm_mul_ps(_mm_mul_ps(base.z, ambMat.z), occ)};
+    Lanes3 ambient{_mm_mul_ps(_mm_mul_ps(base.x, ambMat.x), occ),
+                   _mm_mul_ps(_mm_mul_ps(base.y, ambMat.y), occ),
+                   _mm_mul_ps(_mm_mul_ps(base.z, ambMat.z), occ)};
 
-    __m128 r0 = _mm_max_ps(zero, _mm_min_ps(one, _mm_add_ps(_mm_add_ps(ambient.x, totalDirect.x), em.x)));
-    __m128 r1 = _mm_max_ps(zero, _mm_min_ps(one, _mm_add_ps(_mm_add_ps(ambient.y, totalDirect.y), em.y)));
-    __m128 r2 = _mm_max_ps(zero, _mm_min_ps(one, _mm_add_ps(_mm_add_ps(ambient.z, totalDirect.z), em.z)));
+    if (frame.ibl && frame.iblMap != nullptr)
+    {
+        const auto *ibl = static_cast<const sr::IBLMap *>(frame.iblMap);
+
+        // 1. Diffuse IBL
+        alignas(16) float nx[4], ny[4], nz[4];
+        _mm_store_ps(nx, normal.x);
+        _mm_store_ps(ny, normal.y);
+        _mm_store_ps(nz, normal.z);
+        alignas(16) float irR[4], irG[4], irB[4];
+        for (int i = 0; i < 4; ++i)
+        {
+            const auto ir = ibl->sh.Evaluate({nx[i], ny[i], nz[i]});
+            irR[i] = ir.x; irG[i] = ir.y; irB[i] = ir.z;
+        }
+        const Lanes3 irradiance{_mm_load_ps(irR), _mm_load_ps(irG), _mm_load_ps(irB)};
+
+        const __m128 oneMinusNdotV = _mm_sub_ps(one, NdotV);
+        const __m128 f2 = _mm_mul_ps(oneMinusNdotV, oneMinusNdotV);
+        const __m128 f5 = _mm_mul_ps(_mm_mul_ps(f2, f2), oneMinusNdotV);
+        const __m128 oneMinusR = _mm_sub_ps(one, r);
+        const Lanes3 maxF{_mm_max_ps(oneMinusR, F0.x), _mm_max_ps(oneMinusR, F0.y), _mm_max_ps(oneMinusR, F0.z)};
+        const Lanes3 F_rough{
+            _mm_add_ps(F0.x, _mm_mul_ps(_mm_sub_ps(maxF.x, F0.x), f5)),
+            _mm_add_ps(F0.y, _mm_mul_ps(_mm_sub_ps(maxF.y, F0.y), f5)),
+            _mm_add_ps(F0.z, _mm_mul_ps(_mm_sub_ps(maxF.z, F0.z), f5))
+        };
+        const __m128 kD_scale = _mm_sub_ps(one, m);
+        const Lanes3 diffuseIBL{
+            _mm_mul_ps(_mm_mul_ps(_mm_mul_ps(_mm_sub_ps(one, F_rough.x), kD_scale), base.x), irradiance.x),
+            _mm_mul_ps(_mm_mul_ps(_mm_mul_ps(_mm_sub_ps(one, F_rough.y), kD_scale), base.y), irradiance.y),
+            _mm_mul_ps(_mm_mul_ps(_mm_mul_ps(_mm_sub_ps(one, F_rough.z), kD_scale), base.z), irradiance.z)
+        };
+
+        // 2. Specular IBL
+        const __m128 twoNdotV = _mm_mul_ps(_mm_set1_ps(2.0f), NdotV);
+        const Lanes3 R = Normalize({
+            _mm_sub_ps(_mm_mul_ps(twoNdotV, normal.x), viewDir.x),
+            _mm_sub_ps(_mm_mul_ps(twoNdotV, normal.y), viewDir.y),
+            _mm_sub_ps(_mm_mul_ps(twoNdotV, normal.z), viewDir.z)
+        });
+
+        alignas(16) float rx[4], ry[4], rz[4], rough[4];
+        _mm_store_ps(rx, R.x); _mm_store_ps(ry, R.y); _mm_store_ps(rz, R.z);
+        _mm_store_ps(rough, r);
+        alignas(16) float specR[4], specG[4], specB[4];
+        for (int i = 0; i < 4; ++i)
+        {
+            const auto sp = ibl->SampleSpecular({rx[i], ry[i], rz[i]}, rough[i]);
+            specR[i] = sp.x; specG[i] = sp.y; specB[i] = sp.z;
+        }
+        const Lanes3 prefilteredColor{_mm_load_ps(specR), _mm_load_ps(specG), _mm_load_ps(specB)};
+
+        __m128 scaleA, biasB;
+        EnvBRDFApprox4(NdotV, r, scaleA, biasB);
+
+        const Lanes3 specularIBL{
+            _mm_mul_ps(prefilteredColor.x, _mm_add_ps(_mm_mul_ps(F0.x, scaleA), biasB)),
+            _mm_mul_ps(prefilteredColor.y, _mm_add_ps(_mm_mul_ps(F0.y, scaleA), biasB)),
+            _mm_mul_ps(prefilteredColor.z, _mm_add_ps(_mm_mul_ps(F0.z, scaleA), biasB))
+        };
+
+        ambient.x = _mm_mul_ps(_mm_add_ps(diffuseIBL.x, specularIBL.x), occ);
+        ambient.y = _mm_mul_ps(_mm_add_ps(diffuseIBL.y, specularIBL.y), occ);
+        ambient.z = _mm_mul_ps(_mm_add_ps(diffuseIBL.z, specularIBL.z), occ);
+    }
+
+    Lanes3 finalColor{
+        _mm_add_ps(_mm_add_ps(ambient.x, totalDirect.x), em.x),
+        _mm_add_ps(_mm_add_ps(ambient.y, totalDirect.y), em.y),
+        _mm_add_ps(_mm_add_ps(ambient.z, totalDirect.z), em.z)
+    };
+
+    if (frame.tonemap)
+    {
+        finalColor = ACESFilm4(finalColor);
+    }
+    else
+    {
+        finalColor.x = _mm_max_ps(zero, _mm_min_ps(one, finalColor.x));
+        finalColor.y = _mm_max_ps(zero, _mm_min_ps(one, finalColor.y));
+        finalColor.z = _mm_max_ps(zero, _mm_min_ps(one, finalColor.z));
+    }
+
+    __m128 r0 = finalColor.x;
+    __m128 r1 = finalColor.y;
+    __m128 r2 = finalColor.z;
     __m128 r3 = zero;
     _MM_TRANSPOSE4_PS(r0, r1, r2, r3);
     colors[0].m128 = r0;
@@ -1207,13 +1371,24 @@ void ShadeLanes(const Lanes3 &normal, const Lanes3 &position, const float (&u)[4
         }
     }
 
-    // color = ambient + diffuse + specular, clamp(0, 1)은 max(0, min(1, v)) 순서다.
-    __m128 r0 =
-        _mm_max_ps(zero, _mm_min_ps(one, _mm_add_ps(_mm_add_ps(ambient.x, totalDiffuse.x), totalSpecular.x)));
-    __m128 r1 =
-        _mm_max_ps(zero, _mm_min_ps(one, _mm_add_ps(_mm_add_ps(ambient.y, totalDiffuse.y), totalSpecular.y)));
-    __m128 r2 =
-        _mm_max_ps(zero, _mm_min_ps(one, _mm_add_ps(_mm_add_ps(ambient.z, totalDiffuse.z), totalSpecular.z)));
+    Lanes3 phongColor{
+        _mm_add_ps(_mm_add_ps(ambient.x, totalDiffuse.x), totalSpecular.x),
+        _mm_add_ps(_mm_add_ps(ambient.y, totalDiffuse.y), totalSpecular.y),
+        _mm_add_ps(_mm_add_ps(ambient.z, totalDiffuse.z), totalSpecular.z)
+    };
+    if (frame.tonemap)
+    {
+        phongColor = ACESFilm4(phongColor);
+    }
+    else
+    {
+        phongColor.x = _mm_max_ps(zero, _mm_min_ps(one, phongColor.x));
+        phongColor.y = _mm_max_ps(zero, _mm_min_ps(one, phongColor.y));
+        phongColor.z = _mm_max_ps(zero, _mm_min_ps(one, phongColor.z));
+    }
+    __m128 r0 = phongColor.x;
+    __m128 r1 = phongColor.y;
+    __m128 r2 = phongColor.z;
     __m128 r3 = zero;
     _MM_TRANSPOSE4_PS(r0, r1, r2, r3);
     colors[0].m128 = r0;

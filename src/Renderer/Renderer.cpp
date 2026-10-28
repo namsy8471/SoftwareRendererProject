@@ -190,6 +190,12 @@ void Renderer::renderScene(RenderTarget &target, const RenderQueue &queue, const
         activeShadowMap = m_shadowMap.get();
     }
 
+    if (m_options.ibl && !m_defaultIblMap)
+    {
+        m_defaultIblMap = sr::IBLMap::CreateDefault();
+    }
+    const sr::IBLMap *activeIblMap = m_options.ibl ? (m_customIblMap ? m_customIblMap.get() : m_defaultIblMap.get()) : nullptr;
+
     const FrameContext frame{view.projection * view.view,
                              view.position,
                              prepareLights(lights),
@@ -201,7 +207,10 @@ void Renderer::renderScene(RenderTarget &target, const RenderQueue &queue, const
                              m_options.mipmapping,
                              m_options.srgbGamma,
                              activeShadowMap,
-                              m_options.pbr};
+                             m_options.pbr,
+                             m_options.ibl,
+                             m_options.tonemap,
+                             activeIblMap};
     prepareFrame();
     if (m_options.collectStats)
         m_stats.prepareMs = elapsedMilliseconds(started);
