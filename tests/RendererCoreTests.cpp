@@ -1390,7 +1390,7 @@ void shadowMappingTests()
     receiverCmd.rasterizeMode = ERasterizeMode::Fill;
     receiverCmd.worldTransform = SRMath::mat4::identity();
     receiverCmd.material = &receiverMesh.material;
-    queue.AddMeshRenderCommand(receiverCmd);
+    queue.Submit(receiverCmd);
 
     MeshRenderCommand casterCmd;
     casterCmd.sourceMesh = &casterMesh;
@@ -1398,7 +1398,7 @@ void shadowMappingTests()
     casterCmd.rasterizeMode = ERasterizeMode::Fill;
     casterCmd.worldTransform = SRMath::mat4::identity();
     casterCmd.material = &casterMesh.material;
-    queue.AddMeshRenderCommand(casterCmd);
+    queue.Submit(casterCmd);
 
     const SRMath::mat4 lightView = SRMath::lookAt({0.f, 10.f, 0.f}, {0.f, 0.f, 0.f}, {0.f, 0.f, 1.f});
     const SRMath::mat4 lightProj = SRMath::ortho(-5.f, 5.f, -5.f, 5.f, 0.1f, 20.f);
