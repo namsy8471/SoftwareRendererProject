@@ -91,7 +91,7 @@ PR마다 같은 PC에서 변경 전(base)과 후(head)를 번갈아 재고, 2% �
 
 | 항목 | 역할 |
 |---|---|
-| [CLAUDE.md](CLAUDE.md) | AI용 요약: 100fps 기준(p95 ≤ 9ms), 명령, 작업 순서, 판정 규칙 |
+| [AGENTS.md](AGENTS.md) | AI 공통 규칙: 100fps 기준(p95 ≤ 9ms), 명령, 작업 순서, 판정 규칙. `CLAUDE.md`(Claude Code)와 `GEMINI.md`(Gemini CLI)는 이 파일을 불러오는 입구 |
 | 어셈블리 기준 최적화 규칙 (CLAUDE.md, PR #19) | 소스 추측이 아니라 생성된 어셈블리(`/FAs`, `dumpbin /disasm`)를 보고 최적화하고, 전후를 기록. 매 프레임 코드와 로딩 코드에 적용 |
 | 프로파일링 필수 규칙 (CLAUDE.md, PR #22) | 모든 최적화는 PC에서 VTune과 VS CPU Usage 둘 다로 전후 측정하고 핫스팟 점유율을 기록 |
 | [CODEMAP.md](CODEMAP.md) | 소스 파일마다 역할 한 줄. CI(`tools/ci/check_codemap.py`)가 빠진 파일을 잡음 |
@@ -478,7 +478,8 @@ SoftwareRendererProject/
 │  ├─ Scene/              # Camera와 GameObject
 │  └─ Utils/              # error type, fixed-capacity storage, timing
 ├─ ARCHITECTURE.md
-├─ CLAUDE.md              # AI 작업용 요약(명령, 규칙, 성능 기준)
+├─ AGENTS.md              # AI 공통 규칙(명령, 규칙, 성능 기준)
+├─ CLAUDE.md, GEMINI.md   # Claude Code / Gemini CLI 입구(AGENTS.md를 불러옴)
 ├─ CMakeLists.txt         # headless 빌드(코어, srcli, 테스트)
 ├─ MAINTENANCE.md
 ├─ PERFORMANCE.md
