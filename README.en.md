@@ -50,7 +50,7 @@ Since 2026-10-20, an AI (Claude) writes and optimizes the code. Changes are judg
 
 ### 1. Optimizations (adopted)
 
-Each PR was measured on the same PC with base and head interleaved, and adopted only when it was at least 2% faster and statistically significant. Numbers are mean frame time changes (n.s. = not significant).
+Each PR was measured on the same PC with base and head interleaved, and adopted only when it was statistically significant and faster (initially ≥2%, now average ≥1% at the ~3ms stage). Numbers are mean frame time changes (n.s. = not significant).
 
 | PR | Change | fill | wire | normal |
 |---|---|---:|---:|---:|
@@ -104,7 +104,7 @@ Changes that were not at least 2% faster, or were slower, were dropped and the r
 | Item | What it does |
 |---|---|
 | GitHub CI (`ci.yml`, `windows.yml`) | Linux GCC build, unit and golden tests, ASan+UBSan, CODEMAP check. MSVC build, tests and `/analyze /WX` on GitHub-hosted Windows. MSVC ASan only on main push or manual runs. Docs-only PRs skip Windows. PR wait about 23 → about 10 min |
-| Cloud A/B bench (`ab-bench.yml`) | Measures base and head interleaved on one VM. `/Brepro` makes the same source give the same binary (identical binaries are not measured). The verdict rule (significant and at least 2%) was checked with an A/A experiment (`ab-calibrate.yml`). Stops early once the verdict is clear (23 → about 10 min). Runs when a PR has the `ab-bench` label |
+| Cloud A/B bench (`ab-bench.yml`) | Measures base and head interleaved on one VM. `/Brepro` makes the same source give the same binary (identical binaries are not measured). The verdict rule (significant and at least 1%, initially 2%) was checked with an A/A experiment (`ab-calibrate.yml`). Stops early once the verdict is clear (23 → about 10 min). Runs when a PR has the `ab-bench` label |
 | PC Job Runner (local to the PC) | Cloud sessions drop jobs into a queue folder and the PC runs them in order (build, tests, bench, profiles, push, PR), with a status window and tray showing steps, remaining time and the queue |
 | SRJob.ps1 standard (local to the PC) | Build cache per SHA, adaptive A/B (stops at 6–12 rounds once clear), cached base profiles. A measurement job went from about 22 to about 8–10 min |
 | Worktrees | Each task works in `..\SR-worktrees\<branch>`, so the main PC checkout is never touched |
