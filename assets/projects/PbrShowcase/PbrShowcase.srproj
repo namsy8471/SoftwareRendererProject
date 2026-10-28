@@ -1,0 +1,26 @@
+{
+  "format": "srproj",
+  "version": 1,
+  "name": "PBR Showcase (Cybernetic Helmet)",
+  "startupScene": "Scenes/Main.srscene",
+  "scenes": [
+    "Scenes/Main.srscene"
+  ],
+  "render": {
+    "frontToBack": true,
+    "hiZ": true,
+    "hiddenWireframe": false
+  },
+  "assets": [
+    {
+      "id": "asset_helmet",
+      "kind": "model",
+      "path": "Assets/Helmet/CyberneticHelmet.obj"
+    },
+    {
+      "id": "asset_pedestal",
+      "kind": "model",
+      "path": "Assets/Pedestal/Pedestal.obj"
+    }
+  ]
+}

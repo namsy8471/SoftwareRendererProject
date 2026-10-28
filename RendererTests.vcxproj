@@ -52,6 +52,7 @@
     <ClCompile Include="tests\ProjectTests.cpp" />
     <ClCompile Include="tests\ImageCodecTests.cpp" />
     <ClCompile Include="tests\Win32AppTests.cpp" />
+    <ClCompile Include="tests\BakerTests.cpp" />
     <ClInclude Include="tests\TestHarness.h" />
     <ClInclude Include="tests\TestSupport.h" />
     <ClCompile Include="src\App\Win32App.cpp" />

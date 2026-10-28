@@ -1,0 +1,21 @@
+{
+  "format": "srproj",
+  "version": 1,
+  "name": "PBR 5x5 Sphere Grid (Lookdev)",
+  "startupScene": "Scenes/Main.srscene",
+  "scenes": [
+    "Scenes/Main.srscene"
+  ],
+  "render": {
+    "frontToBack": true,
+    "hiZ": true,
+    "hiddenWireframe": false
+  },
+  "assets": [
+    {
+      "id": "asset_sphere",
+      "kind": "model",
+      "path": "Assets/Sphere/Sphere.obj"
+    }
+  ]
+}

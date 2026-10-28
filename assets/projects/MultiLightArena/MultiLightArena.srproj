@@ -1,0 +1,21 @@
+{
+  "format": "srproj",
+  "version": 1,
+  "name": "MultiLight Arena",
+  "startupScene": "Scenes/Main.srscene",
+  "scenes": [
+    "Scenes/Main.srscene"
+  ],
+  "render": {
+    "frontToBack": true,
+    "hiZ": true,
+    "hiddenWireframe": false
+  },
+  "assets": [
+    {
+      "id": "asset_arena",
+      "kind": "model",
+      "path": "Assets/Arena/Arena.obj"
+    }
+  ]
+}

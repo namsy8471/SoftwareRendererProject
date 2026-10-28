@@ -121,6 +121,7 @@ int main(int argc, char **argv)
         RegisterGltfTests(registry);
         RegisterAnimationTests(registry);
         RegisterProjectTests(registry);
+        RegisterBakerTests(registry);
 #if SR_TEST_WIN32_APP
         RegisterWin32AppTests(registry);
 #endif

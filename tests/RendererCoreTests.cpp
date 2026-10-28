@@ -2009,6 +2009,246 @@ void swappableShadingTests([[maybe_unused]] const TestContext &context)
     }
 }
 
+
+void avx2ShadingEquivalenceTests()
+{
+    // 1. Basic CPUID Invariants
+    const bool hasAvx2 = SRMath::SIMD::avx2_available();
+    const bool hasFma = SRMath::SIMD::fma_available();
+    std::cout << "Testing AVX2 8-lane SIMD shading equivalence (AVX2="
+              << (hasAvx2 ? "true" : "false") << ", FMA=" << (hasFma ? "true" : "false") << ")\n";
+
+    if (!hasAvx2)
+    {
+        std::cout << "AVX2 not supported on this host, verifying clean fallback\n";
+    }
+
+    // 2. Cook-Torrance GGX PBR Equivalence (8 samples)
+    {
+        Material dielectricMat;
+        dielectricMat.isPbr = true;
+        dielectricMat.baseColor = {0.8f, 0.2f, 0.2f, 1.0f};
+        dielectricMat.roughness = 0.4f;
+        dielectricMat.metallic = 0.0f;
+
+        Material metallicMat;
+        metallicMat.isPbr = true;
+        metallicMat.baseColor = {0.9f, 0.6f, 0.2f, 1.0f};
+        metallicMat.roughness = 0.2f;
+        metallicMat.metallic = 1.0f;
+
+        Rasterizer::SurfaceSample sample8[8];
+        const Material *mat8[8];
+        for (int i = 0; i < 8; ++i)
+        {
+            sample8[i].positionWorld = {0.05f * i, 0.1f * i, -0.05f * i};
+            sample8[i].normalWorld = SRMath::normalize(SRMath::vec3(0.1f * (i - 3.5f), 0.2f * i, 1.f));
+            sample8[i].texcoord = {0.125f * i, 0.125f * i};
+            sample8[i].lod = 0.f;
+            mat8[i] = (i % 2 == 0) ? &dielectricMat : &metallicMat;
+        }
+
+        DirectionalLight dirLight;
+        dirLight.rayDirection = {0.f, -1.f, 0.f};
+        dirLight.color = {1.f, 1.f, 1.f};
+        PreparedDirectionalLight prepDir = PreparedDirectionalLight::From(dirLight);
+
+        RenderFrameContext frameCtx{};
+        frameCtx.cameraPosition = {0.f, 0.f, 5.f};
+        frameCtx.lights = std::span<const PreparedDirectionalLight>(&prepDir, 1);
+        frameCtx.pbr = true;
+
+        SRMath::vec3 scalar8[8], sse8[8], avx28[8];
+        for (int i = 0; i < 8; ++i)
+            scalar8[i] = Rasterizer::ShadeSurface(sample8[i], *mat8[i], frameCtx);
+
+        const Rasterizer::SurfaceSample s0[4] = {sample8[0], sample8[1], sample8[2], sample8[3]};
+        const Material *m0[4] = {mat8[0], mat8[1], mat8[2], mat8[3]};
+        SRMath::vec3 c0[4];
+        Rasterizer::ShadeSurface4(s0, m0, frameCtx, c0);
+
+        const Rasterizer::SurfaceSample s1[4] = {sample8[4], sample8[5], sample8[6], sample8[7]};
+        const Material *m1[4] = {mat8[4], mat8[5], mat8[6], mat8[7]};
+        SRMath::vec3 c1[4];
+        Rasterizer::ShadeSurface4(s1, m1, frameCtx, c1);
+
+        for (int i = 0; i < 4; ++i)
+        {
+            sse8[i] = c0[i];
+            sse8[i + 4] = c1[i];
+        }
+
+        Rasterizer::ShadeSurface8(sample8, mat8, frameCtx, avx28);
+
+        for (int i = 0; i < 8; ++i)
+        {
+            check(std::abs(scalar8[i].x - avx28[i].x) < 1e-4f &&
+                  std::abs(scalar8[i].y - avx28[i].y) < 1e-4f &&
+                  std::abs(scalar8[i].z - avx28[i].z) < 1e-4f,
+                  "PBR: scalar ShadeSurface and AVX2 ShadeSurface8 match within 1e-4");
+            check(std::abs(sse8[i].x - avx28[i].x) < 1e-4f &&
+                  std::abs(sse8[i].y - avx28[i].y) < 1e-4f &&
+                  std::abs(sse8[i].z - avx28[i].z) < 1e-4f,
+                  "PBR: SSE ShadeSurface4 and AVX2 ShadeSurface8 match within 1e-4");
+        }
+    }
+
+    // 3. IBL Diffuse SH L2 + Specular Cubemap + ACES Tone Mapping Equivalence (8 samples)
+    {
+        Material iblMat;
+        iblMat.isPbr = true;
+        iblMat.baseColor = {0.7f, 0.7f, 0.7f, 1.0f};
+        iblMat.roughness = 0.3f;
+        iblMat.metallic = 0.5f;
+
+        auto env = sr::CubeMap::CreateDefaultStudio(32);
+        env->GenerateMipmaps();
+        sr::IBLMap iblMap(sr::SphericalHarmonicsL2::CreateDefaultSky(), env);
+
+        RenderFrameContext frameCtx{};
+        frameCtx.cameraPosition = {0.f, 0.f, 5.f};
+        frameCtx.pbr = true;
+        frameCtx.ibl = true;
+        frameCtx.iblMap = &iblMap;
+        frameCtx.tonemap = true;
+
+        Rasterizer::SurfaceSample sample8[8];
+        const Material *mat8[8];
+        for (int i = 0; i < 8; ++i)
+        {
+            sample8[i].positionWorld = {0.05f * i, 0.05f * i, 0.f};
+            sample8[i].normalWorld = SRMath::normalize(SRMath::vec3(0.1f * (i - 3.5f), 0.2f * i, 1.f));
+            sample8[i].texcoord = {0.1f * i, 0.1f * i};
+            sample8[i].lod = 0.f;
+            mat8[i] = &iblMat;
+        }
+
+        SRMath::vec3 scalar8[8], sse8[8], avx28[8];
+        for (int i = 0; i < 8; ++i)
+            scalar8[i] = Rasterizer::ShadeSurface(sample8[i], *mat8[i], frameCtx);
+
+        const Rasterizer::SurfaceSample s0[4] = {sample8[0], sample8[1], sample8[2], sample8[3]};
+        const Material *m0[4] = {mat8[0], mat8[1], mat8[2], mat8[3]};
+        SRMath::vec3 c0[4];
+        Rasterizer::ShadeSurface4(s0, m0, frameCtx, c0);
+
+        const Rasterizer::SurfaceSample s1[4] = {sample8[4], sample8[5], sample8[6], sample8[7]};
+        const Material *m1[4] = {mat8[4], mat8[5], mat8[6], mat8[7]};
+        SRMath::vec3 c1[4];
+        Rasterizer::ShadeSurface4(s1, m1, frameCtx, c1);
+
+        for (int i = 0; i < 4; ++i)
+        {
+            sse8[i] = c0[i];
+            sse8[i + 4] = c1[i];
+        }
+
+        Rasterizer::ShadeSurface8(sample8, mat8, frameCtx, avx28);
+
+        for (int i = 0; i < 8; ++i)
+        {
+            check(std::abs(scalar8[i].x - avx28[i].x) < 1e-3f &&
+                  std::abs(scalar8[i].y - avx28[i].y) < 1e-3f &&
+                  std::abs(scalar8[i].z - avx28[i].z) < 1e-3f,
+                  "IBL+Tonemap: scalar and AVX2 ShadeSurface8 match within 1e-3");
+            check(std::abs(sse8[i].x - avx28[i].x) < 1e-3f &&
+                  std::abs(sse8[i].y - avx28[i].y) < 1e-3f &&
+                  std::abs(sse8[i].z - avx28[i].z) < 1e-3f,
+                  "IBL+Tonemap: SSE and AVX2 ShadeSurface8 match within 1e-3");
+        }
+    }
+
+    // 4. Blinn-Phong Equivalence with Directional, Point, and Spot Lights (8 samples)
+    {
+        Material phongMat1;
+        phongMat1.isPbr = false;
+        phongMat1.diffuse = {0.8f, 0.4f, 0.2f};
+        phongMat1.ambient = {0.1f, 0.1f, 0.1f};
+        phongMat1.specular = {1.0f, 1.0f, 1.0f};
+        phongMat1.shininess = 32.0f;
+
+        Material phongMat2;
+        phongMat2.isPbr = false;
+        phongMat2.diffuse = {0.2f, 0.5f, 0.9f};
+        phongMat2.ambient = {0.05f, 0.05f, 0.05f};
+        phongMat2.specular = {0.5f, 0.5f, 0.5f};
+        phongMat2.shininess = 64.0f;
+
+        DirectionalLight dirLight;
+        dirLight.rayDirection = {0.f, -1.f, 0.f};
+        dirLight.color = {0.8f, 0.8f, 0.8f};
+        PreparedDirectionalLight prepDir = PreparedDirectionalLight::From(dirLight);
+
+        PointLight pointLight;
+        pointLight.position = {0.f, 2.f, 0.f};
+        pointLight.color = {1.f, 0.5f, 0.2f};
+        pointLight.range = 10.0f;
+        PreparedPointLight prepPoint = PreparedPointLight::From(pointLight);
+
+        SpotLight spotLight;
+        spotLight.position = {1.f, 3.f, 1.f};
+        spotLight.rayDirection = {-0.3f, -1.f, -0.3f};
+        spotLight.color = {0.2f, 0.8f, 1.0f};
+        spotLight.range = 10.0f;
+        spotLight.innerConeCos = std::cos(0.2f);
+        spotLight.outerConeCos = std::cos(0.5f);
+        PreparedSpotLight prepSpot = PreparedSpotLight::From(spotLight);
+
+        RenderFrameContext frameCtx{};
+        frameCtx.cameraPosition = {0.f, 1.f, 5.f};
+        frameCtx.lights = std::span<const PreparedDirectionalLight>(&prepDir, 1);
+        frameCtx.pointLights = std::span<const PreparedPointLight>(&prepPoint, 1);
+        frameCtx.spotLights = std::span<const PreparedSpotLight>(&prepSpot, 1);
+        frameCtx.shadingModel = EShadingModel::Phong;
+        frameCtx.srgbGamma = true;
+
+        Rasterizer::SurfaceSample sample8[8];
+        const Material *mat8[8];
+        for (int i = 0; i < 8; ++i)
+        {
+            sample8[i].positionWorld = {0.2f * (i - 3.5f), 0.1f * i, 0.05f * i};
+            sample8[i].normalWorld = SRMath::normalize(SRMath::vec3(0.2f * (i - 3.5f), 1.0f, 0.1f * i));
+            sample8[i].texcoord = {0.1f * i, 0.1f * i};
+            sample8[i].lod = 0.f;
+            mat8[i] = (i % 2 == 0) ? &phongMat1 : &phongMat2;
+        }
+
+        SRMath::vec3 scalar8[8], sse8[8], avx28[8];
+        for (int i = 0; i < 8; ++i)
+            scalar8[i] = Rasterizer::ShadeSurface(sample8[i], *mat8[i], frameCtx);
+
+        const Rasterizer::SurfaceSample s0[4] = {sample8[0], sample8[1], sample8[2], sample8[3]};
+        const Material *m0[4] = {mat8[0], mat8[1], mat8[2], mat8[3]};
+        SRMath::vec3 c0[4];
+        Rasterizer::ShadeSurface4(s0, m0, frameCtx, c0);
+
+        const Rasterizer::SurfaceSample s1[4] = {sample8[4], sample8[5], sample8[6], sample8[7]};
+        const Material *m1[4] = {mat8[4], mat8[5], mat8[6], mat8[7]};
+        SRMath::vec3 c1[4];
+        Rasterizer::ShadeSurface4(s1, m1, frameCtx, c1);
+
+        for (int i = 0; i < 4; ++i)
+        {
+            sse8[i] = c0[i];
+            sse8[i + 4] = c1[i];
+        }
+
+        Rasterizer::ShadeSurface8(sample8, mat8, frameCtx, avx28);
+
+        for (int i = 0; i < 8; ++i)
+        {
+            check(std::abs(scalar8[i].x - avx28[i].x) < 1e-4f &&
+                  std::abs(scalar8[i].y - avx28[i].y) < 1e-4f &&
+                  std::abs(scalar8[i].z - avx28[i].z) < 1e-4f,
+                  "Phong: scalar and AVX2 ShadeSurface8 match within 1e-4");
+            check(std::abs(sse8[i].x - avx28[i].x) < 1e-4f &&
+                  std::abs(sse8[i].y - avx28[i].y) < 1e-4f &&
+                  std::abs(sse8[i].z - avx28[i].z) < 1e-4f,
+                  "Phong: SSE and AVX2 ShadeSurface8 match within 1e-4");
+        }
+    }
+}
+
 void sr::test::RegisterRendererTests(TestRegistry &registry)
 {
     registry.Add("renderer.iblAndTonemap", iblAndTonemapTests);
@@ -2033,4 +2273,5 @@ void sr::test::RegisterRendererTests(TestRegistry &registry)
     registry.Add("renderer.primitiveIdPlaneOptional", primitiveIdPlaneOptional);
     registry.Add("renderer.shadowMapping", shadowMappingTests);
     registry.Add("renderer.swappableShading", swappableShadingTests);
+    registry.Add("renderer.avx2ShadingEquivalence", avx2ShadingEquivalenceTests);
 }

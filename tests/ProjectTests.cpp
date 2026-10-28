@@ -791,7 +791,29 @@ void editorStateAndUndoTests(const TestContext &context)
     editor.ClearSelection();
     check(!editor.HasSelection() && editor.GetSelectedObject() == nullptr, "ClearSelection clears selection");
 }
+void sampleProjectsTests(const TestContext &context)
+{
+    const auto projectsDir = context.root / "assets/projects";
+    if (!fs::exists(projectsDir))
+        return;
+
+    for (const auto *projName : {"PbrShowcase", "PbrSphereGrid", "MultiLightArena"})
+    {
+        const auto projFile = projectsDir / projName / (std::string(projName) + ".srproj");
+        check(fs::exists(projFile), std::string(projName) + ".srproj exists");
+        const auto loaded = project::LoadProjectFile(projFile);
+        check(loaded.has_value(), std::string(projName) + " project loads");
+        const auto startupSceneFile = projectsDir / projName / loaded->startupScene;
+        check(fs::exists(startupSceneFile), std::string(projName) + " startup scene exists");
+        const auto sceneDoc = project::LoadSceneFile(startupSceneFile);
+        check(sceneDoc.has_value(), std::string(projName) + " scene loads");
+        auto scene = project::BuildScene(*sceneDoc, *loaded, projectsDir / projName);
+        check(scene.has_value(), std::string(projName) + " scene builds successfully");
+        check(!scene->GetRootObjects().empty(), std::string(projName) + " has objects");
+    }
+}
 } // namespace
+
 
 namespace sr::test
 {
@@ -807,5 +829,6 @@ void RegisterProjectTests(TestRegistry &registry)
     registry.Add("editor.scene_picking", scenePickingTests);
     registry.Add("editor.camera_controls", cameraControlTests);
     registry.Add("editor.state_and_undo", editorStateAndUndoTests);
+    registry.Add("project.sample_projects", sampleProjectsTests);
 }
 } // namespace sr::test
