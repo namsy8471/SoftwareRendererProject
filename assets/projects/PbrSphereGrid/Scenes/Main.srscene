@@ -1,0 +1,620 @@
+{
+  "format": "srscene",
+  "version": 1,
+  "name": "Main",
+  "autoRotate": false,
+  "camera": {
+    "position": [
+      0.0,
+      0.0,
+      -6.8
+    ],
+    "yaw": 0.0,
+    "pitch": 0.0
+  },
+  "lights": [
+    {
+      "type": "directional",
+      "rayDirection": [
+        -0.57735,
+        -0.57735,
+        0.57735
+      ],
+      "color": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "type": "directional",
+      "rayDirection": [
+        0.57735,
+        -0.57735,
+        -0.57735
+      ],
+      "color": [
+        0.4,
+        0.4,
+        0.5
+      ]
+    }
+  ],
+  "entities": [
+    {
+      "id": "sphere_0_0",
+      "name": "Sphere_M0_R0",
+      "parent": null,
+      "mesh": "asset_sphere",
+      "transform": {
+        "position": [
+          -2.8,
+          2.8,
+          0.0
+        ],
+        "rotationEuler": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "id": "sphere_0_1",
+      "name": "Sphere_M0_R1",
+      "parent": null,
+      "mesh": "asset_sphere",
+      "transform": {
+        "position": [
+          -1.4,
+          2.8,
+          0.0
+        ],
+        "rotationEuler": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "id": "sphere_0_2",
+      "name": "Sphere_M0_R2",
+      "parent": null,
+      "mesh": "asset_sphere",
+      "transform": {
+        "position": [
+          0.0,
+          2.8,
+          0.0
+        ],
+        "rotationEuler": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "id": "sphere_0_3",
+      "name": "Sphere_M0_R3",
+      "parent": null,
+      "mesh": "asset_sphere",
+      "transform": {
+        "position": [
+          1.4,
+          2.8,
+          0.0
+        ],
+        "rotationEuler": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "id": "sphere_0_4",
+      "name": "Sphere_M0_R4",
+      "parent": null,
+      "mesh": "asset_sphere",
+      "transform": {
+        "position": [
+          2.8,
+          2.8,
+          0.0
+        ],
+        "rotationEuler": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "id": "sphere_1_0",
+      "name": "Sphere_M1_R0",
+      "parent": null,
+      "mesh": "asset_sphere",
+      "transform": {
+        "position": [
+          -2.8,
+          1.4,
+          0.0
+        ],
+        "rotationEuler": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "id": "sphere_1_1",
+      "name": "Sphere_M1_R1",
+      "parent": null,
+      "mesh": "asset_sphere",
+      "transform": {
+        "position": [
+          -1.4,
+          1.4,
+          0.0
+        ],
+        "rotationEuler": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "id": "sphere_1_2",
+      "name": "Sphere_M1_R2",
+      "parent": null,
+      "mesh": "asset_sphere",
+      "transform": {
+        "position": [
+          0.0,
+          1.4,
+          0.0
+        ],
+        "rotationEuler": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "id": "sphere_1_3",
+      "name": "Sphere_M1_R3",
+      "parent": null,
+      "mesh": "asset_sphere",
+      "transform": {
+        "position": [
+          1.4,
+          1.4,
+          0.0
+        ],
+        "rotationEuler": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "id": "sphere_1_4",
+      "name": "Sphere_M1_R4",
+      "parent": null,
+      "mesh": "asset_sphere",
+      "transform": {
+        "position": [
+          2.8,
+          1.4,
+          0.0
+        ],
+        "rotationEuler": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "id": "sphere_2_0",
+      "name": "Sphere_M2_R0",
+      "parent": null,
+      "mesh": "asset_sphere",
+      "transform": {
+        "position": [
+          -2.8,
+          0.0,
+          0.0
+        ],
+        "rotationEuler": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "id": "sphere_2_1",
+      "name": "Sphere_M2_R1",
+      "parent": null,
+      "mesh": "asset_sphere",
+      "transform": {
+        "position": [
+          -1.4,
+          0.0,
+          0.0
+        ],
+        "rotationEuler": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "id": "sphere_2_2",
+      "name": "Sphere_M2_R2",
+      "parent": null,
+      "mesh": "asset_sphere",
+      "transform": {
+        "position": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotationEuler": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "id": "sphere_2_3",
+      "name": "Sphere_M2_R3",
+      "parent": null,
+      "mesh": "asset_sphere",
+      "transform": {
+        "position": [
+          1.4,
+          0.0,
+          0.0
+        ],
+        "rotationEuler": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "id": "sphere_2_4",
+      "name": "Sphere_M2_R4",
+      "parent": null,
+      "mesh": "asset_sphere",
+      "transform": {
+        "position": [
+          2.8,
+          0.0,
+          0.0
+        ],
+        "rotationEuler": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "id": "sphere_3_0",
+      "name": "Sphere_M3_R0",
+      "parent": null,
+      "mesh": "asset_sphere",
+      "transform": {
+        "position": [
+          -2.8,
+          -1.4,
+          0.0
+        ],
+        "rotationEuler": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "id": "sphere_3_1",
+      "name": "Sphere_M3_R1",
+      "parent": null,
+      "mesh": "asset_sphere",
+      "transform": {
+        "position": [
+          -1.4,
+          -1.4,
+          0.0
+        ],
+        "rotationEuler": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "id": "sphere_3_2",
+      "name": "Sphere_M3_R2",
+      "parent": null,
+      "mesh": "asset_sphere",
+      "transform": {
+        "position": [
+          0.0,
+          -1.4,
+          0.0
+        ],
+        "rotationEuler": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "id": "sphere_3_3",
+      "name": "Sphere_M3_R3",
+      "parent": null,
+      "mesh": "asset_sphere",
+      "transform": {
+        "position": [
+          1.4,
+          -1.4,
+          0.0
+        ],
+        "rotationEuler": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "id": "sphere_3_4",
+      "name": "Sphere_M3_R4",
+      "parent": null,
+      "mesh": "asset_sphere",
+      "transform": {
+        "position": [
+          2.8,
+          -1.4,
+          0.0
+        ],
+        "rotationEuler": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "id": "sphere_4_0",
+      "name": "Sphere_M4_R0",
+      "parent": null,
+      "mesh": "asset_sphere",
+      "transform": {
+        "position": [
+          -2.8,
+          -2.8,
+          0.0
+        ],
+        "rotationEuler": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "id": "sphere_4_1",
+      "name": "Sphere_M4_R1",
+      "parent": null,
+      "mesh": "asset_sphere",
+      "transform": {
+        "position": [
+          -1.4,
+          -2.8,
+          0.0
+        ],
+        "rotationEuler": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "id": "sphere_4_2",
+      "name": "Sphere_M4_R2",
+      "parent": null,
+      "mesh": "asset_sphere",
+      "transform": {
+        "position": [
+          0.0,
+          -2.8,
+          0.0
+        ],
+        "rotationEuler": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "id": "sphere_4_3",
+      "name": "Sphere_M4_R3",
+      "parent": null,
+      "mesh": "asset_sphere",
+      "transform": {
+        "position": [
+          1.4,
+          -2.8,
+          0.0
+        ],
+        "rotationEuler": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "id": "sphere_4_4",
+      "name": "Sphere_M4_R4",
+      "parent": null,
+      "mesh": "asset_sphere",
+      "transform": {
+        "position": [
+          2.8,
+          -2.8,
+          0.0
+        ],
+        "rotationEuler": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    }
+  ]
+}

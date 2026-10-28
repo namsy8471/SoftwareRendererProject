@@ -2,6 +2,7 @@
 // 장면 교체는 sr::project::ProjectSession이 BackgroundLoader로 처리한다(Linux 테스트와 같은 경로).
 #include "App/Win32App.h"
 #include "resource.h"
+#include "Utils/Utils.h"
 
 #include <commdlg.h>
 
@@ -175,7 +176,7 @@ bool Win32App::handleProjectCommand(int commandId)
     case ID_FILE_OPENPROJECT:
         if (!confirmDiscardChanges())
             break;
-        chosen = showFileDialog(m_hWnd, false, projectFilter, L"srproj", nullptr, {});
+        chosen = showFileDialog(m_hWnd, false, projectFilter, L"srproj", nullptr, GetExecutableDirectory() / L"assets" / L"projects");
         if (chosen)
             m_projectSession.OpenProject(*chosen);
         break;

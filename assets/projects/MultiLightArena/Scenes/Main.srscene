@@ -1,0 +1,68 @@
+{
+  "format": "srscene",
+  "version": 1,
+  "name": "Main",
+  "autoRotate": true,
+  "camera": {
+    "position": [
+      0.0,
+      4.5,
+      -9.5
+    ],
+    "yaw": 0.0,
+    "pitch": -0.35
+  },
+  "lights": [
+    {
+      "type": "directional",
+      "rayDirection": [
+        -0.57735,
+        -0.57735,
+        0.57735
+      ],
+      "color": [
+        1.0,
+        0.95,
+        0.9
+      ]
+    },
+    {
+      "type": "directional",
+      "rayDirection": [
+        0.6,
+        -0.4,
+        -0.6
+      ],
+      "color": [
+        0.2,
+        0.5,
+        0.8
+      ]
+    }
+  ],
+  "entities": [
+    {
+      "id": "entity_arena",
+      "name": "ColosseumArena",
+      "parent": null,
+      "mesh": "asset_arena",
+      "transform": {
+        "position": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotationEuler": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    }
+  ]
+}

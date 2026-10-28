@@ -1,0 +1,23 @@
+# MTL material library generated for SoftwareRenderer
+
+newmtl Mtl_StoneFloor
+Kd 0.600000 0.620000 0.650000
+Ks 0.500000 0.500000 0.500000
+Pr 0.750000
+Pm 0.050000
+illum 2
+
+newmtl Mtl_BronzePillar
+Kd 0.800000 0.550000 0.250000
+Ks 0.900000 0.800000 0.500000
+Pr 0.280000
+Pm 0.920000
+illum 2
+
+newmtl Mtl_ObsidianSphere
+Kd 0.080000 0.080000 0.120000
+Ks 0.600000 0.600000 0.800000
+Pr 0.100000
+Pm 0.200000
+illum 2
+

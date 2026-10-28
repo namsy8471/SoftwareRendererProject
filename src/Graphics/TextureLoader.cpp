@@ -153,6 +153,31 @@ std::expected<std::unordered_map<std::string, Material>, AssetLoadError> Texture
             else
                 currentMaterial->specular = *color;
         }
+        else if (command == "Ke")
+        {
+            auto color = parseVec3(arguments);
+            if (!color)
+                return std::unexpected(malformedMtl(filepath, lineNumber, command));
+            currentMaterial->emissive = *color;
+        }
+        else if (command == "Pr")
+        {
+            auto remaining = arguments;
+            auto value = takeNumber<float>(remaining);
+            if (!value)
+                return std::unexpected(malformedMtl(filepath, lineNumber, command));
+            currentMaterial->roughness = std::clamp(*value, 0.04f, 1.0f);
+            currentMaterial->isPbr = true;
+        }
+        else if (command == "Pm")
+        {
+            auto remaining = arguments;
+            auto value = takeNumber<float>(remaining);
+            if (!value)
+                return std::unexpected(malformedMtl(filepath, lineNumber, command));
+            currentMaterial->metallic = std::clamp(*value, 0.0f, 1.0f);
+            currentMaterial->isPbr = true;
+        }
         else if (command == "Ns" || command == "d" || command == "Tr")
         {
             auto remaining = arguments;

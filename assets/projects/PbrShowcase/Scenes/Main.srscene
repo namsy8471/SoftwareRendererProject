@@ -1,0 +1,91 @@
+{
+  "format": "srscene",
+  "version": 1,
+  "name": "Main",
+  "autoRotate": true,
+  "camera": {
+    "position": [
+      0.0,
+      0.8,
+      -3.2
+    ],
+    "yaw": 0.0,
+    "pitch": -0.15
+  },
+  "lights": [
+    {
+      "type": "directional",
+      "rayDirection": [
+        -0.57735,
+        -0.57735,
+        0.57735
+      ],
+      "color": [
+        1.0,
+        0.98,
+        0.95
+      ]
+    },
+    {
+      "type": "directional",
+      "rayDirection": [
+        0.7071,
+        -0.3,
+        -0.6
+      ],
+      "color": [
+        0.3,
+        0.45,
+        0.7
+      ]
+    }
+  ],
+  "entities": [
+    {
+      "id": "entity_pedestal",
+      "name": "Pedestal",
+      "parent": null,
+      "mesh": "asset_pedestal",
+      "transform": {
+        "position": [
+          0.0,
+          -0.5,
+          0.0
+        ],
+        "rotationEuler": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "id": "entity_helmet",
+      "name": "CyberneticHelmet",
+      "parent": null,
+      "mesh": "asset_helmet",
+      "transform": {
+        "position": [
+          0.0,
+          0.4,
+          0.0
+        ],
+        "rotationEuler": [
+          0.0,
+          0.35,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    }
+  ]
+}
