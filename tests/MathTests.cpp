@@ -214,6 +214,16 @@ void mathTests()
     vectorNear(pair.first, transform * input);
     vectorNear(pair.second, transform * vec4{2.f, 1.f, -1.f, 1.f});
     std::cout << "SIMD dispatch: " << (SIMD::avx_available() ? "AVX" : "SSE") << '\n';
+    std::cout << "AVX2 available: " << (SIMD::avx2_available() ? "yes" : "no")
+              << ", FMA available: " << (SIMD::fma_available() ? "yes" : "no") << '\n';
+    if (SIMD::avx2_available())
+    {
+        check(SIMD::avx_available(), "AVX must be available if AVX2 is available");
+    }
+    if (SIMD::fma_available())
+    {
+        check(SIMD::avx_available(), "AVX must be available if FMA is available");
+    }
     AABB box;
     box.Encapsulate(vec3{-0.5f, -0.5f, -0.5f});
     box.Encapsulate(vec3{0.5f, 0.5f, 0.5f});

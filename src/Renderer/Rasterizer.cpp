@@ -1,3 +1,4 @@
+#include "Math/SIMD.h"
 #include "Renderer/Rasterizer.h"
 #include "Renderer/RenderCommand.h"
 #include "Graphics/Material.h"
@@ -907,14 +908,16 @@ void Rasterizer::ShadeOwners()
     static_assert(tileSize == 16);
     // a, b, c, q는 DrawTriangleImpl<DepthOwner>가 이 픽셀을 마지막으로 통과시킬 때 계산한 값 그대로다.
     // 이전처럼 edge 시작값(toFixed)과 정수 edge 값, 1/total을 다시 계산하지 않는다. 같은 값이라 색이 같다.
-    // 픽셀 4개씩(삼각형·재질이 달라도 된다) SSE lane에 나눠 셰이딩하고, 남은 3개 이하는 스칼라로 한다.
+    // 픽셀 8개씩(AVX2 지원 시) 또는 4개씩(SSE) SIMD lane에 나눠 셰이딩하고, 남은 픽셀은 4개 묶음 또는 스칼라로 한다.
     const auto store = [&](std::size_t cell, const SRMath::vec3 &color) SR_FORCEINLINE_LAMBDA
     {
         const int x = m_bounds.minX + static_cast<int>(cell & 15);
         const int y = m_bounds.minY + static_cast<int>(cell >> 4);
         m_colorBase[static_cast<std::size_t>(y - m_originY) * m_colorStride + (x - m_originX)] = packColor(color);
     };
-    std::size_t pending[4] = {};
+    const bool useAvx2 = SRMath::SIMD::avx2_available();
+    const int targetBatch = useAvx2 ? 8 : 4;
+    std::size_t pending[8] = {};
     int count = 0;
     std::size_t shaded = 0;
     for (std::size_t word = 0; word < m_ownerMask.size(); ++word)
@@ -925,23 +928,60 @@ void Rasterizer::ShadeOwners()
         {
             pending[count++] = word * 64 + static_cast<std::size_t>(std::countr_zero(bits));
             bits &= bits - 1;
-            if (count < 4)
+            if (count < targetBatch)
                 continue;
             count = 0;
-            const PreparedTriangle *const triangles[4] = {
-                m_ownerScratch.triangles[pending[0]], m_ownerScratch.triangles[pending[1]],
-                m_ownerScratch.triangles[pending[2]], m_ownerScratch.triangles[pending[3]]};
-            const OwnerSample *const samples[4] = {
-                &m_ownerScratch.samples[pending[0]], &m_ownerScratch.samples[pending[1]],
-                &m_ownerScratch.samples[pending[2]], &m_ownerScratch.samples[pending[3]]};
-            SRMath::vec3 colors[4];
-            ShadeOwnerQuad(triangles, samples, m_frame, colors);
-            for (int i = 0; i < 4; ++i)
-                store(pending[i], colors[i]);
-            shaded += 4;
+            if (targetBatch == 8)
+            {
+                const PreparedTriangle *const triangles[8] = {
+                    m_ownerScratch.triangles[pending[0]], m_ownerScratch.triangles[pending[1]],
+                    m_ownerScratch.triangles[pending[2]], m_ownerScratch.triangles[pending[3]],
+                    m_ownerScratch.triangles[pending[4]], m_ownerScratch.triangles[pending[5]],
+                    m_ownerScratch.triangles[pending[6]], m_ownerScratch.triangles[pending[7]]};
+                const OwnerSample *const samples[8] = {
+                    &m_ownerScratch.samples[pending[0]], &m_ownerScratch.samples[pending[1]],
+                    &m_ownerScratch.samples[pending[2]], &m_ownerScratch.samples[pending[3]],
+                    &m_ownerScratch.samples[pending[4]], &m_ownerScratch.samples[pending[5]],
+                    &m_ownerScratch.samples[pending[6]], &m_ownerScratch.samples[pending[7]]};
+                SRMath::vec3 colors[8];
+                ShadeOwner8(triangles, samples, m_frame, colors);
+                for (int i = 0; i < 8; ++i)
+                    store(pending[i], colors[i]);
+                shaded += 8;
+            }
+            else
+            {
+                const PreparedTriangle *const triangles[4] = {
+                    m_ownerScratch.triangles[pending[0]], m_ownerScratch.triangles[pending[1]],
+                    m_ownerScratch.triangles[pending[2]], m_ownerScratch.triangles[pending[3]]};
+                const OwnerSample *const samples[4] = {
+                    &m_ownerScratch.samples[pending[0]], &m_ownerScratch.samples[pending[1]],
+                    &m_ownerScratch.samples[pending[2]], &m_ownerScratch.samples[pending[3]]};
+                SRMath::vec3 colors[4];
+                ShadeOwnerQuad(triangles, samples, m_frame, colors);
+                for (int i = 0; i < 4; ++i)
+                    store(pending[i], colors[i]);
+                shaded += 4;
+            }
         }
     }
-    for (int i = 0; i < count; ++i)
+    int offset = 0;
+    if (count >= 4)
+    {
+        const PreparedTriangle *const triangles[4] = {
+            m_ownerScratch.triangles[pending[0]], m_ownerScratch.triangles[pending[1]],
+            m_ownerScratch.triangles[pending[2]], m_ownerScratch.triangles[pending[3]]};
+        const OwnerSample *const samples[4] = {
+            &m_ownerScratch.samples[pending[0]], &m_ownerScratch.samples[pending[1]],
+            &m_ownerScratch.samples[pending[2]], &m_ownerScratch.samples[pending[3]]};
+        SRMath::vec3 colors[4];
+        ShadeOwnerQuad(triangles, samples, m_frame, colors);
+        for (int i = 0; i < 4; ++i)
+            store(pending[i], colors[i]);
+        shaded += 4;
+        offset = 4;
+    }
+    for (int i = offset; i < count; ++i)
     {
         const PreparedTriangle *t = m_ownerScratch.triangles[pending[i]];
         const OwnerSample &s = m_ownerScratch.samples[pending[i]];

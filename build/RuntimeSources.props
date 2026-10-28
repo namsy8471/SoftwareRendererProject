@@ -83,6 +83,12 @@
   <ItemGroup><ClInclude Include="src\Renderer\DebugGizmos.h" /></ItemGroup>
   <ItemGroup><ClCompile Include="src\Renderer\DebugGizmos.cpp" /></ItemGroup>
   <ItemGroup><ClCompile Include="src\Renderer\RendererShading.cpp" /></ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="src\Renderer\RendererShadingAVX2.cpp">
+      <AdditionalOptions>/arch:AVX2 %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <ClInclude Include="src\Renderer\RendererShadingAVX2.h" />
+  </ItemGroup>
   <!-- 창과 무관한 데모 장면, 프레임 순서(FrameRunner), 가시성 수집, headless 실행, PNG 입출력. CMake는 src/ 아래 .cpp를 자동으로 모은다. -->
   <ItemGroup>
     <ClCompile Include="src\Core\DemoScene.cpp" />

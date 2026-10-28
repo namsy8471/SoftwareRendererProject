@@ -21,4 +21,6 @@ struct TransformPair
 // 확인한다. CPU만 AVX를 지원하고 OS가 YMM 저장을 지원하지 않는 경우도
 // 안전하게 false를 반환해야 illegal-instruction 예외를 피할 수 있다.
 [[nodiscard]] bool avx_available() noexcept;
+[[nodiscard]] bool avx2_available() noexcept;
+[[nodiscard]] bool fma_available() noexcept;
 } // namespace SRMath::SIMD

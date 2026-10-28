@@ -1,3 +1,5 @@
+#include "Renderer/RendererShadingAVX2.h"
+#include "Math/SIMD.h"
 #include "Renderer/Rasterizer.h"
 #include "Graphics/Material.h"
 #include "Graphics/Mesh.h"
@@ -1543,4 +1545,57 @@ void Rasterizer::ShadeOwnerQuad(const PreparedTriangle *const (&triangle)[4],
     }
     ShadeLanes(normalLanes, Transpose(position[0], position[1], position[2], position[3]), u, v, lod, material,
                frame, colors);
+}
+
+void Rasterizer::ShadeSurface8(const SurfaceSample (&surface)[8], const Material *const (&material)[8],
+                               const RenderFrameContext &frame, SRMath::vec3 (&colors)[8])
+{
+    if (SRMath::SIMD::avx2_available())
+    {
+        sr::renderer::avx2::ShadeSurface8(surface, material, frame, colors);
+        return;
+    }
+
+    const SurfaceSample s0[4] = {surface[0], surface[1], surface[2], surface[3]};
+    const Material *m0[4] = {material[0], material[1], material[2], material[3]};
+    SRMath::vec3 c0[4];
+    ShadeSurface4(s0, m0, frame, c0);
+
+    const SurfaceSample s1[4] = {surface[4], surface[5], surface[6], surface[7]};
+    const Material *m1[4] = {material[4], material[5], material[6], material[7]};
+    SRMath::vec3 c1[4];
+    ShadeSurface4(s1, m1, frame, c1);
+
+    for (int i = 0; i < 4; ++i)
+    {
+        colors[i] = c0[i];
+        colors[i + 4] = c1[i];
+    }
+}
+
+void Rasterizer::ShadeOwner8(const PreparedTriangle *const (&triangle)[8],
+                             const OwnerSample *const (&sample)[8], const RenderFrameContext &frame,
+                             SRMath::vec3 (&colors)[8])
+{
+    if (SRMath::SIMD::avx2_available())
+    {
+        sr::renderer::avx2::ShadeOwner8(triangle, sample, frame, colors);
+        return;
+    }
+
+    const PreparedTriangle *t0[4] = {triangle[0], triangle[1], triangle[2], triangle[3]};
+    const OwnerSample *s0[4] = {sample[0], sample[1], sample[2], sample[3]};
+    SRMath::vec3 c0[4];
+    ShadeOwnerQuad(t0, s0, frame, c0);
+
+    const PreparedTriangle *t1[4] = {triangle[4], triangle[5], triangle[6], triangle[7]};
+    const OwnerSample *s1[4] = {sample[4], sample[5], sample[6], sample[7]};
+    SRMath::vec3 c1[4];
+    ShadeOwnerQuad(t1, s1, frame, c1);
+
+    for (int i = 0; i < 4; ++i)
+    {
+        colors[i] = c0[i];
+        colors[i + 4] = c1[i];
+    }
 }
