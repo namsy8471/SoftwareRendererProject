@@ -1684,10 +1684,141 @@ void mtlAlphaTests()
     check(approximatelyEqual((*loaded)["OpaqueMat"].opacity, 1.0f), "d 1.0 opacity");
     check((*loaded)["OpaqueMat"].alphaMode == AlphaMode::Opaque, "d 1.0 alphaMode Opaque");
 }
+void pbrLightingTests()
+{
+    // Test 1: Zero Overhead & Invariant (pbr == false vs pbr == true on non-PBR material)
+    Camera camera({0.f, 0.f, 5.f});
+    camera.SetCameraYaw(std::numbers::pi_v<float>);
+    std::array<bool, 256> keys{};
+    camera.Update(0.f, keys, 1.f);
+
+    Mesh nonPbrMesh;
+    nonPbrMesh.vertices = {{{-1.f, -1.f, 0.f}, {}, {0.f, 0.f, 1.f}},
+                           {{1.f, -1.f, 0.f}, {}, {0.f, 0.f, 1.f}},
+                           {{1.f, 1.f, 0.f}, {}, {0.f, 0.f, 1.f}},
+                           {{-1.f, 1.f, 0.f}, {}, {0.f, 0.f, 1.f}}};
+    nonPbrMesh.indices = {0, 2, 1, 0, 3, 2};
+    nonPbrMesh.material.ambient = {0.2f, 0.2f, 0.2f};
+    nonPbrMesh.material.diffuse = {0.8f, 0.8f, 0.8f};
+    nonPbrMesh.material.specular = {0.5f, 0.5f, 0.5f};
+    nonPbrMesh.material.isPbr = false;
+
+    Renderer renderer;
+    MemorySurface surfaceOff(32, 32), surfaceOn(32, 32);
+    RenderQueue queue;
+    queue.Submit(MeshRenderCommand{&nonPbrMesh, nonPbrMesh.indices, SRMath::mat4::identity(),
+                                   &nonPbrMesh.material, ERasterizeMode::Fill});
+
+    std::vector<DirectionalLight> lights{DirectionalLight{{0.f, 0.f, -1.f}, {1.f, 1.f, 1.f}}};
+
+    RenderOptions opt{};
+    opt.pbr = false;
+    renderer.SetOptions(opt);
+    surfaceOff.target.Clear();
+    renderer.RenderScene(surfaceOff.target, queue, camera.GetViewParams(), lights);
+
+    opt.pbr = true;
+    renderer.SetOptions(opt);
+    surfaceOn.target.Clear();
+    renderer.RenderScene(surfaceOn.target, queue, camera.GetViewParams(), lights);
+
+    check(surfaceOff.pixels == surfaceOn.pixels,
+          "non-PBR material produces identical pixels whether options.pbr is on or off");
+
+    // Test 2: Energy Conservation & Pure Metallic vs Dielectric
+    // Dielectric: metallic = 0.0, baseColor = (1, 0, 0)
+    Mesh dielectricMesh;
+    dielectricMesh.vertices = nonPbrMesh.vertices;
+    dielectricMesh.indices = nonPbrMesh.indices;
+    dielectricMesh.material.isPbr = true;
+    dielectricMesh.material.baseColor = {1.f, 0.f, 0.f, 1.f};
+    dielectricMesh.material.metallic = 0.0f;
+    dielectricMesh.material.roughness = 0.5f;
+    dielectricMesh.material.ambient = {0.f, 0.f, 0.f};
+
+    // Metallic: metallic = 1.0, baseColor = (1, 0, 0)
+    Mesh metallicMesh;
+    metallicMesh.vertices = nonPbrMesh.vertices;
+    metallicMesh.indices = nonPbrMesh.indices;
+    metallicMesh.material.isPbr = true;
+    metallicMesh.material.baseColor = {1.f, 0.f, 0.f, 1.f};
+    metallicMesh.material.metallic = 1.0f;
+    metallicMesh.material.roughness = 0.5f;
+    metallicMesh.material.ambient = {0.f, 0.f, 0.f};
+
+    // Oblique light to test specular highlight vs diffuse
+    std::vector<DirectionalLight> dirLights{DirectionalLight{{-0.5f, -0.5f, -1.f}, {1.f, 1.f, 1.f}}};
+
+    RenderQueue qDielectric;
+    qDielectric.Submit(MeshRenderCommand{&dielectricMesh, dielectricMesh.indices, SRMath::mat4::identity(),
+                                         &dielectricMesh.material, ERasterizeMode::Fill});
+    MemorySurface surfaceDielectric(32, 32);
+    surfaceDielectric.target.Clear();
+    renderer.RenderScene(surfaceDielectric.target, qDielectric, camera.GetViewParams(), dirLights);
+
+    RenderQueue qMetallic;
+    qMetallic.Submit(MeshRenderCommand{&metallicMesh, metallicMesh.indices, SRMath::mat4::identity(),
+                                       &metallicMesh.material, ERasterizeMode::Fill});
+    MemorySurface surfaceMetallic(32, 32);
+    surfaceMetallic.target.Clear();
+    renderer.RenderScene(surfaceMetallic.target, qMetallic, camera.GetViewParams(), dirLights);
+
+    // Center pixel
+    const std::uint32_t dPix = surfaceDielectric.pixels[16 * 32 + 16];
+    const auto dR = (dPix >> 16) & 0xFF;
+    const auto dG = (dPix >> 8) & 0xFF;
+    const auto dB = dPix & 0xFF;
+
+    const std::uint32_t mPix = surfaceMetallic.pixels[16 * 32 + 16];
+    const auto mR = (mPix >> 16) & 0xFF;
+    const auto mG = (mPix >> 8) & 0xFF;
+    const auto mB = mPix & 0xFF;
+
+    check(dR > dG && dG == dB, "dielectric has colored diffuse + achromatic white specular highlight");
+    check(mR > 0, "metallic has specular reflection (red channel)");
+    check(mG == 0 && mB == 0, "pure metallic red material only reflects red specular (0 diffuse, tinted specular)");
+
+    // Test 3: Scalar vs SSE 4-lane equivalence for PBR
+    // Test ShadeSurface vs ShadeSurface4 directly on a 4-sample quad
+    Rasterizer::SurfaceSample sample[4];
+    const Material *mat[4] = {&dielectricMesh.material, &metallicMesh.material,
+                              &dielectricMesh.material, &metallicMesh.material};
+    for (int i = 0; i < 4; ++i)
+    {
+        sample[i].positionWorld = {0.1f * i, 0.2f * i, 0.f};
+        sample[i].normalWorld = SRMath::normalize(SRMath::vec3(0.1f * i, 0.2f * i, 1.f));
+        sample[i].texcoord = {0.25f * i, 0.25f * i};
+        sample[i].lod = 0.f;
+    }
+
+    RenderFrameContext frameCtx{};
+    frameCtx.cameraPosition = {0.f, 0.f, 5.f};
+    PreparedDirectionalLight prepLight = PreparedDirectionalLight::From(dirLights[0]);
+    frameCtx.lights = std::span<const PreparedDirectionalLight>(&prepLight, 1);
+    frameCtx.pbr = true;
+
+    SRMath::vec3 scalarColors[4];
+    for (int i = 0; i < 4; ++i)
+    {
+        scalarColors[i] = Rasterizer::ShadeSurface(sample[i], *mat[i], frameCtx);
+    }
+
+    SRMath::vec3 sseColors[4];
+    Rasterizer::ShadeSurface4(sample, mat, frameCtx, sseColors);
+
+    for (int i = 0; i < 4; ++i)
+    {
+        check(std::abs(scalarColors[i].x - sseColors[i].x) < 1e-4f &&
+              std::abs(scalarColors[i].y - sseColors[i].y) < 1e-4f &&
+              std::abs(scalarColors[i].z - sseColors[i].z) < 1e-4f,
+              "scalar ShadeSurface and SSE ShadeSurface4 match within numerical tolerance for PBR");
+    }
+}
 } // namespace
 
 void sr::test::RegisterRendererTests(TestRegistry &registry)
 {
+    registry.Add("renderer.pbrLighting", pbrLightingTests);
     registry.Add("renderer.alphaMask", alphaMaskTests);
     registry.Add("renderer.alphaBlend", alphaBlendTests);
     registry.Add("renderer.mtlAlpha", mtlAlphaTests);

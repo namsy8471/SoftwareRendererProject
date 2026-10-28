@@ -578,10 +578,45 @@ void alphaMaterialTests()
     check(approximatelyEqual(meshes[2].material.alphaCutoff, 0.5f), "mapped OpaqueMat alphaCutoff is 0.5");
     check(approximatelyEqual(meshes[2].material.opacity, 1.0f), "mapped OpaqueMat opacity is 1.0");
 }
+void pbrMaterialTests()
+{
+    const std::string json = R"({
+        "asset": {"version": "2.0"},
+        "materials": [
+            {
+                "name": "PbrMat",
+                "pbrMetallicRoughness": {
+                    "baseColorFactor": [0.8, 0.2, 0.1, 1.0],
+                    "metallicFactor": 0.9,
+                    "roughnessFactor": 0.3,
+                    "metallicRoughnessTexture": {"index": 0}
+                },
+                "occlusionTexture": {"index": 1, "strength": 0.75},
+                "emissiveFactor": [0.5, 0.5, 0.5]
+            }
+        ],
+        "textures": [{"source": 0}, {"source": 1}],
+        "images": [
+            {"uri": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="},
+            {"uri": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="}
+        ]
+    })";
+
+    auto doc = gltf::LoadFromMemory(asBytes(json), ".");
+    check(doc.has_value(), "parse glTF with PBR textures");
+    check(doc->materials.size() == 1, "doc has 1 material");
+    const auto &mat = doc->materials[0];
+    check(mat.metallicRoughnessTexture.texture == 0, "metallicRoughnessTexture index 0");
+    check(mat.occlusionTexture.texture == 1, "occlusionTexture index 1");
+    check(approximatelyEqual(mat.occlusionStrength, 0.75f), "occlusionStrength 0.75");
+    check(approximatelyEqual(mat.metallicFactor, 0.9f), "metallicFactor 0.9");
+    check(approximatelyEqual(mat.roughnessFactor, 0.3f), "roughnessFactor 0.3");
+}
 } // namespace
 
 void sr::test::RegisterGltfTests(TestRegistry &registry)
 {
+    registry.Add("gltf.pbrMaterials", pbrMaterialTests);
     registry.Add("gltf.alphaMaterials", alphaMaterialTests);
     registry.Add("gltf.base64", base64Tests);
     registry.Add("gltf.textureWrap", textureWrapTests);

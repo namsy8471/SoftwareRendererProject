@@ -200,7 +200,8 @@ void Renderer::renderScene(RenderTarget &target, const RenderQueue &queue, const
                              m_options.bilinearFiltering,
                              m_options.mipmapping,
                              m_options.srgbGamma,
-                             activeShadowMap};
+                             activeShadowMap,
+                              m_options.pbr};
     prepareFrame();
     if (m_options.collectStats)
         m_stats.prepareMs = elapsedMilliseconds(started);

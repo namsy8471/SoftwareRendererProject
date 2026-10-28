@@ -211,9 +211,235 @@ Rasterizer::SurfaceSample Rasterizer::InterpolateSurface(const RasterizerVertex 
 }
 
 // 법선, 카메라, 준비된 광원 방향은 모두 월드 공간이다. 광원은 worker 시작 전에 준비된다.
+
+constexpr float pbrPi = 3.14159265358979323846f;
+
+inline float sRGBToLinear(float c) noexcept
+{
+    c = std::clamp(c, 0.0f, 1.0f);
+    return (c <= 0.04045f) ? (c / 12.92f) : std::pow((c + 0.055f) / 1.055f, 2.4f);
+}
+
+inline float GGX_D(float NdotH, float alpha2) noexcept
+{
+    const float d = (NdotH * NdotH) * (alpha2 - 1.0f) + 1.0f;
+    return alpha2 / (pbrPi * d * d);
+}
+
+inline float SmithGGX_V(float NdotL, float NdotV, float alpha2) noexcept
+{
+    const float denomL = NdotV * std::sqrt((NdotL * NdotL) * (1.0f - alpha2) + alpha2);
+    const float denomV = NdotL * std::sqrt((NdotV * NdotV) * (1.0f - alpha2) + alpha2);
+    return 0.5f / std::max(denomL + denomV, 1e-7f);
+}
+
+inline SRMath::vec3 Schlick_F(float VdotH, const SRMath::vec3 &F0) noexcept
+{
+    const float f = 1.0f - VdotH;
+    const float f2 = f * f;
+    const float f5 = f2 * f2 * f;
+    return F0 + (SRMath::vec3(1.0f, 1.0f, 1.0f) - F0) * f5;
+}
+
+SRMath::vec3 ShadeSurfacePBR(const Rasterizer::SurfaceSample &surface, const Material &material,
+                             const RenderFrameContext &frame)
+{
+    SRMath::vec3 baseColor{material.baseColor.x, material.baseColor.y, material.baseColor.z};
+    if (material.diffuseTexture)
+    {
+        const auto diff = Rasterizer::SampleTexture(*material.diffuseTexture, surface.texcoord.x,
+                                                    surface.texcoord.y, surface.lod, frame);
+        baseColor.x *= sRGBToLinear(diff.r);
+        baseColor.y *= sRGBToLinear(diff.g);
+        baseColor.z *= sRGBToLinear(diff.b);
+    }
+
+    float roughness = material.roughness;
+    float metallic = material.metallic;
+    if (material.metallicRoughnessTexture)
+    {
+        const auto mr = Rasterizer::SampleTexture(*material.metallicRoughnessTexture, surface.texcoord.x,
+                                                  surface.texcoord.y, surface.lod, frame);
+        roughness *= mr.g;
+        metallic *= mr.b;
+    }
+    roughness = std::clamp(roughness, 0.04f, 1.0f);
+    metallic = std::clamp(metallic, 0.0f, 1.0f);
+
+    float occlusion = 1.0f;
+    if (material.occlusionTexture)
+    {
+        const auto occ = Rasterizer::SampleTexture(*material.occlusionTexture, surface.texcoord.x,
+                                                   surface.texcoord.y, surface.lod, frame);
+        occlusion = std::clamp(1.0f + material.occlusionStrength * (occ.r - 1.0f), 0.0f, 1.0f);
+    }
+
+    SRMath::vec3 emissive = material.emissive;
+    if (material.emissiveTexture)
+    {
+        const auto em = Rasterizer::SampleTexture(*material.emissiveTexture, surface.texcoord.x,
+                                                  surface.texcoord.y, surface.lod, frame);
+        emissive.x *= sRGBToLinear(em.r);
+        emissive.y *= sRGBToLinear(em.g);
+        emissive.z *= sRGBToLinear(em.b);
+    }
+
+    const SRMath::vec3 surfaceNormal =
+        material.normalTexture
+            ? perturbNormal(surface.normalWorld, surface.tangentWorld, surface.bitangentWorld,
+                            surface.texcoord.x, surface.texcoord.y, surface.lod, material, frame)
+            : surface.normalWorld;
+
+    const float alpha = roughness * roughness;
+    const float alpha2 = alpha * alpha;
+
+    const SRMath::vec3 F0 = SRMath::vec3(0.04f, 0.04f, 0.04f) * (1.0f - metallic) + baseColor * metallic;
+
+    const SRMath::vec3 viewDir = SRMath::normalize(frame.cameraPosition - surface.positionWorld);
+    const float NdotV = std::clamp(SRMath::dot(surfaceNormal, viewDir), 1e-4f, 1.0f);
+
+    SRMath::vec3 totalDirect{};
+
+    for (const auto &light : frame.lights)
+    {
+        const SRMath::vec3 &lightDir = light.directionToLight;
+        const float NdotL = std::max(0.0f, SRMath::dot(surfaceNormal, lightDir));
+        if (NdotL <= 0.0f)
+            continue;
+
+        const SRMath::vec3 H = SRMath::normalize(lightDir + viewDir);
+        const float NdotH = std::clamp(SRMath::dot(surfaceNormal, H), 0.0f, 1.0f);
+        const float VdotH = std::clamp(SRMath::dot(viewDir, H), 0.0f, 1.0f);
+
+        const float D = GGX_D(NdotH, alpha2);
+        const float V = SmithGGX_V(NdotL, NdotV, alpha2);
+        const SRMath::vec3 F = Schlick_F(VdotH, F0);
+
+        const SRMath::vec3 specular = F * (pbrPi * D * V);
+        const SRMath::vec3 kD = (SRMath::vec3(1.0f, 1.0f, 1.0f) - F) * (1.0f - metallic);
+        const SRMath::vec3 diffuse = kD * baseColor;
+
+        SRMath::vec3 lightContrib = (diffuse + specular) * light.color * NdotL;
+
+        if (frame.shadowMap != nullptr && frame.shadowMap->lightType == ShadowMap::LightType::Directional)
+        {
+            const float shadowVis =
+                frame.shadowMap->SampleVisibility(surface.positionWorld, surfaceNormal, lightDir);
+            lightContrib *= shadowVis;
+        }
+
+        totalDirect += lightContrib;
+    }
+
+    if (!frame.pointLights.empty())
+    {
+        for (const auto &light : frame.pointLights)
+        {
+            const SRMath::vec3 toLight = light.position - surface.positionWorld;
+            const float distSq = SRMath::dot(toLight, toLight);
+            const float dist = std::sqrt(distSq);
+            const SRMath::vec3 lightDir = SRMath::normalize(toLight);
+
+            const float ratio = dist * light.invRange;
+            const float ratioSq = ratio * ratio;
+            const float window = std::max(0.0f, 1.0f - ratioSq * ratioSq);
+            const float denom = light.constant + light.linear * dist + light.quadratic * distSq;
+            const float atten = (window * window) / std::max(denom, 1e-4f);
+            if (atten <= 0.0f)
+                continue;
+
+            const float NdotL = std::max(0.0f, SRMath::dot(surfaceNormal, lightDir));
+            if (NdotL <= 0.0f)
+                continue;
+
+            const SRMath::vec3 H = SRMath::normalize(lightDir + viewDir);
+            const float NdotH = std::clamp(SRMath::dot(surfaceNormal, H), 0.0f, 1.0f);
+            const float VdotH = std::clamp(SRMath::dot(viewDir, H), 0.0f, 1.0f);
+
+            const float D = GGX_D(NdotH, alpha2);
+            const float V = SmithGGX_V(NdotL, NdotV, alpha2);
+            const SRMath::vec3 F = Schlick_F(VdotH, F0);
+
+            const SRMath::vec3 specular = F * (pbrPi * D * V);
+            const SRMath::vec3 kD = (SRMath::vec3(1.0f, 1.0f, 1.0f) - F) * (1.0f - metallic);
+            const SRMath::vec3 diffuse = kD * baseColor;
+
+            totalDirect += (diffuse + specular) * (light.color * atten) * NdotL;
+        }
+    }
+
+    if (!frame.spotLights.empty())
+    {
+        for (const auto &light : frame.spotLights)
+        {
+            const SRMath::vec3 toLight = light.position - surface.positionWorld;
+            const float distSq = SRMath::dot(toLight, toLight);
+            const float dist = std::sqrt(distSq);
+            const SRMath::vec3 lightDir = SRMath::normalize(toLight);
+
+            const float ratio = dist * light.invRange;
+            const float ratioSq = ratio * ratio;
+            const float window = std::max(0.0f, 1.0f - ratioSq * ratioSq);
+            const float denom = light.constant + light.linear * dist + light.quadratic * distSq;
+            const float distAtten = (window * window) / std::max(denom, 1e-4f);
+
+            const float cosTheta = SRMath::dot(lightDir, light.directionToLight);
+            const float rawT = (cosTheta - light.outerConeCos) * light.invConeCosDiff;
+            const float spotT = std::max(0.0f, std::min(1.0f, rawT));
+            const float spotFactor = (spotT * spotT) * (3.0f - 2.0f * spotT);
+            const float atten = distAtten * spotFactor;
+            if (atten <= 0.0f)
+                continue;
+
+            const float NdotL = std::max(0.0f, SRMath::dot(surfaceNormal, lightDir));
+            if (NdotL <= 0.0f)
+                continue;
+
+            const SRMath::vec3 H = SRMath::normalize(lightDir + viewDir);
+            const float NdotH = std::clamp(SRMath::dot(surfaceNormal, H), 0.0f, 1.0f);
+            const float VdotH = std::clamp(SRMath::dot(viewDir, H), 0.0f, 1.0f);
+
+            const float D = GGX_D(NdotH, alpha2);
+            const float V = SmithGGX_V(NdotL, NdotV, alpha2);
+            const SRMath::vec3 F = Schlick_F(VdotH, F0);
+
+            const SRMath::vec3 specular = F * (pbrPi * D * V);
+            const SRMath::vec3 kD = (SRMath::vec3(1.0f, 1.0f, 1.0f) - F) * (1.0f - metallic);
+            const SRMath::vec3 diffuse = kD * baseColor;
+
+            SRMath::vec3 lightContrib = (diffuse + specular) * (light.color * atten) * NdotL;
+
+            if (frame.shadowMap != nullptr && frame.shadowMap->lightType == ShadowMap::LightType::Spot)
+            {
+                const float shadowVis =
+                    frame.shadowMap->SampleVisibility(surface.positionWorld, surfaceNormal, lightDir);
+                lightContrib *= shadowVis;
+            }
+
+            totalDirect += lightContrib;
+        }
+    }
+
+    SRMath::vec3 ambient = baseColor * material.ambient * occlusion;
+    SRMath::vec3 color = ambient + totalDirect + emissive;
+    color.clamp(0.0f, 1.0f);
+
+    if (frame.srgbGamma)
+    {
+        constexpr float invGamma = 1.0f / 2.2f;
+        color.x = std::pow(color.x, invGamma);
+        color.y = std::pow(color.y, invGamma);
+        color.z = std::pow(color.z, invGamma);
+    }
+
+    return color;
+}
+
 SRMath::vec3 Rasterizer::ShadeSurface(const SurfaceSample &surface, const Material &material,
                                       const RenderFrameContext &frame)
 {
+    if (frame.pbr && material.isPbr)
+        return ShadeSurfacePBR(surface, material, frame);
     SRMath::vec3 baseColor;
 
     if (material.diffuseTexture)
@@ -413,10 +639,346 @@ Lanes3 Normalize(const Lanes3 &v)
 }
 
 // ShadeSurface의 lane 버전 본체. normal은 이미 정규화된 월드 법선, u/v는 텍스처 좌표다.
+
+inline __m128 GGX_D4(__m128 NdotH, __m128 alpha2) noexcept
+{
+    const __m128 one = _mm_set1_ps(1.0f);
+    const __m128 pi = _mm_set1_ps(3.14159265358979323846f);
+    const __m128 NdotH2 = _mm_mul_ps(NdotH, NdotH);
+    const __m128 d = _mm_add_ps(_mm_mul_ps(NdotH2, _mm_sub_ps(alpha2, one)), one);
+    const __m128 denom = _mm_mul_ps(pi, _mm_mul_ps(d, d));
+    return _mm_div_ps(alpha2, denom);
+}
+
+inline __m128 SmithGGX_V4(__m128 NdotL, __m128 NdotV, __m128 alpha2) noexcept
+{
+    const __m128 one = _mm_set1_ps(1.0f);
+    const __m128 half = _mm_set1_ps(0.5f);
+    const __m128 eps = _mm_set1_ps(1e-7f);
+    const __m128 oneMinusAlpha2 = _mm_sub_ps(one, alpha2);
+
+    const __m128 termL = _mm_add_ps(_mm_mul_ps(_mm_mul_ps(NdotL, NdotL), oneMinusAlpha2), alpha2);
+    const __m128 termV = _mm_add_ps(_mm_mul_ps(_mm_mul_ps(NdotV, NdotV), oneMinusAlpha2), alpha2);
+    const __m128 denomL = _mm_mul_ps(NdotV, _mm_sqrt_ps(termL));
+    const __m128 denomV = _mm_mul_ps(NdotL, _mm_sqrt_ps(termV));
+    const __m128 denom = _mm_max_ps(_mm_add_ps(denomL, denomV), eps);
+    return _mm_div_ps(half, denom);
+}
+
+inline Lanes3 Schlick_F4(__m128 VdotH, const Lanes3 &F0) noexcept
+{
+    const __m128 one = _mm_set1_ps(1.0f);
+    const __m128 f = _mm_sub_ps(one, VdotH);
+    const __m128 f2 = _mm_mul_ps(f, f);
+    const __m128 f5 = _mm_mul_ps(_mm_mul_ps(f2, f2), f);
+    return {_mm_add_ps(F0.x, _mm_mul_ps(_mm_sub_ps(one, F0.x), f5)),
+            _mm_add_ps(F0.y, _mm_mul_ps(_mm_sub_ps(one, F0.y), f5)),
+            _mm_add_ps(F0.z, _mm_mul_ps(_mm_sub_ps(one, F0.z), f5))};
+}
+
+void ShadeLanesPBR(const Lanes3 &normal, const Lanes3 &position, const float (&u)[4], const float (&v)[4],
+                   const float (&lod)[4], const Material *const (&material)[4], const RenderFrameContext &frame,
+                   SRMath::vec3 (&colors)[4])
+{
+    SRMath::vec3 baseColor[4];
+    float roughness[4], metallic[4], occlusion[4];
+    SRMath::vec3 emissive[4], ambientMat[4];
+
+    for (int i = 0; i < 4; ++i)
+    {
+        const Material &m = *material[i];
+        baseColor[i] = {m.baseColor.x, m.baseColor.y, m.baseColor.z};
+        if (m.diffuseTexture)
+        {
+            const auto diff = Rasterizer::SampleTexture(*m.diffuseTexture, u[i], v[i], lod[i], frame);
+            baseColor[i].x *= sRGBToLinear(diff.r);
+            baseColor[i].y *= sRGBToLinear(diff.g);
+            baseColor[i].z *= sRGBToLinear(diff.b);
+        }
+
+        roughness[i] = m.roughness;
+        metallic[i] = m.metallic;
+        if (m.metallicRoughnessTexture)
+        {
+            const auto mr = Rasterizer::SampleTexture(*m.metallicRoughnessTexture, u[i], v[i], lod[i], frame);
+            roughness[i] *= mr.g;
+            metallic[i] *= mr.b;
+        }
+        roughness[i] = std::clamp(roughness[i], 0.04f, 1.0f);
+        metallic[i] = std::clamp(metallic[i], 0.0f, 1.0f);
+
+        occlusion[i] = 1.0f;
+        if (m.occlusionTexture)
+        {
+            const auto occ = Rasterizer::SampleTexture(*m.occlusionTexture, u[i], v[i], lod[i], frame);
+            occlusion[i] = std::clamp(1.0f + m.occlusionStrength * (occ.r - 1.0f), 0.0f, 1.0f);
+        }
+
+        emissive[i] = m.emissive;
+        if (m.emissiveTexture)
+        {
+            const auto em = Rasterizer::SampleTexture(*m.emissiveTexture, u[i], v[i], lod[i], frame);
+            emissive[i].x *= sRGBToLinear(em.r);
+            emissive[i].y *= sRGBToLinear(em.g);
+            emissive[i].z *= sRGBToLinear(em.b);
+        }
+
+        ambientMat[i] = m.ambient;
+    }
+
+    const Lanes3 base = Transpose(baseColor[0], baseColor[1], baseColor[2], baseColor[3]);
+    const __m128 r = _mm_setr_ps(roughness[0], roughness[1], roughness[2], roughness[3]);
+    const __m128 m = _mm_setr_ps(metallic[0], metallic[1], metallic[2], metallic[3]);
+    const __m128 occ = _mm_setr_ps(occlusion[0], occlusion[1], occlusion[2], occlusion[3]);
+    const Lanes3 em = Transpose(emissive[0], emissive[1], emissive[2], emissive[3]);
+    const Lanes3 ambMat = Transpose(ambientMat[0], ambientMat[1], ambientMat[2], ambientMat[3]);
+
+    const __m128 alpha = _mm_mul_ps(r, r);
+    const __m128 alpha2 = _mm_mul_ps(alpha, alpha);
+
+    const __m128 zero = _mm_setzero_ps();
+    const __m128 one = _mm_set1_ps(1.0f);
+    const __m128 pointZeroFour = _mm_set1_ps(0.04f);
+    const __m128 pi = _mm_set1_ps(3.14159265358979323846f);
+
+    const __m128 oneMinusM = _mm_sub_ps(one, m);
+    const Lanes3 F0{
+        _mm_add_ps(_mm_mul_ps(pointZeroFour, oneMinusM), _mm_mul_ps(base.x, m)),
+        _mm_add_ps(_mm_mul_ps(pointZeroFour, oneMinusM), _mm_mul_ps(base.y, m)),
+        _mm_add_ps(_mm_mul_ps(pointZeroFour, oneMinusM), _mm_mul_ps(base.z, m))
+    };
+
+    const Lanes3 camera = Broadcast(frame.cameraPosition);
+    const Lanes3 viewDir = Normalize({_mm_sub_ps(camera.x, position.x),
+                                      _mm_sub_ps(camera.y, position.y),
+                                      _mm_sub_ps(camera.z, position.z)});
+
+    const __m128 NdotV = _mm_max_ps(_mm_set1_ps(1e-4f), _mm_min_ps(one, Dot(normal, viewDir)));
+
+    Lanes3 totalDirect{zero, zero, zero};
+
+    for (const auto &light : frame.lights)
+    {
+        const Lanes3 lightDir = Broadcast(light.directionToLight);
+        const Lanes3 lightColor = Broadcast(light.color);
+
+        const __m128 NdotL = _mm_max_ps(zero, Dot(normal, lightDir));
+        const __m128 activeMask = _mm_cmpgt_ps(NdotL, zero);
+        if (_mm_movemask_ps(activeMask) == 0)
+            continue;
+
+        const Lanes3 H = Normalize({_mm_add_ps(lightDir.x, viewDir.x),
+                                    _mm_add_ps(lightDir.y, viewDir.y),
+                                    _mm_add_ps(lightDir.z, viewDir.z)});
+        const __m128 NdotH = _mm_max_ps(zero, _mm_min_ps(one, Dot(normal, H)));
+        const __m128 VdotH = _mm_max_ps(zero, _mm_min_ps(one, Dot(viewDir, H)));
+
+        const __m128 D = GGX_D4(NdotH, alpha2);
+        const __m128 V = SmithGGX_V4(NdotL, NdotV, alpha2);
+        const Lanes3 F = Schlick_F4(VdotH, F0);
+
+        const __m128 piDV = _mm_mul_ps(pi, _mm_mul_ps(D, V));
+        const Lanes3 specular{_mm_mul_ps(F.x, piDV), _mm_mul_ps(F.y, piDV), _mm_mul_ps(F.z, piDV)};
+
+        const __m128 kD_scale = oneMinusM;
+        const Lanes3 diffuse{_mm_mul_ps(_mm_mul_ps(_mm_sub_ps(one, F.x), kD_scale), base.x),
+                             _mm_mul_ps(_mm_mul_ps(_mm_sub_ps(one, F.y), kD_scale), base.y),
+                             _mm_mul_ps(_mm_mul_ps(_mm_sub_ps(one, F.z), kD_scale), base.z)};
+
+        __m128 factorX = _mm_mul_ps(_mm_add_ps(diffuse.x, specular.x), _mm_mul_ps(lightColor.x, NdotL));
+        __m128 factorY = _mm_mul_ps(_mm_add_ps(diffuse.y, specular.y), _mm_mul_ps(lightColor.y, NdotL));
+        __m128 factorZ = _mm_mul_ps(_mm_add_ps(diffuse.z, specular.z), _mm_mul_ps(lightColor.z, NdotL));
+
+        if (frame.shadowMap != nullptr && frame.shadowMap->lightType == ShadowMap::LightType::Directional)
+        {
+            alignas(16) float vis[4];
+            alignas(16) float px[4], py[4], pz[4], nx[4], ny[4], nz[4];
+            _mm_store_ps(px, position.x); _mm_store_ps(py, position.y); _mm_store_ps(pz, position.z);
+            _mm_store_ps(nx, normal.x); _mm_store_ps(ny, normal.y); _mm_store_ps(nz, normal.z);
+            for (int i = 0; i < 4; ++i)
+            {
+                vis[i] = frame.shadowMap->SampleVisibility({px[i], py[i], pz[i]}, {nx[i], ny[i], nz[i]}, light.directionToLight);
+            }
+            const __m128 shadowVis = _mm_load_ps(vis);
+            factorX = _mm_mul_ps(factorX, shadowVis);
+            factorY = _mm_mul_ps(factorY, shadowVis);
+            factorZ = _mm_mul_ps(factorZ, shadowVis);
+        }
+
+        totalDirect.x = _mm_add_ps(totalDirect.x, _mm_and_ps(activeMask, factorX));
+        totalDirect.y = _mm_add_ps(totalDirect.y, _mm_and_ps(activeMask, factorY));
+        totalDirect.z = _mm_add_ps(totalDirect.z, _mm_and_ps(activeMask, factorZ));
+    }
+
+    if (!frame.pointLights.empty())
+    {
+        for (const auto &light : frame.pointLights)
+        {
+            const Lanes3 lightPos = Broadcast(light.position);
+            const Lanes3 lightColor = Broadcast(light.color);
+            const Lanes3 toLight{_mm_sub_ps(lightPos.x, position.x), _mm_sub_ps(lightPos.y, position.y),
+                                 _mm_sub_ps(lightPos.z, position.z)};
+            const __m128 distSq = Dot(toLight, toLight);
+            const __m128 dist = _mm_sqrt_ps(distSq);
+            const Lanes3 lightDir = Normalize(toLight);
+
+            const __m128 ratio = _mm_mul_ps(dist, _mm_set1_ps(light.invRange));
+            const __m128 ratioSq = _mm_mul_ps(ratio, ratio);
+            const __m128 window = _mm_max_ps(zero, _mm_sub_ps(one, _mm_mul_ps(ratioSq, ratioSq)));
+            const __m128 denom = _mm_add_ps(_mm_set1_ps(light.constant),
+                                            _mm_add_ps(_mm_mul_ps(_mm_set1_ps(light.linear), dist),
+                                                       _mm_mul_ps(_mm_set1_ps(light.quadratic), distSq)));
+            const __m128 atten = _mm_div_ps(_mm_mul_ps(window, window), _mm_max_ps(denom, _mm_set1_ps(1e-4f)));
+
+            const __m128 NdotL = _mm_max_ps(zero, Dot(normal, lightDir));
+            const __m128 activeMask = _mm_and_ps(_mm_cmpgt_ps(atten, zero), _mm_cmpgt_ps(NdotL, zero));
+            if (_mm_movemask_ps(activeMask) == 0)
+                continue;
+
+            const Lanes3 H = Normalize({_mm_add_ps(lightDir.x, viewDir.x),
+                                        _mm_add_ps(lightDir.y, viewDir.y),
+                                        _mm_add_ps(lightDir.z, viewDir.z)});
+            const __m128 NdotH = _mm_max_ps(zero, _mm_min_ps(one, Dot(normal, H)));
+            const __m128 VdotH = _mm_max_ps(zero, _mm_min_ps(one, Dot(viewDir, H)));
+
+            const __m128 D = GGX_D4(NdotH, alpha2);
+            const __m128 V = SmithGGX_V4(NdotL, NdotV, alpha2);
+            const Lanes3 F = Schlick_F4(VdotH, F0);
+
+            const __m128 piDV = _mm_mul_ps(pi, _mm_mul_ps(D, V));
+            const Lanes3 specular{_mm_mul_ps(F.x, piDV), _mm_mul_ps(F.y, piDV), _mm_mul_ps(F.z, piDV)};
+
+            const __m128 kD_scale = oneMinusM;
+            const Lanes3 diffuse{_mm_mul_ps(_mm_mul_ps(_mm_sub_ps(one, F.x), kD_scale), base.x),
+                                 _mm_mul_ps(_mm_mul_ps(_mm_sub_ps(one, F.y), kD_scale), base.y),
+                                 _mm_mul_ps(_mm_mul_ps(_mm_sub_ps(one, F.z), kD_scale), base.z)};
+
+            const __m128 lightScale = _mm_mul_ps(atten, NdotL);
+            const __m128 factorX = _mm_mul_ps(_mm_add_ps(diffuse.x, specular.x), _mm_mul_ps(lightColor.x, lightScale));
+            const __m128 factorY = _mm_mul_ps(_mm_add_ps(diffuse.y, specular.y), _mm_mul_ps(lightColor.y, lightScale));
+            const __m128 factorZ = _mm_mul_ps(_mm_add_ps(diffuse.z, specular.z), _mm_mul_ps(lightColor.z, lightScale));
+
+            totalDirect.x = _mm_add_ps(totalDirect.x, _mm_and_ps(activeMask, factorX));
+            totalDirect.y = _mm_add_ps(totalDirect.y, _mm_and_ps(activeMask, factorY));
+            totalDirect.z = _mm_add_ps(totalDirect.z, _mm_and_ps(activeMask, factorZ));
+        }
+    }
+
+    if (!frame.spotLights.empty())
+    {
+        for (const auto &light : frame.spotLights)
+        {
+            const Lanes3 lightPos = Broadcast(light.position);
+            const Lanes3 lightColor = Broadcast(light.color);
+            const Lanes3 spotDir = Broadcast(light.directionToLight);
+            const Lanes3 toLight{_mm_sub_ps(lightPos.x, position.x), _mm_sub_ps(lightPos.y, position.y),
+                                 _mm_sub_ps(lightPos.z, position.z)};
+            const __m128 distSq = Dot(toLight, toLight);
+            const __m128 dist = _mm_sqrt_ps(distSq);
+            const Lanes3 lightDir = Normalize(toLight);
+
+            const __m128 ratio = _mm_mul_ps(dist, _mm_set1_ps(light.invRange));
+            const __m128 ratioSq = _mm_mul_ps(ratio, ratio);
+            const __m128 window = _mm_max_ps(zero, _mm_sub_ps(one, _mm_mul_ps(ratioSq, ratioSq)));
+            const __m128 denom = _mm_add_ps(_mm_set1_ps(light.constant),
+                                            _mm_add_ps(_mm_mul_ps(_mm_set1_ps(light.linear), dist),
+                                                       _mm_mul_ps(_mm_set1_ps(light.quadratic), distSq)));
+            const __m128 distAtten = _mm_div_ps(_mm_mul_ps(window, window), _mm_max_ps(denom, _mm_set1_ps(1e-4f)));
+
+            const __m128 cosTheta = Dot(lightDir, spotDir);
+            const __m128 rawT = _mm_mul_ps(_mm_sub_ps(cosTheta, _mm_set1_ps(light.outerConeCos)),
+                                           _mm_set1_ps(light.invConeCosDiff));
+            const __m128 spotT = _mm_max_ps(zero, _mm_min_ps(one, rawT));
+            const __m128 spotFactor = _mm_mul_ps(_mm_mul_ps(spotT, spotT),
+                                                 _mm_sub_ps(_mm_set1_ps(3.0f), _mm_mul_ps(_mm_set1_ps(2.0f), spotT)));
+            const __m128 atten = _mm_mul_ps(distAtten, spotFactor);
+
+            const __m128 NdotL = _mm_max_ps(zero, Dot(normal, lightDir));
+            const __m128 activeMask = _mm_and_ps(_mm_cmpgt_ps(atten, zero), _mm_cmpgt_ps(NdotL, zero));
+            if (_mm_movemask_ps(activeMask) == 0)
+                continue;
+
+            const Lanes3 H = Normalize({_mm_add_ps(lightDir.x, viewDir.x),
+                                        _mm_add_ps(lightDir.y, viewDir.y),
+                                        _mm_add_ps(lightDir.z, viewDir.z)});
+            const __m128 NdotH = _mm_max_ps(zero, _mm_min_ps(one, Dot(normal, H)));
+            const __m128 VdotH = _mm_max_ps(zero, _mm_min_ps(one, Dot(viewDir, H)));
+
+            const __m128 D = GGX_D4(NdotH, alpha2);
+            const __m128 V = SmithGGX_V4(NdotL, NdotV, alpha2);
+            const Lanes3 F = Schlick_F4(VdotH, F0);
+
+            const __m128 piDV = _mm_mul_ps(pi, _mm_mul_ps(D, V));
+            const Lanes3 specular{_mm_mul_ps(F.x, piDV), _mm_mul_ps(F.y, piDV), _mm_mul_ps(F.z, piDV)};
+
+            const __m128 kD_scale = oneMinusM;
+            const Lanes3 diffuse{_mm_mul_ps(_mm_mul_ps(_mm_sub_ps(one, F.x), kD_scale), base.x),
+                                 _mm_mul_ps(_mm_mul_ps(_mm_sub_ps(one, F.y), kD_scale), base.y),
+                                 _mm_mul_ps(_mm_mul_ps(_mm_sub_ps(one, F.z), kD_scale), base.z)};
+
+            const __m128 lightScale = _mm_mul_ps(atten, NdotL);
+            __m128 factorX = _mm_mul_ps(_mm_add_ps(diffuse.x, specular.x), _mm_mul_ps(lightColor.x, lightScale));
+            __m128 factorY = _mm_mul_ps(_mm_add_ps(diffuse.y, specular.y), _mm_mul_ps(lightColor.y, lightScale));
+            __m128 factorZ = _mm_mul_ps(_mm_add_ps(diffuse.z, specular.z), _mm_mul_ps(lightColor.z, lightScale));
+
+            if (frame.shadowMap != nullptr && frame.shadowMap->lightType == ShadowMap::LightType::Spot)
+            {
+                alignas(16) float vis[4];
+                alignas(16) float px[4], py[4], pz[4], nx[4], ny[4], nz[4], lx[4], ly[4], lz[4];
+                _mm_store_ps(px, position.x); _mm_store_ps(py, position.y); _mm_store_ps(pz, position.z);
+                _mm_store_ps(nx, normal.x); _mm_store_ps(ny, normal.y); _mm_store_ps(nz, normal.z);
+                _mm_store_ps(lx, lightDir.x); _mm_store_ps(ly, lightDir.y); _mm_store_ps(lz, lightDir.z);
+                for (int i = 0; i < 4; ++i)
+                {
+                    vis[i] = frame.shadowMap->SampleVisibility({px[i], py[i], pz[i]}, {nx[i], ny[i], nz[i]}, {lx[i], ly[i], lz[i]});
+                }
+                const __m128 shadowVis = _mm_load_ps(vis);
+                factorX = _mm_mul_ps(factorX, shadowVis);
+                factorY = _mm_mul_ps(factorY, shadowVis);
+                factorZ = _mm_mul_ps(factorZ, shadowVis);
+            }
+
+            totalDirect.x = _mm_add_ps(totalDirect.x, _mm_and_ps(activeMask, factorX));
+            totalDirect.y = _mm_add_ps(totalDirect.y, _mm_and_ps(activeMask, factorY));
+            totalDirect.z = _mm_add_ps(totalDirect.z, _mm_and_ps(activeMask, factorZ));
+        }
+    }
+
+    const Lanes3 ambient{_mm_mul_ps(_mm_mul_ps(base.x, ambMat.x), occ),
+                         _mm_mul_ps(_mm_mul_ps(base.y, ambMat.y), occ),
+                         _mm_mul_ps(_mm_mul_ps(base.z, ambMat.z), occ)};
+
+    __m128 r0 = _mm_max_ps(zero, _mm_min_ps(one, _mm_add_ps(_mm_add_ps(ambient.x, totalDirect.x), em.x)));
+    __m128 r1 = _mm_max_ps(zero, _mm_min_ps(one, _mm_add_ps(_mm_add_ps(ambient.y, totalDirect.y), em.y)));
+    __m128 r2 = _mm_max_ps(zero, _mm_min_ps(one, _mm_add_ps(_mm_add_ps(ambient.z, totalDirect.z), em.z)));
+    __m128 r3 = zero;
+    _MM_TRANSPOSE4_PS(r0, r1, r2, r3);
+    colors[0].m128 = r0;
+    colors[1].m128 = r1;
+    colors[2].m128 = r2;
+    colors[3].m128 = r3;
+
+    if (frame.srgbGamma)
+    {
+        constexpr float invGamma = 1.0f / 2.2f;
+        for (int i = 0; i < 4; ++i)
+        {
+            colors[i].x = std::pow(colors[i].x, invGamma);
+            colors[i].y = std::pow(colors[i].y, invGamma);
+            colors[i].z = std::pow(colors[i].z, invGamma);
+        }
+    }
+}
+
 void ShadeLanes(const Lanes3 &normal, const Lanes3 &position, const float (&u)[4], const float (&v)[4],
                 const float (&lod)[4], const Material *const (&material)[4], const RenderFrameContext &frame,
                 SRMath::vec3 (&colors)[4])
 {
+    if (frame.pbr && (material[0]->isPbr || material[1]->isPbr || material[2]->isPbr || material[3]->isPbr))
+    {
+        ShadeLanesPBR(normal, position, u, v, lod, material, frame, colors);
+        return;
+    }
     // 재질 값은 lane마다 다를 수 있다. 같은 재질이면(대부분) 전치 대신 broadcast한다.
     const bool sameMaterial =
         material[0] == material[1] && material[0] == material[2] && material[0] == material[3];

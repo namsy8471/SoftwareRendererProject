@@ -71,6 +71,14 @@ std::expected<std::shared_ptr<::Texture>, AssetLoadError> decodeWithCodecs(std::
     material.shininess = std::clamp(2.f / std::max(roughness2 * roughness2, 1e-4f) - 2.f, 1.f, 256.f);
     material.opacity = base[3];
     material.normalScale = source.normalScale;
+
+    // PBR 원본 값 보존
+    material.isPbr = true;
+    material.baseColor = {base[0], base[1], base[2], base[3]};
+    material.metallic = source.metallicFactor;
+    material.roughness = std::max(0.04f, source.roughnessFactor);
+    material.emissive = {source.emissiveFactor[0], source.emissiveFactor[1], source.emissiveFactor[2]};
+    material.occlusionStrength = source.occlusionStrength;
     if (source.alphaMode == 1)
         material.alphaMode = AlphaMode::Mask;
     else if (source.alphaMode == 2)
@@ -394,6 +402,12 @@ class SceneBuilder
                     texCoordSet = matDoc.normalTexture.texCoord;
                 source.material.normalTexture = texture(matDoc.normalTexture.texture);
             }
+            if (matDoc.metallicRoughnessTexture.texture != none)
+                source.material.metallicRoughnessTexture = texture(matDoc.metallicRoughnessTexture.texture);
+            if (matDoc.occlusionTexture.texture != none)
+                source.material.occlusionTexture = texture(matDoc.occlusionTexture.texture);
+            if (matDoc.emissiveTexture.texture != none)
+                source.material.emissiveTexture = texture(matDoc.emissiveTexture.texture);
         }
         if (const int uvAccessor = primitive.FindAttribute("TEXCOORD_" + std::to_string(texCoordSet));
             uvAccessor != none)
@@ -406,12 +420,17 @@ class SceneBuilder
             for (std::size_t v = 0; v < vertexCount; ++v)
                 source.vertices[v].texcoord = {(*uvs)[v * 2], (*uvs)[v * 2 + 1]};
         }
-        else if (source.material.diffuseTexture || source.material.normalTexture)
+        else if (source.material.diffuseTexture || source.material.normalTexture ||
+                 source.material.metallicRoughnessTexture || source.material.occlusionTexture ||
+                 source.material.emissiveTexture)
         {
             m_warnings.push_back(context + ": texture without TEXCOORD_" + std::to_string(texCoordSet) +
                                  " ignored");
             source.material.diffuseTexture.reset();
             source.material.normalTexture.reset();
+            source.material.metallicRoughnessTexture.reset();
+            source.material.occlusionTexture.reset();
+            source.material.emissiveTexture.reset();
         }
 
         const int jointsAccessor = primitive.FindAttribute("JOINTS_0");

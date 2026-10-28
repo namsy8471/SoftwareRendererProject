@@ -683,6 +683,19 @@ Result<Material> parseMaterial(const Value &item, const std::string &context)
             return std::unexpected(scale.error());
         material.normalScale = *scale;
     }
+    auto occTexture = parseTextureRef(item, "occlusionTexture", context);
+    if (!occTexture)
+        return std::unexpected(occTexture.error());
+    material.occlusionTexture = *occTexture;
+    if (auto occInfo = optionalObject(item, "occlusionTexture", context); !occInfo)
+        return std::unexpected(occInfo.error());
+    else if (*occInfo)
+    {
+        auto strength = readFloat(**occInfo, "strength", context + ".occlusionTexture", 1.f);
+        if (!strength)
+            return std::unexpected(strength.error());
+        material.occlusionStrength = *strength;
+    }
     if (*pbr)
     {
         const std::string pbrContext = context + ".pbrMetallicRoughness";
@@ -690,6 +703,10 @@ Result<Material> parseMaterial(const Value &item, const std::string &context)
         auto baseTexture = parseTextureRef(**pbr, "baseColorTexture", pbrContext);
         auto metallic = readFloat(**pbr, "metallicFactor", pbrContext, 1.f);
         auto roughness = readFloat(**pbr, "roughnessFactor", pbrContext, 1.f);
+        auto mrTexture = parseTextureRef(**pbr, "metallicRoughnessTexture", pbrContext);
+        if (!mrTexture)
+            return std::unexpected(mrTexture.error());
+        material.metallicRoughnessTexture = *mrTexture;
         if (!baseColor)
             return std::unexpected(baseColor.error());
         if (!baseTexture)

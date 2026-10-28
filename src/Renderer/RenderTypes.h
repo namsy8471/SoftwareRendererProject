@@ -80,6 +80,7 @@ struct RenderFrameContext
     bool mipmapping = false;
     bool srgbGamma = false;
     const ShadowMap *shadowMap = nullptr;
+    bool pbr = false;
 };
 
 struct RenderOptions
@@ -94,6 +95,7 @@ struct RenderOptions
     bool mipmapping = false;
     bool srgbGamma = false;
     bool shadows = false;
+    bool pbr = false;
 };
 
 struct RenderStats

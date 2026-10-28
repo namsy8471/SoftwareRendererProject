@@ -110,6 +110,9 @@ struct Material
     float normalScale = 1.f;
     float metallicFactor = 1.f;
     float roughnessFactor = 1.f;
+    TextureRef metallicRoughnessTexture{};
+    TextureRef occlusionTexture{};
+    float occlusionStrength = 1.f;
     std::array<float, 3> emissiveFactor{0.f, 0.f, 0.f};
     TextureRef emissiveTexture{}; // 아직 샘플링하지 않는다. 있으면 emissiveFactor도 쓰지 않는다
     bool doubleSided = false;

@@ -36,6 +36,7 @@ options:
   --mipmap            enable mipmap LOD sampling
   --srgb              enable sRGB gamma correction
   --shadows           enable directional & spot light shadow mapping (2x2 PCF)
+  --pbr               enable physically based rendering (glTF metallic-roughness)
   --dda               DDA lines instead of Bresenham
   --stats             collect renderer counters and pass timings (slower)
   --threads N         limit sr::jobs parallelism (default: all cores)
@@ -148,6 +149,8 @@ Options parseArguments(int argc, char **argv)
             config.options.srgbGamma = true;
         else if (argument == "--shadows")
             config.options.shadows = true;
+        else if (argument == "--pbr")
+            config.options.pbr = true;
         else if (argument == "--dda")
             config.lineAlgorithm = ELineAlgorithm::DDA;
         else if (argument == "--stats")
