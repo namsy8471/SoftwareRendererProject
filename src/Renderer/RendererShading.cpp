@@ -1160,12 +1160,20 @@ void ShadeLanes(const Lanes3 &normal, const Lanes3 &position, const float (&u)[4
 
     if (frame.shadingModel == EShadingModel::Auto && frame.pbr && anyPbr != allPbr)
     {
+        alignas(16) float px[4], py[4], pz[4];
+        alignas(16) float nx[4], ny[4], nz[4];
+        _mm_store_ps(px, position.x);
+        _mm_store_ps(py, position.y);
+        _mm_store_ps(pz, position.z);
+        _mm_store_ps(nx, normal.x);
+        _mm_store_ps(ny, normal.y);
+        _mm_store_ps(nz, normal.z);
         for (int i = 0; i < 4; ++i)
         {
             Rasterizer::SurfaceSample s;
-            s.positionWorld = {position.x.m128_f32[i], position.y.m128_f32[i], position.z.m128_f32[i]};
-            s.normalWorld = {normal.x.m128_f32[i], normal.y.m128_f32[i], normal.z.m128_f32[i]};
-            s.texcoord = {u[i], v[i]};
+            s.positionWorld = SRMath::vec3(px[i], py[i], pz[i]);
+            s.normalWorld = SRMath::vec3(nx[i], ny[i], nz[i]);
+            s.texcoord = SRMath::vec2(u[i], v[i]);
             s.lod = lod[i];
             colors[i] = Rasterizer::ShadeSurface(s, *material[i], frame);
         }
