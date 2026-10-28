@@ -62,6 +62,7 @@
 | `ShaderVertices.h` | **ShadedVertex**(월드/클립 좌표·법선·UV), RasterizerVertex |
 | `DebugGizmos.h` · `DebugGizmos.cpp` | 광원 화살표, AABB 상자, 법선 선 디버그 primitive 생성 |
 | `FXAA.h` · `FXAA.cpp` | `sr::fxaa::Apply`: 휘도 패스 + 필터 패스 후처리(입출력 분리, stride 허용) |
+| `ShadowMap.h` · `ShadowMap.cpp` | **ShadowMap**: 그림자 깊이 맵(1024x1024) 래스터라이저 및 2x2 bilinear PCF 샘플링 |
 
 ## src/Graphics/ (자산: 메시·재질·텍스처·로더)
 

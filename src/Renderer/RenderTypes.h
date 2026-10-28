@@ -6,6 +6,7 @@
 struct DirectionalLight;
 struct PointLight;
 struct SpotLight;
+struct ShadowMap;
 
 enum class ELineAlgorithm
 {
@@ -78,6 +79,7 @@ struct RenderFrameContext
     bool bilinearFiltering = false;
     bool mipmapping = false;
     bool srgbGamma = false;
+    const ShadowMap *shadowMap = nullptr;
 };
 
 struct RenderOptions
@@ -91,6 +93,7 @@ struct RenderOptions
     bool bilinearFiltering = false;
     bool mipmapping = false;
     bool srgbGamma = false;
+    bool shadows = false;
 };
 
 struct RenderStats

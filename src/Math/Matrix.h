@@ -310,6 +310,23 @@ inline void multiply(mat4 &result, const mat4 &a, const mat4 &b) noexcept
     return result;
 }
 
+// ortho (Right-handed Coordinate System)
+[[nodiscard]] inline Matrix<4> ortho(float left, float right, float bottom, float top, float zNear,
+                                     float zFar) noexcept
+{
+    Matrix<4> result(0.0f);
+
+    result[0][0] = 2.0f / (right - left);
+    result[1][1] = 2.0f / (top - bottom);
+    result[2][2] = -2.0f / (zFar - zNear);
+    result[3][0] = -(right + left) / (right - left);
+    result[3][1] = -(top + bottom) / (top - bottom);
+    result[3][2] = -(zFar + zNear) / (zFar - zNear);
+    result[3][3] = 1.0f;
+
+    return result;
+}
+
 [[nodiscard]] inline mat4 lookAt(const vec3 &eye, const vec3 &center, const vec3 &up) noexcept
 {
     const vec3 f = normalize(center - eye);

@@ -14,6 +14,7 @@
 #include "Renderer/RenderTypes.h"
 #include "Renderer/RenderTarget.h"
 #include "Renderer/Rasterizer.h"
+#include "Renderer/ShadowMap.h"
 #include "Utils/FixedCapacityVector.h"
 #include "Utils/Jobs.h"
 #include "Platform/Compiler.h"
@@ -68,6 +69,7 @@ class Renderer
     std::vector<PreparedDirectionalLight> m_preparedLights;
     std::vector<PreparedPointLight> m_preparedPointLights;
     std::vector<PreparedSpotLight> m_preparedSpotLights;
+    std::unique_ptr<ShadowMap> m_shadowMap;
 
     static constexpr std::size_t debugLineChunkSize = 256;
     struct DebugLineCommand

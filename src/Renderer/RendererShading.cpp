@@ -6,6 +6,7 @@
 #include "Platform/Compiler.h"
 #include "Renderer/RenderCommand.h"
 #include "Renderer/Tile.h"
+#include "Renderer/ShadowMap.h"
 #include <algorithm>
 #include <cmath>
 #include <smmintrin.h>
@@ -240,8 +241,6 @@ SRMath::vec3 Rasterizer::ShadeSurface(const SurfaceSample &surface, const Materi
         diffuseTerm *= diffuseIntensity;
         diffuseTerm *= light.color;
 
-        totalDiffuseColor += diffuseTerm;
-
         // 정반사 조명 계산
         const SRMath::vec3 reflectDirection = SRMath::reflect(-1.0f * lightDir, surfaceNormal);
         // 반사광이 시선 반대쪽이면 밑이 +0이다. 지수는 max(1, shininess)로 1 이상(또는 +inf)이므로
@@ -255,6 +254,15 @@ SRMath::vec3 Rasterizer::ShadeSurface(const SurfaceSample &surface, const Materi
         specularTerm *= specularFactor;
         specularTerm *= light.color;
 
+        if (frame.shadowMap != nullptr && frame.shadowMap->lightType == ShadowMap::LightType::Directional)
+        {
+            const float shadowVis =
+                frame.shadowMap->SampleVisibility(surface.positionWorld, surfaceNormal, lightDir);
+            diffuseTerm *= shadowVis;
+            specularTerm *= shadowVis;
+        }
+
+        totalDiffuseColor += diffuseTerm;
         totalSpecularColor += specularTerm;
     }
 
@@ -330,6 +338,15 @@ SRMath::vec3 Rasterizer::ShadeSurface(const SurfaceSample &surface, const Materi
             SRMath::vec3 specularTerm = material.specular;
             specularTerm *= specularFactor;
             specularTerm *= attenuatedColor;
+
+            if (frame.shadowMap != nullptr && frame.shadowMap->lightType == ShadowMap::LightType::Spot)
+            {
+                const float shadowVis =
+                    frame.shadowMap->SampleVisibility(surface.positionWorld, surfaceNormal, lightDir);
+                diffuseTerm *= shadowVis;
+                specularTerm *= shadowVis;
+            }
+
             totalSpecularColor += specularTerm;
         }
     }
@@ -354,12 +371,6 @@ SRMath::vec3 Rasterizer::ShadeSurface(const SurfaceSample &surface, const Materi
 
 namespace
 {
-// SoA 한 성분 묶음. x, y, z의 lane i가 픽셀 i다.
-struct Lanes3
-{
-    __m128 x, y, z;
-};
-
 Lanes3 Transpose(const SRMath::vec3 &a, const SRMath::vec3 &b, const SRMath::vec3 &c, const SRMath::vec3 &d)
 {
     __m128 r0 = a.m128, r1 = b.m128, r2 = c.m128, r3 = d.m128;
@@ -436,12 +447,9 @@ void ShadeLanes(const Lanes3 &normal, const Lanes3 &position, const float (&u)[4
 
         // std::max(0.0f, d)는 d > 0이 아니면(NaN 포함) +0이다. _mm_max_ps(d, 0)과 같다.
         const __m128 diffuseIntensity = _mm_max_ps(Dot(normal, lightDir), zero);
-        totalDiffuse.x =
-            _mm_add_ps(totalDiffuse.x, _mm_mul_ps(_mm_mul_ps(base.x, diffuseIntensity), lightColor.x));
-        totalDiffuse.y =
-            _mm_add_ps(totalDiffuse.y, _mm_mul_ps(_mm_mul_ps(base.y, diffuseIntensity), lightColor.y));
-        totalDiffuse.z =
-            _mm_add_ps(totalDiffuse.z, _mm_mul_ps(_mm_mul_ps(base.z, diffuseIntensity), lightColor.z));
+        __m128 diffX = _mm_mul_ps(_mm_mul_ps(base.x, diffuseIntensity), lightColor.x);
+        __m128 diffY = _mm_mul_ps(_mm_mul_ps(base.y, diffuseIntensity), lightColor.y);
+        __m128 diffZ = _mm_mul_ps(_mm_mul_ps(base.z, diffuseIntensity), lightColor.z);
 
         // reflect(-1 * lightDir, normal) = incident - normal * (2 * dot(normal, incident))
         const Lanes3 incident = Broadcast(-1.0f * light.directionToLight);
@@ -463,12 +471,27 @@ void ShadeLanes(const Lanes3 &normal, const Lanes3 &position, const float (&u)[4
                     specularFactor[i] = std::pow(baseLane[i], exponent[i]);
         }
         const __m128 factor = _mm_load_ps(specularFactor);
-        totalSpecular.x =
-            _mm_add_ps(totalSpecular.x, _mm_mul_ps(_mm_mul_ps(specular.x, factor), lightColor.x));
-        totalSpecular.y =
-            _mm_add_ps(totalSpecular.y, _mm_mul_ps(_mm_mul_ps(specular.y, factor), lightColor.y));
-        totalSpecular.z =
-            _mm_add_ps(totalSpecular.z, _mm_mul_ps(_mm_mul_ps(specular.z, factor), lightColor.z));
+        __m128 specX = _mm_mul_ps(_mm_mul_ps(specular.x, factor), lightColor.x);
+        __m128 specY = _mm_mul_ps(_mm_mul_ps(specular.y, factor), lightColor.y);
+        __m128 specZ = _mm_mul_ps(_mm_mul_ps(specular.z, factor), lightColor.z);
+
+        if (frame.shadowMap != nullptr && frame.shadowMap->lightType == ShadowMap::LightType::Directional)
+        {
+            const __m128 shadowVis = frame.shadowMap->SampleVisibility4(normal, position, lightDir);
+            diffX = _mm_mul_ps(diffX, shadowVis);
+            diffY = _mm_mul_ps(diffY, shadowVis);
+            diffZ = _mm_mul_ps(diffZ, shadowVis);
+            specX = _mm_mul_ps(specX, shadowVis);
+            specY = _mm_mul_ps(specY, shadowVis);
+            specZ = _mm_mul_ps(specZ, shadowVis);
+        }
+
+        totalDiffuse.x = _mm_add_ps(totalDiffuse.x, diffX);
+        totalDiffuse.y = _mm_add_ps(totalDiffuse.y, diffY);
+        totalDiffuse.z = _mm_add_ps(totalDiffuse.z, diffZ);
+        totalSpecular.x = _mm_add_ps(totalSpecular.x, specX);
+        totalSpecular.y = _mm_add_ps(totalSpecular.y, specY);
+        totalSpecular.z = _mm_add_ps(totalSpecular.z, specZ);
     }
 
     if (!frame.pointLights.empty())
@@ -494,12 +517,9 @@ void ShadeLanes(const Lanes3 &normal, const Lanes3 &position, const float (&u)[4
                                          _mm_mul_ps(lightColor.z, atten)};
 
             const __m128 diffuseIntensity = _mm_max_ps(Dot(normal, lightDir), zero);
-            totalDiffuse.x =
-                _mm_add_ps(totalDiffuse.x, _mm_mul_ps(_mm_mul_ps(base.x, diffuseIntensity), attenuatedColor.x));
-            totalDiffuse.y =
-                _mm_add_ps(totalDiffuse.y, _mm_mul_ps(_mm_mul_ps(base.y, diffuseIntensity), attenuatedColor.y));
-            totalDiffuse.z =
-                _mm_add_ps(totalDiffuse.z, _mm_mul_ps(_mm_mul_ps(base.z, diffuseIntensity), attenuatedColor.z));
+            __m128 diffX = _mm_mul_ps(_mm_mul_ps(base.x, diffuseIntensity), attenuatedColor.x);
+            __m128 diffY = _mm_mul_ps(_mm_mul_ps(base.y, diffuseIntensity), attenuatedColor.y);
+            __m128 diffZ = _mm_mul_ps(_mm_mul_ps(base.z, diffuseIntensity), attenuatedColor.z);
 
             const Lanes3 incident{_mm_mul_ps(_mm_set1_ps(-1.0f), lightDir.x),
                                   _mm_mul_ps(_mm_set1_ps(-1.0f), lightDir.y),
@@ -521,12 +541,27 @@ void ShadeLanes(const Lanes3 &normal, const Lanes3 &position, const float (&u)[4
                         specularFactor[i] = std::pow(baseLane[i], exponent[i]);
             }
             const __m128 factor = _mm_load_ps(specularFactor);
-            totalSpecular.x = _mm_add_ps(totalSpecular.x,
-                                         _mm_mul_ps(_mm_mul_ps(specular.x, factor), attenuatedColor.x));
-            totalSpecular.y = _mm_add_ps(totalSpecular.y,
-                                         _mm_mul_ps(_mm_mul_ps(specular.y, factor), attenuatedColor.y));
-            totalSpecular.z = _mm_add_ps(totalSpecular.z,
-                                         _mm_mul_ps(_mm_mul_ps(specular.z, factor), attenuatedColor.z));
+            __m128 specX = _mm_mul_ps(_mm_mul_ps(specular.x, factor), attenuatedColor.x);
+            __m128 specY = _mm_mul_ps(_mm_mul_ps(specular.y, factor), attenuatedColor.y);
+            __m128 specZ = _mm_mul_ps(_mm_mul_ps(specular.z, factor), attenuatedColor.z);
+
+            if (frame.shadowMap != nullptr && frame.shadowMap->lightType == ShadowMap::LightType::Spot)
+            {
+                const __m128 shadowVis = frame.shadowMap->SampleVisibility4(normal, position, lightDir);
+                diffX = _mm_mul_ps(diffX, shadowVis);
+                diffY = _mm_mul_ps(diffY, shadowVis);
+                diffZ = _mm_mul_ps(diffZ, shadowVis);
+                specX = _mm_mul_ps(specX, shadowVis);
+                specY = _mm_mul_ps(specY, shadowVis);
+                specZ = _mm_mul_ps(specZ, shadowVis);
+            }
+
+            totalDiffuse.x = _mm_add_ps(totalDiffuse.x, diffX);
+            totalDiffuse.y = _mm_add_ps(totalDiffuse.y, diffY);
+            totalDiffuse.z = _mm_add_ps(totalDiffuse.z, diffZ);
+            totalSpecular.x = _mm_add_ps(totalSpecular.x, specX);
+            totalSpecular.y = _mm_add_ps(totalSpecular.y, specY);
+            totalSpecular.z = _mm_add_ps(totalSpecular.z, specZ);
         }
     }
 
