@@ -85,7 +85,7 @@ void base64Tests()
 // glTF sampler의 wrapS/wrapT. 기본(가장자리 고정)은 기존 OBJ 텍스처 동작 그대로다.
 void textureWrapTests()
 {
-    // 가로 3텍셀(빨강, 초록, 파랑). 최근접 샘플은 x = floor(u' * 2)라 u' 0~0.5 빨강, 0.5~1 초록, 1 파랑이다.
+    // 가로 3텍셀(빨강, 초록, 파랑). 최근접 샘플은 x = floor(u' * 3)이라 u' [0, 1/3) 빨강, [1/3, 2/3) 초록, [2/3, 1] 파랑이다.
     Texture texture(3, 1, {255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255});
     const auto texel = [&](float u)
     {
@@ -94,9 +94,9 @@ void textureWrapTests()
     };
     check(texel(3.25f) == 'b' && texel(-2.f) == 'r', "clamp to edge by default");
     texture.SetWrap(TextureWrap::Repeat, TextureWrap::Repeat);
-    check(texel(3.25f) == 'r' && texel(3.75f) == 'g' && texel(-0.25f) == 'g', "repeat");
+    check(texel(3.25f) == 'r' && texel(3.5f) == 'g' && texel(-0.5f) == 'g' && texel(3.75f) == 'b', "repeat");
     texture.SetWrap(TextureWrap::MirroredRepeat, TextureWrap::ClampToEdge);
-    check(texel(1.25f) == 'g' && texel(1.75f) == 'r' && texel(-0.25f) == 'r' && texel(1.f) == 'b',
+    check(texel(1.5f) == 'g' && texel(1.75f) == 'r' && texel(-0.25f) == 'r' && texel(1.f) == 'b',
           "mirrored repeat");
 }
 
