@@ -30,4 +30,15 @@ struct Material
     std::shared_ptr<Texture> normalTexture{};
     float normalScale = 1.0f;
     int illuminationModel = 2; // MTL illum 2: Phong 반사 모델
+
+    // PBR (glTF 2.0 Metallic-Roughness)
+    bool isPbr = false;
+    SRMath::vec4 baseColor = {1.0f, 1.0f, 1.0f, 1.0f}; // RGBA (선형 색상 + 알파)
+    float metallic = 1.0f;                             // [0, 1]
+    float roughness = 1.0f;                            // [0.04, 1]
+    SRMath::vec3 emissive = {0.0f, 0.0f, 0.0f};        // 방출 색상
+    std::shared_ptr<Texture> metallicRoughnessTexture{}; // G = roughness, B = metallic
+    std::shared_ptr<Texture> occlusionTexture{};         // R = occlusion
+    float occlusionStrength = 1.0f;
+    std::shared_ptr<Texture> emissiveTexture{};
 };
