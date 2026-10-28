@@ -6,10 +6,45 @@
 #include <algorithm>
 #include <cmath>
 #include <bit>
+#include <atomic>
+#if defined(_MSC_VER)
 #include <intrin.h>
+#endif
 
 namespace
 {
+inline void atomicMinDepth(float *depthAddress, float d) noexcept
+{
+    const uint32_t dBits = std::bit_cast<uint32_t>(d);
+#if defined(_MSC_VER)
+    volatile long *target = reinterpret_cast<volatile long*>(depthAddress);
+    long cur = *target;
+    while (static_cast<long>(dBits) < cur)
+    {
+        const long prev = _InterlockedCompareExchange(target, static_cast<long>(dBits), cur);
+        if (prev == cur)
+            break;
+        cur = prev;
+    }
+#elif defined(__cpp_lib_atomic_ref)
+    std::atomic_ref<uint32_t> target(*reinterpret_cast<uint32_t*>(depthAddress));
+    uint32_t cur = target.load(std::memory_order_relaxed);
+    while (dBits < cur)
+    {
+        if (target.compare_exchange_weak(cur, dBits, std::memory_order_relaxed, std::memory_order_relaxed))
+            break;
+    }
+#else
+    uint32_t *target = reinterpret_cast<uint32_t*>(depthAddress);
+    uint32_t cur = __atomic_load_n(target, __ATOMIC_RELAXED);
+    while (dBits < cur)
+    {
+        if (__atomic_compare_exchange_n(target, &cur, dBits, true, __ATOMIC_RELAXED, __ATOMIC_RELAXED))
+            break;
+    }
+#endif
+}
+
 struct ClipPoly
 {
     SRMath::vec4 v[16];
@@ -184,16 +219,7 @@ void ShadowMap::Render(const RenderQueue &queue, const SRMath::mat4 &lightVP)
                         if (w0 >= 0.0f && w1 >= 0.0f && w2 >= 0.0f)
                         {
                             const float clampedD = std::clamp(d, 0.0f, 1.0f);
-                            const long dBits = static_cast<long>(std::bit_cast<uint32_t>(clampedD));
-                            volatile long *targetPixel = reinterpret_cast<volatile long*>(rowPtr);
-                            long cur = *targetPixel;
-                            while (dBits < cur)
-                            {
-                                const long prev = _InterlockedCompareExchange(targetPixel, dBits, cur);
-                                if (prev == cur)
-                                    break;
-                                cur = prev;
-                            }
+                            atomicMinDepth(rowPtr, clampedD);
                         }
 
                         w0 -= dy12;
