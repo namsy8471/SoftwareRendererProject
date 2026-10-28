@@ -89,6 +89,15 @@
     </ClCompile>
     <ClInclude Include="src\Renderer\RendererShadingAVX2.h" />
   </ItemGroup>
+  <!-- UV 공간 텍스처 및 AO 베이커 엔진, 딜레이션 필터 -->
+  <ItemGroup>
+    <ClCompile Include="src\Renderer\Baker\UVSpaceRasterizer.cpp" />
+    <ClCompile Include="src\Renderer\Baker\DilationFilter.cpp" />
+    <ClCompile Include="src\Renderer\Baker\Baker.cpp" />
+    <ClInclude Include="src\Renderer\Baker\UVSpaceRasterizer.h" />
+    <ClInclude Include="src\Renderer\Baker\DilationFilter.h" />
+    <ClInclude Include="src\Renderer\Baker\Baker.h" />
+  </ItemGroup>
   <!-- 창과 무관한 데모 장면, 프레임 순서(FrameRunner), 가시성 수집, headless 실행, PNG 입출력. CMake는 src/ 아래 .cpp를 자동으로 모은다. -->
   <ItemGroup>
     <ClCompile Include="src\Core\DemoScene.cpp" />

@@ -65,6 +65,14 @@
 | `FXAA.h` · `FXAA.cpp` | `sr::fxaa::Apply`: 휘도 패스 + 필터 패스 후처리(입출력 분리, stride 허용) |
 | `ShadowMap.h` · `ShadowMap.cpp` | **ShadowMap**: 그림자 깊이 맵(1024x1024) 래스터라이저 및 2x2 bilinear PCF 샘플링 |
 
+## src/Renderer/Baker/ (UV 공간 텍스처 및 베이킹 엔진)
+
+| 파일 | 역할 |
+| --- | --- |
+| `UVSpaceRasterizer.h` · `UVSpaceRasterizer.cpp` | **UVSpaceRasterizer**: 저폴리곤 메시를 UV 공간 [0, 1]²에 직접 래스터라이즈하여 위치·법선·탄젠트·종법선 보간 및 **UVBuffer** 생성 |
+| `DilationFilter.h` · `DilationFilter.cpp` | **DilationFilter**: 유효 UV 아일랜드 경계 텍셀을 빈 배경으로 확장(4~8픽셀 블리드)하여 밉맵 이음새 방지 |
+| `Baker.h` · `Baker.cpp` | **Baker**: 탄젠트 공간 노멀 맵 베이커(양방향 케이지 광선 투사) 및 앰비언트 오클루전(AO) 베이커(코사인 가중 반구 샘플링) |
+
 ## src/Graphics/ (자산: 메시·재질·텍스처·로더)
 
 | 파일 | 역할 |
@@ -182,9 +190,10 @@
 | `VisibilityTests.cpp` | `visibility.*`: 깊이·Hi-Z, 숨은선, 결정성, 병렬 디버그 제출 |
 | `GoldenTests.cpp` | `golden.*`: 데모 장면을 작게 렌더해 `tests/golden/*.png`와 비교(허용 오차는 파일 상단) |
 | `Win32AppTests.cpp` | `win32app.*`: 입력·메뉴·애니메이션/프로젝트/편집 메뉴. MSBuild 테스트 빌드에서만 |
+| `BakerTests.cpp` | `baker.*`: UV 공간 래스터라이저, 딜레이션 필터, 평면/기울어진 노멀 베이킹, 평면/모퉁이 AO 베이킹 |
 
 ## tools/
 
 | 파일 | 역할 |
 | --- | --- |
-| `srcli/SrCli.cpp` | `srcli bench`(프레임 시간, `--json`), `srcli render --out`(PNG). HeadlessRunner 위의 얇은 CLI |
+| `srcli/SrCli.cpp` | `srcli bench`(프레임 시간, `--json`), `srcli render --out`(PNG), `srcli bake`(노멀/AO 맵 베이킹). HeadlessRunner 및 Baker 위의 얇은 CLI |
