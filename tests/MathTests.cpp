@@ -7,6 +7,7 @@
 #include <bit>
 #include <iostream>
 #include <random>
+#include <type_traits>
 
 #include "TestHarness.h"
 #include "TestSupport.h"
@@ -263,11 +264,71 @@ void vectorEqualityTests()
     check(SRMath::vec4(1.f, 2.f, 3.f, 4.f) != SRMath::vec4(1.f, 2.f, 3.f, 5.f), "vec4 compares w");
     check(SRMath::vec3(std::nanf(""), 0.f, 0.f) != SRMath::vec3(std::nanf(""), 0.f, 0.f), "NaN is never equal");
 }
+
+void vectorTrivialCopyTests()
+{
+    static_assert(std::is_trivially_copyable_v<SRMath::vec2> &&
+                  std::is_trivially_copyable_v<SRMath::vec3> &&
+                  std::is_trivially_copyable_v<SRMath::vec4>,
+                  "Vector types must be trivially copyable");
+
+    check(std::is_trivially_copyable_v<SRMath::vec2>, "vec2 is trivially copyable");
+    check(std::is_trivially_copyable_v<SRMath::vec3>, "vec3 is trivially copyable");
+    check(std::is_trivially_copyable_v<SRMath::vec4>, "vec4 is trivially copyable");
+
+    // vec3 copy construction and assignment preserve components
+    const SRMath::vec3 src3{1.25f, -2.5f, 3.75f};
+    SRMath::vec3 copyConstructed3 = src3;
+    check(copyConstructed3 == src3, "vec3 copy construction preserves value");
+    check(copyConstructed3.x == 1.25f && copyConstructed3.y == -2.5f && copyConstructed3.z == 3.75f,
+          "vec3 copy construction preserves exact scalar lanes");
+
+    SRMath::vec3 copyAssigned3{0.f, 0.f, 0.f};
+    copyAssigned3 = src3;
+    check(copyAssigned3 == src3, "vec3 copy assignment preserves value");
+
+    // Vector<3> from Vector<4> via _mm_insert_ps zeroes lane 3 (w)
+    const SRMath::vec4 src4{10.f, 20.f, 30.f, 40.f};
+    const SRMath::vec3 from4(src4);
+    check(from4.x == 10.f && from4.y == 20.f && from4.z == 30.f, "vec3 from vec4 extracts x, y, z");
+    check(from4.data[3] == 0.0f, "vec3 from vec4 zeroes the fourth lane");
+    check(std::bit_cast<std::uint32_t>(from4.data[3]) == 0u, "vec3 fourth lane is exact +0.0f bits");
+
+    // Vector<4> from Vector<3> sets lane 3 (w) to 1.0f
+    const SRMath::vec4 from3DefaultW(src3);
+    check(from3DefaultW.x == src3.x && from3DefaultW.y == src3.y && from3DefaultW.z == src3.z,
+          "vec4 from vec3 preserves x, y, z");
+    check(from3DefaultW.w == 1.0f, "vec4 from vec3 sets w to 1.0f");
+
+    // Vector<4> from Vector<3> with explicit w
+    const SRMath::vec4 from3CustomW(src3, 42.5f);
+    check(from3CustomW.x == src3.x && from3CustomW.y == src3.y && from3CustomW.z == src3.z,
+          "vec4 from vec3 with w preserves x, y, z");
+    check(from3CustomW.w == 42.5f, "vec4 from vec3 with w sets custom w");
+
+    // Bit-exact preservation across special float values
+    const std::uint32_t nanBits = 0x7FC01234u;
+    const float nanVal = std::bit_cast<float>(nanBits);
+    const SRMath::vec3 specialVec3{nanVal, -0.0f, std::numeric_limits<float>::infinity()};
+    const SRMath::vec4 specialVec4(specialVec3, -5.0f);
+    check(std::bit_cast<std::uint32_t>(specialVec4.x) == nanBits, "vec4 preserves x bit pattern");
+    check(std::bit_cast<std::uint32_t>(specialVec4.y) == std::bit_cast<std::uint32_t>(-0.0f), "vec4 preserves -0.0f");
+    check(specialVec4.z == std::numeric_limits<float>::infinity(), "vec4 preserves infinity");
+    check(specialVec4.w == -5.0f, "vec4 custom w preserved with special float inputs");
+
+    const SRMath::vec3 roundtripVec3(specialVec4);
+    check(std::bit_cast<std::uint32_t>(roundtripVec3.x) == nanBits, "vec3 from vec4 preserves x bit pattern");
+    check(std::bit_cast<std::uint32_t>(roundtripVec3.y) == std::bit_cast<std::uint32_t>(-0.0f), "vec3 preserves -0.0f");
+    check(roundtripVec3.z == std::numeric_limits<float>::infinity(), "vec3 preserves infinity");
+    check(std::bit_cast<std::uint32_t>(roundtripVec3.data[3]) == 0u, "vec3 from special vec4 zeroes lane 3");
+}
+
 } // namespace
 
 void sr::test::RegisterMathTests(TestRegistry &registry)
 {
     registry.Add("math.core", mathTests);
     registry.Add("math.vectorEquality", vectorEqualityTests);
+    registry.Add("math.vectorTrivialCopy", vectorTrivialCopyTests);
     registry.Add("math.frustumSelection", frustumSelectionTests);
 }

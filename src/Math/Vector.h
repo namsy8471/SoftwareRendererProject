@@ -144,7 +144,7 @@ template <> struct alignas(16) Vector<3>
     Vector(float x, float y, float z) noexcept : m128(_mm_set_ps(0.0f, z, y, x)) {}
     explicit Vector(const SRMath::Vector<2> &v) noexcept : m128(_mm_set_ps(0.0f, 0.0f, v.y, v.x)) {}
     Vector(const SRMath::Vector<2> &v, float z) noexcept : m128(_mm_set_ps(0.0f, z, v.y, v.x)) {}
-    Vector(const SRMath::Vector<3> &v) noexcept : m128(_mm_set_ps(0.0f, v.z, v.y, v.x)) {}
+    Vector(const SRMath::Vector<3> &) noexcept = default;
     explicit Vector(const SRMath::Vector<4> &v) noexcept;
 
     float &operator[](std::size_t index) noexcept { return data[index]; }
@@ -233,8 +233,8 @@ template <> struct alignas(16) Vector<4>
     Vector(float x, float y, float z, float w) noexcept : m128(_mm_set_ps(w, z, y, x)) {}
     Vector(const SRMath::Vector<2> &v, float w) noexcept : m128(_mm_set_ps(w, 0.f, v.y, v.x)) {}
     explicit Vector(const SRMath::Vector<2> &v) noexcept : m128(_mm_set_ps(1.0f, 0.f, v.y, v.x)) {}
-    Vector(const SRMath::Vector<3> &v, float w) noexcept : m128(_mm_set_ps(w, v.z, v.y, v.x)) {}
-    explicit Vector(const SRMath::Vector<3> &v) noexcept : m128(_mm_set_ps(1.0f, v.z, v.y, v.x)) {}
+    Vector(const SRMath::Vector<3> &v, float w) noexcept : m128(_mm_insert_ps(v.m128, _mm_set_ss(w), 0x30)) {}
+    explicit Vector(const SRMath::Vector<3> &v) noexcept : m128(_mm_insert_ps(v.m128, _mm_set_ss(1.0f), 0x30)) {}
 
     float &operator[](std::size_t index) noexcept { return data[index]; }
     const float &operator[](std::size_t index) const noexcept { return data[index]; }
@@ -296,12 +296,16 @@ template <> struct alignas(16) Vector<4>
 };
 
 inline Vector<3>::Vector(const Vector<4> &v) noexcept
-    : m128(_mm_set_ps(0.0f, v.z, v.y, v.x)) // w는 0으로 설정
+    : m128(_mm_insert_ps(v.m128, v.m128, 0x08)) // w(lane 3)는 0으로 설정
 {
 }
 #ifdef _MSC_VER
 #pragma warning(pop)
 #endif
+static_assert(std::is_trivially_copyable_v<vec2> && std::is_trivially_copyable_v<vec3> &&
+                  std::is_trivially_copyable_v<vec4>,
+              "SRMath vector types must be trivially copyable for SIMD register passing and fast copies");
+
 // inline operator overloading function
 template <std::size_t N>
     requires SupportedVectorDimension<N>
