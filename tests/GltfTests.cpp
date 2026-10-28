@@ -558,6 +558,8 @@ void alphaMaterialTests()
     check(!loaded->nodes.empty() && loaded->nodes[0].object != nullptr, "node binding valid");
     const auto *model = loaded->nodes[0].object->GetModel();
     check(model != nullptr, "node has model");
+    if (!model)
+        return;
     const auto meshes = model->GetMeshes();
     check(meshes.size() == 3, "model has 3 primitive meshes");
 

@@ -10,6 +10,7 @@
 struct DebugPrimitiveCommand;
 struct DebugVertex;
 struct Material;
+class Texture;
 
 // 16x16 타일 하나의 색/깊이/ID 작업 버퍼(4KB). L1에 머무르며 worker마다 하나를 재사용한다.
 // Rasterizer 안에 두면 스택에 Rasterizer를 두는 함수가 16KB를 넘어 /analyze C6262에 걸린다.
