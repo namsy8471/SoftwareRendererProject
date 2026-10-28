@@ -72,7 +72,7 @@ if(MSVC)
 else()
   set_source_files_properties("${CMAKE_SOURCE_DIR}/src/Math/SIMD_AVX.cpp"
                               "${CMAKE_SOURCE_DIR}/src/Animation/SkinningAVX.cpp" PROPERTIES COMPILE_OPTIONS "-mavx")
-  set_source_files_properties("${CMAKE_SOURCE_DIR}/src/Renderer/RendererShadingAVX2.cpp" PROPERTIES COMPILE_OPTIONS "-mavx2 -mfma")
+  set_source_files_properties("${CMAKE_SOURCE_DIR}/src/Renderer/RendererShadingAVX2.cpp" PROPERTIES COMPILE_OPTIONS "-mavx2" "-mfma")
 endif()
 
 # --- srcli: headless 벤치마크·PNG 덤프 ---
