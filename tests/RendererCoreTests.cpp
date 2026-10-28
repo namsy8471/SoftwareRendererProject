@@ -1137,6 +1137,220 @@ void primitiveIdPlaneOptional(const TestContext &context)
                       "filled pixel count without id plane matches the id count");
             }
 }
+
+void textureBilinearAndMipmap()
+{
+    // 4x4 사분면 텍스처: 좌상 Red, 우상 Green, 좌하 Blue, 우하 White
+    std::vector<unsigned char> rgba(4 * 4 * 4, 255);
+    for (int y = 0; y < 4; ++y)
+        for (int x = 0; x < 4; ++x)
+        {
+            const std::size_t idx = static_cast<std::size_t>(y * 4 + x) * 4;
+            const bool right = x >= 2;
+            const bool bottom = y >= 2;
+            rgba[idx + 0] = (!right && !bottom) || (right && bottom) ? 255 : 0;
+            rgba[idx + 1] = (right && !bottom) || (right && bottom) ? 255 : 0;
+            rgba[idx + 2] = (!right && bottom) || (right && bottom) ? 255 : 0;
+            rgba[idx + 3] = 255;
+        }
+    auto tex = std::make_shared<Texture>(4, 4, rgba);
+    check(!tex->HasMipmaps() && tex->GetMipCount() == 1, "initial texture has 1 mip level");
+
+    const SRMath::vec3 nearestCenter = tex->Sample(0.5f, 0.5f);
+    const SRMath::vec3 bilinearCenter = tex->SampleBilinear(0.5f, 0.5f, 0);
+    // (0.5, 0.5)는 네 사분면 경계(fx=1.5, fy=1.5)이므로 bilinear는 정확히 (0.5, 0.5, 0.5)다.
+    check(approximatelyEqual(bilinearCenter.x, 0.5f) && approximatelyEqual(bilinearCenter.y, 0.5f) &&
+              approximatelyEqual(bilinearCenter.z, 0.5f),
+          "bilinear center averages four quadrant texels");
+    check(!approximatelyEqual(nearestCenter.x, bilinearCenter.x), "nearest differs from bilinear at boundary");
+
+    tex->GenerateMipmaps();
+    check(tex->HasMipmaps() && tex->GetMipCount() == 3, "4x4 mipmap chain has 3 levels (4x4, 2x2, 1x1)");
+    check(tex->GetMipWidth(1) == 2 && tex->GetMipHeight(1) == 2 && tex->GetMipWidth(2) == 1 &&
+              tex->GetMipHeight(2) == 1,
+          "mip dimensions halve down to 1x1");
+    const SRMath::vec3 topMip = tex->SampleNearest(0.5f, 0.5f, 2);
+    check( std::abs(topMip.x - 128.f / 255.f) < 1e-4f && std::abs(topMip.y - 128.f / 255.f) < 1e-4f &&
+               std::abs(topMip.z - 128.f / 255.f) < 1e-4f,
+           "1x1 mip level is the box-filtered average of all 4 quadrants");
+
+    tex->SetFilter(TextureFilter::Trilinear);
+    const SRMath::vec3 trilinear = tex->Sample(0.125f, 0.125f, 1.5f);
+    const SRMath::vec3 mip1 = tex->SampleBilinear(0.125f, 0.125f, 1);
+    const SRMath::vec3 mip2 = tex->SampleBilinear(0.125f, 0.125f, 2);
+    check(approximatelyEqual(trilinear.x, (mip1.x + mip2.x) * 0.5f) &&
+              approximatelyEqual(trilinear.y, (mip1.y + mip2.y) * 0.5f) &&
+              approximatelyEqual(trilinear.z, (mip1.z + mip2.z) * 0.5f),
+          "trilinear interpolates between adjacent mip levels");
+    tex->SetFilter(TextureFilter::Nearest);
+
+    Material mat;
+    mat.ambient = {0.f, 0.f, 0.f};
+    mat.diffuse = {1.f, 1.f, 1.f};
+    mat.specular = {0.f, 0.f, 0.f};
+    mat.diffuseTexture = tex;
+    const std::array<DirectionalLight, 1> lights{DirectionalLight{{0.f, 0.f, -1.f}, {1.f, 1.f, 1.f}}};
+    const std::array prepared{PreparedDirectionalLight::From(lights[0])};
+    RenderFrameContext frame{SRMath::mat4::identity(), {0.f, 0.f, 3.f}, prepared, 1, 1};
+    frame.bilinearFiltering = true;
+    frame.mipmapping = true;
+    Rasterizer::SurfaceSample sample{{0.f, 0.f, 1.f}, {0.5f, 0.5f}, {0.f, 0.f, 0.f}};
+    sample.lod = 1.5f;
+    const SRMath::vec3 scalarOut = Rasterizer::ShadeSurface(sample, mat, frame);
+    const Rasterizer::SurfaceSample lanes[4] = {sample, sample, sample, sample};
+    const Material *mats[4] = {&mat, &mat, &mat, &mat};
+    SRMath::vec3 laneOut[4];
+    Rasterizer::ShadeSurface4(lanes, mats, frame, laneOut);
+    for (int i = 0; i < 4; ++i)
+        check(std::bit_cast<std::uint32_t>(scalarOut.x) == std::bit_cast<std::uint32_t>(laneOut[i].x) &&
+                  std::bit_cast<std::uint32_t>(scalarOut.y) == std::bit_cast<std::uint32_t>(laneOut[i].y) &&
+                  std::bit_cast<std::uint32_t>(scalarOut.z) == std::bit_cast<std::uint32_t>(laneOut[i].z),
+              "ShadeSurface4 matches ShadeSurface bitwise with bilinear+mipmapping");
+}
+
+void pointAndSpotLights()
+{
+    Material mat;
+    mat.ambient = {0.f, 0.f, 0.f};
+    mat.diffuse = {1.f, 1.f, 1.f};
+    mat.specular = {0.5f, 0.5f, 0.5f};
+    mat.shininess = 16.f;
+
+    PointLight rawPoint;
+    rawPoint.position = {0.f, 0.f, 2.f};
+    rawPoint.color = {1.f, 1.f, 1.f};
+    rawPoint.range = 10.f;
+    const std::array preparedPoint{PreparedPointLight::From(rawPoint)};
+
+    RenderFrameContext framePoint{SRMath::mat4::identity(), {0.f, 0.f, 5.f}, {}, 1, 1, preparedPoint};
+    const Rasterizer::SurfaceSample nearSample{{0.f, 0.f, 1.f}, {0.f, 0.f}, {0.f, 0.f, 0.f}};
+    const Rasterizer::SurfaceSample farSample{{0.f, 0.f, 1.f}, {0.f, 0.f}, {0.f, 0.f, -4.f}};
+    const Rasterizer::SurfaceSample outOfRangeSample{{0.f, 0.f, 1.f}, {0.f, 0.f}, {0.f, 0.f, -10.f}};
+
+    const SRMath::vec3 nearLit = Rasterizer::ShadeSurface(nearSample, mat, framePoint);
+    const SRMath::vec3 farLit = Rasterizer::ShadeSurface(farSample, mat, framePoint);
+    const SRMath::vec3 outLit = Rasterizer::ShadeSurface(outOfRangeSample, mat, framePoint);
+    check(nearLit.x > farLit.x && farLit.x > 0.f, "point light attenuates with distance");
+    check(approximatelyEqual(outLit.x, 0.f), "point light smoothly falls to zero at range");
+
+    SpotLight rawSpot;
+    rawSpot.position = {0.f, 0.f, 3.f};
+    rawSpot.rayDirection = {0.f, 0.f, -1.f};
+    rawSpot.color = {1.f, 1.f, 1.f};
+    rawSpot.range = 10.f;
+    rawSpot.innerConeCos = 0.95f;
+    rawSpot.outerConeCos = 0.80f;
+    const std::array preparedSpot{PreparedSpotLight::From(rawSpot)};
+
+    RenderFrameContext frameSpot{SRMath::mat4::identity(), {0.f, 0.f, 5.f}, {}, 1, 1, {}, preparedSpot};
+    const Rasterizer::SurfaceSample centerSpot{{0.f, 0.f, 1.f}, {0.f, 0.f}, {0.f, 0.f, 0.f}};
+    const Rasterizer::SurfaceSample edgeSpot{{0.f, 0.f, 1.f}, {0.f, 0.f}, {1.5f, 0.f, 0.f}};
+    const Rasterizer::SurfaceSample outsideSpot{{0.f, 0.f, 1.f}, {0.f, 0.f}, {4.f, 0.f, 0.f}};
+
+    const SRMath::vec3 centerSpotLit = Rasterizer::ShadeSurface(centerSpot, mat, frameSpot);
+    const SRMath::vec3 edgeSpotLit = Rasterizer::ShadeSurface(edgeSpot, mat, frameSpot);
+    const SRMath::vec3 outsideSpotLit = Rasterizer::ShadeSurface(outsideSpot, mat, frameSpot);
+    check(centerSpotLit.x > edgeSpotLit.x && edgeSpotLit.x > 0.f, "spot light attenuates across cone penumbra");
+    check(approximatelyEqual(outsideSpotLit.x, 0.f), "spot light is zero outside outerCos cone");
+
+    // 4-lane SSE와 스칼라 경로의 비트 단위 일치 검증
+    RenderFrameContext frameBoth{SRMath::mat4::identity(), {0.f, 0.f, 5.f}, {}, 1, 1, preparedPoint, preparedSpot};
+    const Rasterizer::SurfaceSample lanes[4] = {nearSample, farSample, edgeSpot, outsideSpot};
+    const Material *mats[4] = {&mat, &mat, &mat, &mat};
+    SRMath::vec3 colors4[4];
+    Rasterizer::ShadeSurface4(lanes, mats, frameBoth, colors4);
+    for (int i = 0; i < 4; ++i)
+    {
+        const SRMath::vec3 scalar = Rasterizer::ShadeSurface(lanes[i], *mats[i], frameBoth);
+        check(std::bit_cast<std::uint32_t>(colors4[i].x) == std::bit_cast<std::uint32_t>(scalar.x) &&
+                  std::bit_cast<std::uint32_t>(colors4[i].y) == std::bit_cast<std::uint32_t>(scalar.y) &&
+                  std::bit_cast<std::uint32_t>(colors4[i].z) == std::bit_cast<std::uint32_t>(scalar.z),
+              "4-lane PointLight+SpotLight matches scalar ShadeSurface bitwise");
+    }
+}
+
+void normalMappingTests()
+{
+    Mesh mesh;
+    mesh.vertices = {{{-1.f, -1.f, 0.f}, {0.f, 0.f}, {0.f, 0.f, 1.f}},
+                     {{1.f, -1.f, 0.f}, {1.f, 0.f}, {0.f, 0.f, 1.f}},
+                     {{1.f, 1.f, 0.f}, {1.f, 1.f}, {0.f, 0.f, 1.f}},
+                     {{-1.f, 1.f, 0.f}, {0.f, 1.f}, {0.f, 0.f, 1.f}}};
+    mesh.indices = {0, 1, 2, 0, 2, 3};
+    mesh.ComputeTangents();
+    check(mesh.GetTangents().size() == 4, "ComputeTangents populates per-vertex tangents");
+    for (const auto &t : mesh.GetTangents())
+        check(approximatelyEqual(t.x, 1.f) && approximatelyEqual(t.y, 0.f) && approximatelyEqual(t.z, 0.f),
+              "XY quad with standard UVs has +X tangent");
+
+    // +X로 기울어진 탄젠트 공간 법선 맵 (R=220, G=128, B=200)
+    const std::vector<unsigned char> normalPixels{220, 128, 200, 255};
+    auto normalTex = std::make_shared<Texture>(1, 1, normalPixels);
+
+    Material flatMat;
+    flatMat.ambient = {0.f, 0.f, 0.f};
+    flatMat.diffuse = {1.f, 1.f, 1.f};
+    flatMat.specular = {0.f, 0.f, 0.f};
+
+    Material bumpyMat = flatMat;
+    bumpyMat.normalTexture = normalTex;
+    bumpyMat.normalScale = 1.f;
+
+    // +X 방향에서 비추는 광원 (광선 진행 방향 {-1, 0, 0} -> 광원 방향 {+1, 0, 0})
+    const std::array<DirectionalLight, 1> lights{DirectionalLight{{-1.f, 0.f, 0.f}, {1.f, 1.f, 1.f}}};
+    const std::array prepared{PreparedDirectionalLight::From(lights[0])};
+    const RenderFrameContext frame{SRMath::mat4::identity(), {0.f, 0.f, 3.f}, prepared, 1, 1};
+
+    Rasterizer::SurfaceSample sample{{0.f, 0.f, 1.f}, {0.5f, 0.5f}, {0.f, 0.f, 0.f}};
+    sample.tangentWorld = {1.f, 0.f, 0.f};
+    sample.bitangentWorld = {0.f, 1.f, 0.f};
+
+    const SRMath::vec3 flatLit = Rasterizer::ShadeSurface(sample, flatMat, frame);
+    const SRMath::vec3 bumpyLit = Rasterizer::ShadeSurface(sample, bumpyMat, frame);
+    check(approximatelyEqual(flatLit.x, 0.f), "flat +Z normal receives zero grazing +X light");
+    check(bumpyLit.x > 0.5f, "+X tilted normal map catches +X light");
+
+    const Rasterizer::SurfaceSample lanes[4] = {sample, sample, sample, sample};
+    const Material *mats[4] = {&bumpyMat, &flatMat, &bumpyMat, &flatMat};
+    SRMath::vec3 laneOut[4];
+    Rasterizer::ShadeSurface4(lanes, mats, frame, laneOut);
+    check(std::bit_cast<std::uint32_t>(laneOut[0].x) == std::bit_cast<std::uint32_t>(bumpyLit.x) &&
+              std::bit_cast<std::uint32_t>(laneOut[1].x) == std::bit_cast<std::uint32_t>(flatLit.x),
+          "ShadeSurface4 matches ShadeSurface bitwise with normal mapping");
+}
+
+void srgbGammaTests()
+{
+    Material mat;
+    mat.ambient = {0.25f, 0.5f, 0.75f};
+    mat.diffuse = {0.f, 0.f, 0.f};
+    mat.specular = {0.f, 0.f, 0.f};
+
+    RenderFrameContext linearFrame{SRMath::mat4::identity(), {0.f, 0.f, 3.f}, {}, 1, 1};
+    RenderFrameContext srgbFrame = linearFrame;
+    srgbFrame.srgbGamma = true;
+
+    const Rasterizer::SurfaceSample sample{{0.f, 0.f, 1.f}, {0.f, 0.f}, {0.f, 0.f, 0.f}};
+    const SRMath::vec3 linearColor = Rasterizer::ShadeSurface(sample, mat, linearFrame);
+    const SRMath::vec3 srgbColor = Rasterizer::ShadeSurface(sample, mat, srgbFrame);
+
+    check(srgbColor.x > linearColor.x && srgbColor.y > linearColor.y && srgbColor.z > linearColor.z,
+          "sRGB gamma brightens midtones");
+    check(approximatelyEqual(srgbColor.x, std::pow(0.25f, 1.0f / 2.2f)) &&
+              approximatelyEqual(srgbColor.y, std::pow(0.5f, 1.0f / 2.2f)) &&
+              approximatelyEqual(srgbColor.z, std::pow(0.75f, 1.0f / 2.2f)),
+          "sRGB gamma matches pow(linear, 1/2.2)");
+
+    const Rasterizer::SurfaceSample lanes[4] = {sample, sample, sample, sample};
+    const Material *mats[4] = {&mat, &mat, &mat, &mat};
+    SRMath::vec3 laneOut[4];
+    Rasterizer::ShadeSurface4(lanes, mats, srgbFrame, laneOut);
+    for (int i = 0; i < 4; ++i)
+        check(std::bit_cast<std::uint32_t>(laneOut[i].x) == std::bit_cast<std::uint32_t>(srgbColor.x) &&
+                  std::bit_cast<std::uint32_t>(laneOut[i].y) == std::bit_cast<std::uint32_t>(srgbColor.y) &&
+                  std::bit_cast<std::uint32_t>(laneOut[i].z) == std::bit_cast<std::uint32_t>(srgbColor.z),
+              "ShadeSurface4 matches ShadeSurface bitwise with srgbGamma");
+}
 } // namespace
 
 void sr::test::RegisterRendererTests(TestRegistry &registry)
@@ -1150,6 +1364,10 @@ void sr::test::RegisterRendererTests(TestRegistry &registry)
     registry.Add("renderer.phongLighting", [](const TestContext &context)
                  { RendererTestAccess::phongLighting(context.root); });
     registry.Add("renderer.fxaaBasics", fxaaTests);
+    registry.Add("renderer.textureBilinearAndMipmap", textureBilinearAndMipmap);
+    registry.Add("renderer.pointAndSpotLights", pointAndSpotLights);
+    registry.Add("renderer.normalMapping", normalMappingTests);
+    registry.Add("renderer.srgbGamma", srgbGammaTests);
     registry.Add("renderer.smoke", renderSmoke);
     registry.Add("renderer.primitiveIdPlaneOptional", primitiveIdPlaneOptional);
 }

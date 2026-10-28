@@ -7,6 +7,7 @@
 #include <fstream>
 #include <iterator>
 #include <memory>
+#include <optional>
 #include <vector>
 #include <string_view>
 
@@ -42,7 +43,8 @@ template <class Number> [[nodiscard]] auto takeNumber(std::string_view &input) n
 
 // map_Kd [옵션...] 파일 이름. 옵션(-o 1 1 1, -bm 0.5, -clamp on 등)을 건너뛰고 나머지 전체를 경로로 본다.
 // 경로에 공백이 있을 수 있으므로 마지막 토큰만 쓰지 않는다.
-[[nodiscard]] std::string_view textureMapPath(std::string_view arguments) noexcept
+[[nodiscard]] std::string_view textureMapPath(std::string_view arguments,
+                                              float *outBumpMultiplier = nullptr) noexcept
 {
     arguments = trimLeft(arguments);
     while (arguments.starts_with('-'))
@@ -54,8 +56,11 @@ template <class Number> [[nodiscard]] auto takeNumber(std::string_view &input) n
         {
             auto peek = arguments;
             const auto value = sr::asset::takeToken(peek);
-            if (value.empty() || !(value == "on" || value == "off" || sr::asset::parseNumber<float>(value)))
+            const auto parsedFloat = sr::asset::parseNumber<float>(value);
+            if (value.empty() || !(value == "on" || value == "off" || parsedFloat))
                 break;
+            if (option == "-bm" && i == 0 && outBumpMultiplier && parsedFloat)
+                *outBumpMultiplier = *parsedFloat;
             arguments = peek;
         }
         arguments = trimLeft(arguments);
@@ -85,7 +90,9 @@ std::expected<std::shared_ptr<Texture>, AssetLoadError> TextureLoader::LoadImage
     if (!decoded)
         return std::unexpected(
             AssetLoadError{"Unable to load image: " + filepath.string() + " (" + decoded.error() + ")", filepath});
-    return std::make_shared<Texture>(decoded->width, decoded->height, std::move(decoded->rgba));
+    auto texture = std::make_shared<Texture>(decoded->width, decoded->height, std::move(decoded->rgba));
+    texture->GenerateMipmaps();
+    return texture;
 }
 
 std::expected<std::unordered_map<std::string, Material>, AssetLoadError> TextureLoader::LoadMTLFile(
@@ -173,6 +180,24 @@ std::expected<std::unordered_map<std::string, Material>, AssetLoadError> Texture
                     cached->second = std::move(*texture);
             }
             currentMaterial->diffuseTexture = cached->second;
+        }
+        else if (command == "map_Bump" || command == "map_bump" || command == "bump")
+        {
+            float bumpScale = currentMaterial->normalScale;
+            const auto name = textureMapPath(arguments, &bumpScale);
+            if (name.empty())
+                return std::unexpected(malformedMtl(filepath, lineNumber, command));
+            std::string relative(name);
+            std::ranges::replace(relative, '\\', '/');
+            const auto texturePath = (filepath.parent_path() / std::filesystem::path(relative)).lexically_normal();
+            auto [cached, inserted] = textureCache.try_emplace(texturePath.generic_string());
+            if (inserted)
+            {
+                if (auto texture = LoadImageFile(texturePath))
+                    cached->second = std::move(*texture);
+            }
+            currentMaterial->normalTexture = cached->second;
+            currentMaterial->normalScale = bumpScale;
         }
         else if (command == "illum")
         {

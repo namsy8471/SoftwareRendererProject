@@ -4,6 +4,8 @@
 #include <span>
 
 struct DirectionalLight;
+struct PointLight;
+struct SpotLight;
 
 enum class ELineAlgorithm
 {
@@ -40,13 +42,42 @@ struct PreparedDirectionalLight
     [[nodiscard]] static PreparedDirectionalLight From(const DirectionalLight &light) noexcept;
 };
 
+struct PreparedPointLight
+{
+    SRMath::vec3 position;
+    SRMath::vec3 color;
+    float invRange = 0.f;
+    float constant = 1.f, linear = 0.09f, quadratic = 0.032f;
+
+    [[nodiscard]] static PreparedPointLight From(const PointLight &light) noexcept;
+};
+
+struct PreparedSpotLight
+{
+    SRMath::vec3 position;
+    SRMath::vec3 directionToLight;
+    SRMath::vec3 color;
+    float invRange = 0.f;
+    float innerConeCos = 0.9063f;
+    float outerConeCos = 0.8191f;
+    float invConeCosDiff = 1.f;
+    float constant = 1.f, linear = 0.09f, quadratic = 0.032f;
+
+    [[nodiscard]] static PreparedSpotLight From(const SpotLight &light) noexcept;
+};
+
 struct RenderFrameContext
 {
     SRMath::mat4 viewProjection;
     SRMath::vec3 cameraPosition;
     // 준비 저장소는 동기 프레임 호출과 모든 worker join이 끝날 때까지 유효해야 한다.
     std::span<const PreparedDirectionalLight> lights;
-    int tilesX, tilesY;
+    int tilesX = 0, tilesY = 0;
+    std::span<const PreparedPointLight> pointLights{};
+    std::span<const PreparedSpotLight> spotLights{};
+    bool bilinearFiltering = false;
+    bool mipmapping = false;
+    bool srgbGamma = false;
 };
 
 struct RenderOptions
@@ -57,6 +88,9 @@ struct RenderOptions
     bool collectStats = false;
     // 기본 와이어는 기존 X-ray 표시다. 숨은 선 제거를 선택한 경우에만 면 깊이를 만든다.
     bool hiddenWireframe = false;
+    bool bilinearFiltering = false;
+    bool mipmapping = false;
+    bool srgbGamma = false;
 };
 
 struct RenderStats

@@ -32,6 +32,9 @@ options:
   --mode M            fill | wire | normal | aabb | fxaa (default fill)
   --opt O             none | sort | hiz | both (default none)
   --hidden-wire       hidden-line wireframe (depth prepass)
+  --bilinear          enable bilinear texture filtering
+  --mipmap            enable mipmap LOD sampling
+  --srgb              enable sRGB gamma correction
   --dda               DDA lines instead of Bresenham
   --stats             collect renderer counters and pass timings (slower)
   --threads N         limit sr::jobs parallelism (default: all cores)
@@ -136,6 +139,12 @@ Options parseArguments(int argc, char **argv)
         }
         else if (argument == "--hidden-wire")
             config.options.hiddenWireframe = true;
+        else if (argument == "--bilinear")
+            config.options.bilinearFiltering = true;
+        else if (argument == "--mipmap")
+            config.options.mipmapping = true;
+        else if (argument == "--srgb")
+            config.options.srgbGamma = true;
         else if (argument == "--dda")
             config.lineAlgorithm = ELineAlgorithm::DDA;
         else if (argument == "--stats")

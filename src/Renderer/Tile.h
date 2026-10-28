@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "Renderer/ShaderVertices.h"
 #include <cstddef>
 #include <cstdint>

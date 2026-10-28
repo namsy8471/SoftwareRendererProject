@@ -20,6 +20,8 @@
 
 class RenderQueue;
 struct DirectionalLight;
+struct PointLight;
+struct SpotLight;
 struct MeshRenderCommand;
 struct DebugPrimitiveCommand;
 enum class ERasterizeMode;
@@ -64,6 +66,8 @@ class Renderer
     std::vector<unsigned int> m_fxaaSnapshot;
     // 프레임마다 값을 갱신하고 capacity만 재사용한다. worker는 이 저장소를 읽기만 한다.
     std::vector<PreparedDirectionalLight> m_preparedLights;
+    std::vector<PreparedPointLight> m_preparedPointLights;
+    std::vector<PreparedSpotLight> m_preparedSpotLights;
 
     static constexpr std::size_t debugLineChunkSize = 256;
     struct DebugLineCommand
@@ -184,6 +188,8 @@ class Renderer
 
     void ensureViewport(int width, int height);
     std::span<const PreparedDirectionalLight> prepareLights(std::span<const DirectionalLight>);
+    std::span<const PreparedPointLight> preparePointLights(std::span<const PointLight>);
+    std::span<const PreparedSpotLight> prepareSpotLights(std::span<const SpotLight>);
     void prepareFrame();
     void binCommands(const RenderQueue &, const FrameContext &);
     void collectActiveTileWorkers();
@@ -245,13 +251,17 @@ class Renderer
     // target.Clear → RenderScene → presenter.Present. 참조는 동기 호출 동안만 빌린다.
     // 같은 Renderer/target을 동시에 호출하지 않는다. 빈 target은 안전한 no-op이다.
     void RenderScene(RenderTarget &target, const RenderQueue &queue, const ViewParams &view,
-                     std::span<const DirectionalLight> lights);
+                     std::span<const DirectionalLight> lights,
+                     std::span<const PointLight> pointLights = {},
+                     std::span<const SpotLight> spotLights = {});
     // target.Clear()를 따로 부르지 않고 각 타일 작업이 래스터 직전에 자기 타일을 지운다.
     // 결과는 Clear 후 RenderScene과 같다. 전체를 한 번 더 도는 병렬 단계와 그 동기화가 사라진다.
     void ClearAndRenderScene(RenderTarget &target, const RenderQueue &queue, const ViewParams &view,
-                             std::span<const DirectionalLight> lights);
+                             std::span<const DirectionalLight> lights,
+                             std::span<const PointLight> pointLights = {},
+                             std::span<const SpotLight> spotLights = {});
 
   private:
     void renderScene(RenderTarget &, const RenderQueue &, const ViewParams &, std::span<const DirectionalLight>,
-                     bool clearTarget);
+                     std::span<const PointLight>, std::span<const SpotLight>, bool clearTarget);
 };

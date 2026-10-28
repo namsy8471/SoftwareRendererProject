@@ -423,6 +423,8 @@ AABB buildSpatialData(std::span<Mesh> meshes)
                               {
                                   auto &mesh = meshes[index];
                                   generateMissingNormals(mesh);
+                                  if (mesh.material.normalTexture && mesh.GetTangents().empty())
+                                      mesh.ComputeTangents();
                                   mesh.localAABB = ComputeLocalAABB(mesh);
                                   localBounds.Local().Encapsulate(mesh.localAABB);
                                   mesh.octree = std::make_unique<Octree>();

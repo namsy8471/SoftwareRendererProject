@@ -32,6 +32,9 @@ class Rasterizer
         SRMath::vec3 normalWorld;
         SRMath::vec2 texcoord;
         SRMath::vec3 positionWorld;
+        SRMath::vec3 tangentWorld = {1.f, 0.f, 0.f};
+        SRMath::vec3 bitangentWorld = {0.f, 1.f, 0.f};
+        float lod = 0.f;
     };
 
     // 동차 변환/클리핑은 한 번만 수행하고 행 worker가 불변 결과를 공유한다.
@@ -90,6 +93,9 @@ class Rasterizer
 
     static SurfaceSample InterpolateSurface(const RasterizerVertex &, const RasterizerVertex &,
                                             const RasterizerVertex &, float, float, float, float);
+    static float ComputeTriangleLod(const PreparedTriangle &) noexcept;
+    static void ComputeTriangleTangentFrame(const PreparedTriangle &, SRMath::vec3 &tangentWorld,
+                                            SRMath::vec3 &bitangentWorld) noexcept;
     static SRMath::vec3 ShadeSurface(const SurfaceSample &, const Material &, const RenderFrameContext &);
     // 픽셀 4개를 lane 하나씩 맡아 SSE로 한 번에 셰이딩한다. 각 lane은 ShadeSurface와 같은 float 연산을
     // 같은 순서로 하므로 결과가 비트 단위로 같다(dot은 _mm_dp_ps(0x71)의 (x+y)+(z+0) 순서를 따른다).
