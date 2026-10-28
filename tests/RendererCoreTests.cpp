@@ -6,6 +6,7 @@
 #include "Graphics/ModelLoader.h"
 #include "Graphics/TextureLoader.h"
 #include "Graphics/Texture.h"
+#include "Graphics/IBL.h"
 #include "Graphics/Light.h"
 #include "Graphics/AssetParsing.h"
 #include "Scene/GameObject.h"
@@ -1814,10 +1815,98 @@ void pbrLightingTests()
               "scalar ShadeSurface and SSE ShadeSurface4 match within numerical tolerance for PBR");
     }
 }
+void iblAndTonemapTests()
+{
+    // 1. Spherical Harmonics L2 tests
+    sr::SphericalHarmonicsL2 sh = sr::SphericalHarmonicsL2::CreateDefaultSky();
+    const auto zenith = sh.Evaluate({0.f, 1.f, 0.f});
+    const auto nadir = sh.Evaluate({0.f, -1.f, 0.f});
+    check(zenith.z > zenith.x, "zenith sky has blue dominance");
+    check(nadir.x > nadir.z, "nadir ground has warm/brown dominance");
+    check(zenith.y > nadir.y, "zenith is brighter than nadir");
+
+    // 2. CubeMap procedural studio tests
+    auto env = sr::CubeMap::CreateDefaultStudio(32);
+    check(env != nullptr, "CreateDefaultStudio creates valid CubeMap");
+    check(env->GetMaxLOD() > 0, "CubeMap has mipmaps generated");
+    const auto sunReflect = env->Sample(SRMath::normalize(SRMath::vec3(0.4f, 0.8f, 0.3f)), 0.0f);
+    check(sunReflect.r > 0.5f, "sun direction has bright reflection");
+
+    // 3. ACES Tone Mapping tests
+    const auto ldrBlack = sr::ACESFilm({0.f, 0.f, 0.f});
+    check(ldrBlack.x == 0.f && ldrBlack.y == 0.f && ldrBlack.z == 0.f, "black tone maps to 0");
+    const auto ldrOne = sr::ACESFilm({1.f, 1.f, 1.f});
+    check(ldrOne.x > 0.7f && ldrOne.x < 1.0f, "1.0 tone maps to filmic shoulder");
+    const auto hdrBright = sr::ACESFilm({10.f, 10.f, 10.f});
+    check(hdrBright.x > ldrOne.x && hdrBright.x <= 1.0f, "HDR bright monotonically compresses to <= 1.0");
+
+    // 4. Karis EnvBRDF approx tests
+    for (float nv = 0.1f; nv <= 1.0f; nv += 0.3f)
+    {
+        for (float r = 0.04f; r <= 1.0f; r += 0.3f)
+        {
+            const auto brdf = sr::EnvBRDFApprox(nv, r);
+            check(brdf.x >= 0.0f && brdf.x <= 1.5f, "EnvBRDF scale in valid range");
+            check(brdf.y >= 0.0f && brdf.y <= 1.0f, "EnvBRDF bias in valid range");
+        }
+    }
+
+    // 5. Scalar vs SSE 4-lane equivalence for PBR + IBL + Tonemap
+    Mesh meshA, meshB;
+    meshA.material.isPbr = true;
+    meshA.material.baseColor = {0.9f, 0.5f, 0.2f, 1.f};
+    meshA.material.metallic = 0.8f;
+    meshA.material.roughness = 0.2f;
+
+    meshB.material.isPbr = true;
+    meshB.material.baseColor = {0.2f, 0.7f, 0.9f, 1.f};
+    meshB.material.metallic = 0.1f;
+    meshB.material.roughness = 0.7f;
+
+    Rasterizer::SurfaceSample sample[4];
+    const Material *mat[4] = {&meshA.material, &meshB.material, &meshA.material, &meshB.material};
+    for (int i = 0; i < 4; ++i)
+    {
+        sample[i].positionWorld = {0.1f * i, 0.2f * i, 0.f};
+        sample[i].normalWorld = SRMath::normalize(SRMath::vec3(0.1f * i, 0.2f * i, 1.f));
+        sample[i].texcoord = {0.25f * i, 0.25f * i};
+        sample[i].lod = 0.f;
+    }
+
+    auto iblMap = sr::IBLMap::CreateDefault();
+    DirectionalLight dirLight{{-0.5f, -0.5f, -1.f}, {1.f, 1.f, 1.f}};
+    PreparedDirectionalLight prepLight = PreparedDirectionalLight::From(dirLight);
+
+    RenderFrameContext frameCtx{};
+    frameCtx.cameraPosition = {0.f, 0.f, 5.f};
+    frameCtx.lights = std::span<const PreparedDirectionalLight>(&prepLight, 1);
+    frameCtx.pbr = true;
+    frameCtx.ibl = true;
+    frameCtx.tonemap = true;
+    frameCtx.iblMap = iblMap.get();
+
+    SRMath::vec3 scalarColors[4];
+    for (int i = 0; i < 4; ++i)
+    {
+        scalarColors[i] = Rasterizer::ShadeSurface(sample[i], *mat[i], frameCtx);
+    }
+
+    SRMath::vec3 sseColors[4];
+    Rasterizer::ShadeSurface4(sample, mat, frameCtx, sseColors);
+
+    for (int i = 0; i < 4; ++i)
+    {
+        check(std::abs(scalarColors[i].x - sseColors[i].x) < 1e-3f &&
+              std::abs(scalarColors[i].y - sseColors[i].y) < 1e-3f &&
+              std::abs(scalarColors[i].z - sseColors[i].z) < 1e-3f,
+              "scalar ShadeSurface and SSE ShadeSurface4 match within numerical tolerance for IBL + ToneMap");
+    }
+}
 } // namespace
 
 void sr::test::RegisterRendererTests(TestRegistry &registry)
 {
+    registry.Add("renderer.iblAndTonemap", iblAndTonemapTests);
     registry.Add("renderer.pbrLighting", pbrLightingTests);
     registry.Add("renderer.alphaMask", alphaMaskTests);
     registry.Add("renderer.alphaBlend", alphaBlendTests);

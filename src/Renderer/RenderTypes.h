@@ -81,6 +81,9 @@ struct RenderFrameContext
     bool srgbGamma = false;
     const ShadowMap *shadowMap = nullptr;
     bool pbr = false;
+    bool ibl = false;
+    bool tonemap = false;
+    const void *iblMap = nullptr; // const sr::IBLMap *
 };
 
 struct RenderOptions
@@ -96,6 +99,8 @@ struct RenderOptions
     bool srgbGamma = false;
     bool shadows = false;
     bool pbr = false;
+    bool ibl = false;
+    bool tonemap = false;
 };
 
 struct RenderStats

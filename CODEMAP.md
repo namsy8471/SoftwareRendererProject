@@ -79,6 +79,7 @@
 | `TextureLoader.h` · `TextureLoader.cpp` | **TextureLoader**: `LoadImageFile`(코덱 → Texture), `LoadMTLFile`(재질, 같은 텍스처 공유) |
 | `AssetParsing.h` | OBJ/MTL 공용 토큰·숫자 해석(`takeToken`, `splitCommand`, `parseNumber`) |
 | `GltfLoader.h` · `GltfLoader.cpp` | `sr::gltf::LoadScene`/`BuildScene`: glTF 문서 → GameObject 트리·Mesh·재질, **LoadedScene**(skin·애니메이션 클립 포함) |
+| `IBL.h` · `IBL.cpp` | **SphericalHarmonicsL2**(L2 구면 조화 함수 9계수 조도), **CubeMap**(6면 큐브맵 샘플링·밉맵 LOD), **IBLMap**(확산/반사 IBL), `ACESFilm`, `EnvBRDFApprox` |
 
 ## src/Graphics/Codecs/ (자체 이미지 코덱, 메모리 → RGBA8)
 

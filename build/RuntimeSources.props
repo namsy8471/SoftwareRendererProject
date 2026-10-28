@@ -8,6 +8,7 @@
     <ClCompile Include="src\Graphics\Octree.cpp" />
     <ClCompile Include="src\Graphics\Texture.cpp" />
     <ClCompile Include="src\Graphics\TextureLoader.cpp" />
+    <ClCompile Include="src\Graphics\IBL.cpp" />
     <ClCompile Include="src\Math\AABB.cpp" />
     <ClCompile Include="src\Math\Frustum.cpp" />
     <ClCompile Include="src\Math\SIMD.cpp" />
@@ -37,6 +38,7 @@
     <ClInclude Include="src\Graphics\Octree.h" />
     <ClInclude Include="src\Graphics\Texture.h" />
     <ClInclude Include="src\Graphics\TextureLoader.h" />
+    <ClInclude Include="src\Graphics\IBL.h" />
     <ClInclude Include="src\Math\AABB.h" />
     <ClInclude Include="src\Math\Frustum.h" />
     <ClInclude Include="src\Math\SRMath.h" />
