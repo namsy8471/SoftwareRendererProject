@@ -85,7 +85,7 @@ void base64Tests()
 // glTF sampler의 wrapS/wrapT. 기본(가장자리 고정)은 기존 OBJ 텍스처 동작 그대로다.
 void textureWrapTests()
 {
-    // 가로 3텍셀(빨강, 초록, 파랑). 최근접 샘플은 x = floor(u' * 2)라 u' 0~0.5 빨강, 0.5~1 초록, 1 파랑이다.
+    // 가로 3텍셀(빨강, 초록, 파랑). 최근접 샘플은 x = floor(u' * 3)이라 u' [0, 1/3) 빨강, [1/3, 2/3) 초록, [2/3, 1] 파랑이다.
     Texture texture(3, 1, {255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255});
     const auto texel = [&](float u)
     {
@@ -94,9 +94,9 @@ void textureWrapTests()
     };
     check(texel(3.25f) == 'b' && texel(-2.f) == 'r', "clamp to edge by default");
     texture.SetWrap(TextureWrap::Repeat, TextureWrap::Repeat);
-    check(texel(3.25f) == 'r' && texel(3.75f) == 'g' && texel(-0.25f) == 'g', "repeat");
+    check(texel(3.25f) == 'r' && texel(3.5f) == 'g' && texel(-0.5f) == 'g' && texel(3.75f) == 'b', "repeat");
     texture.SetWrap(TextureWrap::MirroredRepeat, TextureWrap::ClampToEdge);
-    check(texel(1.25f) == 'g' && texel(1.75f) == 'r' && texel(-0.25f) == 'r' && texel(1.f) == 'b',
+    check(texel(1.5f) == 'g' && texel(1.75f) == 'r' && texel(-0.25f) == 'r' && texel(1.f) == 'b',
           "mirrored repeat");
 }
 
@@ -458,10 +458,131 @@ void renderTests(const TestContext &context)
     const auto red = (center >> 16) & 0xFF, green = (center >> 8) & 0xFF, blue = center & 0xFF;
     check(red > green && red > blue, "textured base color (red texel * orange factor)");
 }
+
+void alphaMaterialTests()
+{
+    const std::string gltfJson = R"({
+        "asset": {"version": "2.0"},
+        "materials": [
+            {
+                "name": "MaskMat",
+                "alphaMode": "MASK",
+                "alphaCutoff": 0.35,
+                "pbrMetallicRoughness": {
+                    "baseColorFactor": [1.0, 1.0, 1.0, 0.8]
+                }
+            },
+            {
+                "name": "BlendMat",
+                "alphaMode": "BLEND",
+                "pbrMetallicRoughness": {
+                    "baseColorFactor": [0.5, 0.5, 0.5, 0.4]
+                }
+            },
+            {
+                "name": "OpaqueMat",
+                "alphaMode": "OPAQUE",
+                "pbrMetallicRoughness": {
+                    "baseColorFactor": [1.0, 1.0, 1.0, 1.0]
+                }
+            }
+        ],
+        "meshes": [
+            {
+                "primitives": [
+                    {
+                        "attributes": {"POSITION": 0},
+                        "material": 0
+                    },
+                    {
+                        "attributes": {"POSITION": 0},
+                        "material": 1
+                    },
+                    {
+                        "attributes": {"POSITION": 0},
+                        "material": 2
+                    }
+                ]
+            }
+        ],
+        "accessors": [
+            {
+                "bufferView": 0,
+                "componentType": 5126,
+                "count": 3,
+                "type": "VEC3"
+            }
+        ],
+        "bufferViews": [
+            {
+                "buffer": 0,
+                "byteLength": 36
+            }
+        ],
+        "buffers": [
+            {
+                "byteLength": 36,
+                "uri": "data:application/octet-stream;base64,AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+            }
+        ],
+        "nodes": [
+            {"mesh": 0}
+        ],
+        "scenes": [
+            {"nodes": [0]}
+        ],
+        "scene": 0
+    })";
+
+    const auto bytes = asBytes(gltfJson);
+    auto doc = gltf::LoadFromMemory(bytes, "");
+    check(doc.has_value(), "load glTF with alpha materials");
+    check(doc->materials.size() == 3, "3 materials loaded");
+
+    check(doc->materials[0].alphaMode == 1, "doc MaskMat alphaMode MASK (1)");
+    check(approximatelyEqual(doc->materials[0].alphaCutoff, 0.35f), "doc MaskMat alphaCutoff 0.35");
+    check(approximatelyEqual(doc->materials[0].baseColorFactor[3], 0.8f), "doc MaskMat baseColorFactor.w 0.8");
+
+    check(doc->materials[1].alphaMode == 2, "doc BlendMat alphaMode BLEND (2)");
+    check(approximatelyEqual(doc->materials[1].alphaCutoff, 0.5f), "doc BlendMat default alphaCutoff 0.5");
+    check(approximatelyEqual(doc->materials[1].baseColorFactor[3], 0.4f), "doc BlendMat baseColorFactor.w 0.4");
+
+    check(doc->materials[2].alphaMode == 0, "doc OpaqueMat alphaMode OPAQUE (0)");
+    check(approximatelyEqual(doc->materials[2].alphaCutoff, 0.5f), "doc OpaqueMat default alphaCutoff 0.5");
+    check(approximatelyEqual(doc->materials[2].baseColorFactor[3], 1.0f), "doc OpaqueMat baseColorFactor.w 1.0");
+
+    // Test BuildScene and convertMaterial mapping
+    gltf::SceneLoadOptions options;
+    auto loaded = gltf::BuildScene(*doc, options);
+    check(loaded.has_value(), "BuildScene succeeds");
+    check(!loaded->nodes.empty() && loaded->nodes[0].object != nullptr, "node binding valid");
+    const auto *model = loaded->nodes[0].object->GetModel();
+    check(model != nullptr, "node has model");
+    if (!model)
+        return;
+    const auto meshes = model->GetMeshes();
+    check(meshes.size() == 3, "model has 3 primitive meshes");
+
+    // Mesh 0: Mask
+    check(meshes[0].material.alphaMode == AlphaMode::Mask, "mapped MaskMat alphaMode is AlphaMode::Mask");
+    check(approximatelyEqual(meshes[0].material.alphaCutoff, 0.35f), "mapped MaskMat alphaCutoff is 0.35");
+    check(approximatelyEqual(meshes[0].material.opacity, 0.8f), "mapped MaskMat opacity is 0.8");
+
+    // Mesh 1: Blend
+    check(meshes[1].material.alphaMode == AlphaMode::Blend, "mapped BlendMat alphaMode is AlphaMode::Blend");
+    check(approximatelyEqual(meshes[1].material.alphaCutoff, 0.5f), "mapped BlendMat alphaCutoff is 0.5");
+    check(approximatelyEqual(meshes[1].material.opacity, 0.4f), "mapped BlendMat opacity is 0.4");
+
+    // Mesh 2: Opaque
+    check(meshes[2].material.alphaMode == AlphaMode::Opaque, "mapped OpaqueMat alphaMode is AlphaMode::Opaque");
+    check(approximatelyEqual(meshes[2].material.alphaCutoff, 0.5f), "mapped OpaqueMat alphaCutoff is 0.5");
+    check(approximatelyEqual(meshes[2].material.opacity, 1.0f), "mapped OpaqueMat opacity is 1.0");
+}
 } // namespace
 
 void sr::test::RegisterGltfTests(TestRegistry &registry)
 {
+    registry.Add("gltf.alphaMaterials", alphaMaterialTests);
     registry.Add("gltf.base64", base64Tests);
     registry.Add("gltf.textureWrap", textureWrapTests);
     registry.Add("gltf.texturedQuad", texturedQuadTests);

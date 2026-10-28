@@ -51,6 +51,11 @@ class Texture
     [[nodiscard]] SRMath::Color SampleBilinear(float u, float v, int mipLevel = 0) const noexcept;
     [[nodiscard]] SRMath::Color Sample(float u, float v, float lod) const noexcept;
 
+    [[nodiscard]] SRMath::Color4 SampleRGBA(float u, float v) const noexcept;
+    [[nodiscard]] SRMath::Color4 SampleNearestRGBA(float u, float v, int mipLevel = 0) const noexcept;
+    [[nodiscard]] SRMath::Color4 SampleBilinearRGBA(float u, float v, int mipLevel = 0) const noexcept;
+    [[nodiscard]] SRMath::Color4 SampleRGBA(float u, float v, float lod) const noexcept;
+
     void GenerateMipmaps();
     [[nodiscard]] bool HasMipmaps() const noexcept { return !m_mips.empty(); }
     [[nodiscard]] int GetMipCount() const noexcept

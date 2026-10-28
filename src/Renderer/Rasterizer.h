@@ -10,6 +10,7 @@
 struct DebugPrimitiveCommand;
 struct DebugVertex;
 struct Material;
+class Texture;
 
 // 16x16 타일 하나의 색/깊이/ID 작업 버퍼(4KB). L1에 머무르며 worker마다 하나를 재사용한다.
 // Rasterizer 안에 두면 스택에 Rasterizer를 두는 함수가 16KB를 넘어 /analyze C6262에 걸린다.
@@ -82,6 +83,8 @@ class Rasterizer
     // [minY, maxY)를 맡긴 worker끼리는 색상 버퍼를 안전하게 공유할 수 있다.
     void BeginLineRows(int minY, int maxY);
     void DrawTriangle(const PreparedTriangle &, RasterPass);
+    void DrawTriangleAlphaMask(const PreparedTriangle &, RasterPass pass = RasterPass::DepthOwner);
+    void DrawTriangleAlphaBlend(const PreparedTriangle &);
     // DepthOwner 패스로 타일의 모든 삼각형을 그린 뒤 부른다. 기록된 픽셀마다 그 삼각형으로 한 번 셰이딩한다.
     void ShadeOwners();
     void DrawWireTriangle(const PreparedTriangle &, ELineAlgorithm, bool depthTest = true);
@@ -101,6 +104,8 @@ class Rasterizer
     // 같은 순서로 하므로 결과가 비트 단위로 같다(dot은 _mm_dp_ps(0x71)의 (x+y)+(z+0) 순서를 따른다).
     static void ShadeSurface4(const SurfaceSample (&)[4], const Material *const (&)[4],
                               const RenderFrameContext &, SRMath::vec3 (&)[4]);
+    static SRMath::Color4 SampleTexture(const Texture &tex, float u, float v, float lod,
+                                        const RenderFrameContext &frame);
 
   private:
     RenderTarget &m_target;
@@ -145,6 +150,8 @@ class Rasterizer
 
     // 패스 선택은 삼각형당 한 번만 한다. 픽셀 루프에는 depth-only의 조명 분기를 남기지 않는다.
     template <bool Instrumented, RasterPass Pass> void DrawTriangleImpl(const PreparedTriangle &);
+    template <bool Instrumented, RasterPass Pass> void DrawTriangleAlphaMaskImpl(const PreparedTriangle &);
+    template <bool Instrumented> void DrawTriangleAlphaBlendImpl(const PreparedTriangle &);
     bool IsOccluded(const PreparedTriangle &);
     void RefreshHiZ();
     void useTarget();

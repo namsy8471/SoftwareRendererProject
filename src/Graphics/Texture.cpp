@@ -56,8 +56,10 @@ SRMath::Color Texture::Sample(float u, float v) const noexcept
     if (m_pixels.empty())
         return {};
 
-    const int x = static_cast<int>(std::clamp(wrapCoordinate(u, m_wrapU), 0.0f, 1.0f) * (m_width - 1));
-    const int y = static_cast<int>(std::clamp(wrapCoordinate(v, m_wrapV), 0.0f, 1.0f) * (m_height - 1));
+    const float wu = std::isfinite(u) ? std::clamp(wrapCoordinate(u, m_wrapU), 0.0f, 1.0f) : 0.0f;
+    const float wv = std::isfinite(v) ? std::clamp(wrapCoordinate(v, m_wrapV), 0.0f, 1.0f) : 0.0f;
+    const int x = std::clamp(static_cast<int>(std::floor(wu * static_cast<float>(m_width))), 0, m_width - 1);
+    const int y = std::clamp(static_cast<int>(std::floor(wv * static_cast<float>(m_height))), 0, m_height - 1);
     const std::size_t offset = (static_cast<std::size_t>(y) * m_width + x) * 4;
     const auto *pixels = m_pixels.data();
     constexpr float byteToUnit = 1.0f / 255.0f;
@@ -150,8 +152,8 @@ SRMath::Color Texture::SampleNearest(float u, float v, int mipLevel) const noexc
     const MipLevel &mip = m_mips[static_cast<std::size_t>(clampedLevel - 1)];
     const float wu = std::isfinite(u) ? std::clamp(wrapCoordinate(u, m_wrapU), 0.0f, 1.0f) : 0.0f;
     const float wv = std::isfinite(v) ? std::clamp(wrapCoordinate(v, m_wrapV), 0.0f, 1.0f) : 0.0f;
-    const int x = static_cast<int>(wu * (mip.width - 1));
-    const int y = static_cast<int>(wv * (mip.height - 1));
+    const int x = std::clamp(static_cast<int>(std::floor(wu * static_cast<float>(mip.width))), 0, mip.width - 1);
+    const int y = std::clamp(static_cast<int>(std::floor(wv * static_cast<float>(mip.height))), 0, mip.height - 1);
     const std::size_t offset = (static_cast<std::size_t>(y) * mip.width + x) * 4;
     const auto *pixels = mip.pixels.data();
     constexpr float byteToUnit = 1.0f / 255.0f;
@@ -241,5 +243,126 @@ SRMath::Color Texture::Sample(float u, float v, float lod) const noexcept
     if (level0 == level1 || frac <= 0.0f)
         return c0;
     const SRMath::Color c1 = SampleBilinear(u, v, level1);
+    return c0 + (c1 - c0) * frac;
+}
+
+SRMath::Color4 Texture::SampleRGBA(float u, float v) const noexcept
+{
+    if (m_pixels.empty())
+        return {};
+
+    const float wu = std::isfinite(u) ? std::clamp(wrapCoordinate(u, m_wrapU), 0.0f, 1.0f) : 0.0f;
+    const float wv = std::isfinite(v) ? std::clamp(wrapCoordinate(v, m_wrapV), 0.0f, 1.0f) : 0.0f;
+    const int x = std::clamp(static_cast<int>(std::floor(wu * static_cast<float>(m_width))), 0, m_width - 1);
+    const int y = std::clamp(static_cast<int>(std::floor(wv * static_cast<float>(m_height))), 0, m_height - 1);
+    const std::size_t offset = (static_cast<std::size_t>(y) * m_width + x) * 4;
+    const auto *pixels = m_pixels.data();
+    constexpr float byteToUnit = 1.0f / 255.0f;
+
+    return {pixels[offset] * byteToUnit, pixels[offset + 1] * byteToUnit, pixels[offset + 2] * byteToUnit,
+            pixels[offset + 3] * byteToUnit};
+}
+
+SRMath::Color4 Texture::SampleNearestRGBA(float u, float v, int mipLevel) const noexcept
+{
+    if (m_pixels.empty())
+        return {};
+    if (mipLevel <= 0 || m_mips.empty())
+        return SampleRGBA(u, v);
+
+    const int clampedLevel = std::min(mipLevel, static_cast<int>(m_mips.size()));
+    const MipLevel &mip = m_mips[static_cast<std::size_t>(clampedLevel - 1)];
+    const float wu = std::isfinite(u) ? std::clamp(wrapCoordinate(u, m_wrapU), 0.0f, 1.0f) : 0.0f;
+    const float wv = std::isfinite(v) ? std::clamp(wrapCoordinate(v, m_wrapV), 0.0f, 1.0f) : 0.0f;
+    const int x = std::clamp(static_cast<int>(std::floor(wu * static_cast<float>(mip.width))), 0, mip.width - 1);
+    const int y = std::clamp(static_cast<int>(std::floor(wv * static_cast<float>(mip.height))), 0, mip.height - 1);
+    const std::size_t offset = (static_cast<std::size_t>(y) * mip.width + x) * 4;
+    const auto *pixels = mip.pixels.data();
+    constexpr float byteToUnit = 1.0f / 255.0f;
+
+    return {pixels[offset] * byteToUnit, pixels[offset + 1] * byteToUnit, pixels[offset + 2] * byteToUnit,
+            pixels[offset + 3] * byteToUnit};
+}
+
+SRMath::Color4 Texture::SampleBilinearRGBA(float u, float v, int mipLevel) const noexcept
+{
+    if (m_pixels.empty())
+        return {};
+
+    int width = m_width;
+    int height = m_height;
+    const unsigned char *pixels = m_pixels.data();
+    if (mipLevel > 0 && !m_mips.empty())
+    {
+        const int clampedLevel = std::min(mipLevel, static_cast<int>(m_mips.size()));
+        const MipLevel &mip = m_mips[static_cast<std::size_t>(clampedLevel - 1)];
+        width = mip.width;
+        height = mip.height;
+        pixels = mip.pixels.data();
+    }
+
+    const float wu = std::isfinite(u) ? std::clamp(wrapCoordinate(u, m_wrapU), 0.0f, 1.0f) : 0.0f;
+    const float wv = std::isfinite(v) ? std::clamp(wrapCoordinate(v, m_wrapV), 0.0f, 1.0f) : 0.0f;
+    const float tx = wu * static_cast<float>(width) - 0.5f;
+    const float ty = wv * static_cast<float>(height) - 0.5f;
+    const float floorX = std::floor(tx);
+    const float floorY = std::floor(ty);
+    const float fx = tx - floorX;
+    const float fy = ty - floorY;
+
+    const int baseX = static_cast<int>(floorX);
+    const int baseY = static_cast<int>(floorY);
+    const int x0 = wrapTexelIndex(baseX, width, m_wrapU);
+    const int x1 = wrapTexelIndex(baseX + 1, width, m_wrapU);
+    const int y0 = wrapTexelIndex(baseY, height, m_wrapV);
+    const int y1 = wrapTexelIndex(baseY + 1, height, m_wrapV);
+
+    const auto loadTexel = [pixels, width](int x, int y) noexcept -> __m128
+    {
+        const std::size_t offset =
+            (static_cast<std::size_t>(y) * static_cast<std::size_t>(width) + static_cast<std::size_t>(x)) * 4;
+        std::int32_t rgba = 0;
+        std::memcpy(&rgba, pixels + offset, sizeof(rgba));
+        return _mm_cvtepi32_ps(_mm_cvtepu8_epi32(_mm_cvtsi32_si128(rgba)));
+    };
+
+    const __m128 c00 = loadTexel(x0, y0);
+    const __m128 c10 = loadTexel(x1, y0);
+    const __m128 c01 = loadTexel(x0, y1);
+    const __m128 c11 = loadTexel(x1, y1);
+    const __m128 vfx = _mm_set1_ps(fx);
+    const __m128 vfy = _mm_set1_ps(fy);
+    const __m128 top = _mm_add_ps(c00, _mm_mul_ps(_mm_sub_ps(c10, c00), vfx));
+    const __m128 bottom = _mm_add_ps(c01, _mm_mul_ps(_mm_sub_ps(c11, c01), vfx));
+    const __m128 blended = _mm_add_ps(top, _mm_mul_ps(_mm_sub_ps(bottom, top), vfy));
+    const __m128 scaled = _mm_mul_ps(blended, _mm_set1_ps(1.0f / 255.0f));
+
+    return SRMath::Color4(scaled);
+}
+
+SRMath::Color4 Texture::SampleRGBA(float u, float v, float lod) const noexcept
+{
+    if (m_pixels.empty())
+        return {};
+    const int maxLevel = static_cast<int>(m_mips.size());
+    const float clampedLod = std::isfinite(lod) ? std::clamp(lod, 0.0f, static_cast<float>(maxLevel)) : 0.0f;
+
+    if (m_filter == TextureFilter::Nearest)
+    {
+        if (m_mips.empty())
+            return SampleRGBA(u, v);
+        return SampleNearestRGBA(u, v, std::clamp(static_cast<int>(std::round(clampedLod)), 0, maxLevel));
+    }
+    if (m_filter == TextureFilter::Bilinear || m_mips.empty())
+    {
+        return SampleBilinearRGBA(u, v, std::clamp(static_cast<int>(std::round(clampedLod)), 0, maxLevel));
+    }
+    const int level0 = static_cast<int>(std::floor(clampedLod));
+    const int level1 = std::min(level0 + 1, maxLevel);
+    const float frac = clampedLod - static_cast<float>(level0);
+    const SRMath::Color4 c0 = SampleBilinearRGBA(u, v, level0);
+    if (level0 == level1 || frac <= 0.0f)
+        return c0;
+    const SRMath::Color4 c1 = SampleBilinearRGBA(u, v, level1);
     return c0 + (c1 - c0) * frac;
 }

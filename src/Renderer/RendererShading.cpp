@@ -45,11 +45,13 @@ PreparedSpotLight PreparedSpotLight::From(const SpotLight &light) noexcept
 
 namespace
 {
-SR_FORCEINLINE SRMath::vec3 sampleTexture(const Texture &tex, float u, float v, float lod,
-                                          const RenderFrameContext &frame)
+} // namespace
+
+SRMath::Color4 Rasterizer::SampleTexture(const Texture &tex, float u, float v, float lod,
+                                         const RenderFrameContext &frame)
 {
     if (!frame.mipmapping && !frame.bilinearFiltering && tex.GetFilter() == TextureFilter::Nearest)
-        return tex.Sample(u, v);
+        return tex.SampleRGBA(u, v);
     if (frame.mipmapping && tex.HasMipmaps())
     {
         if (frame.bilinearFiltering || tex.GetFilter() != TextureFilter::Nearest)
@@ -59,17 +61,26 @@ SR_FORCEINLINE SRMath::vec3 sampleTexture(const Texture &tex, float u, float v, 
             const int mip1 = std::min(mip0 + 1, tex.GetMipCount() - 1);
             const float frac = clampedLod - static_cast<float>(mip0);
             if (mip0 == mip1 || frac <= 0.f)
-                return tex.SampleBilinear(u, v, mip0);
-            const SRMath::vec3 c0 = tex.SampleBilinear(u, v, mip0);
-            const SRMath::vec3 c1 = tex.SampleBilinear(u, v, mip1);
+                return tex.SampleBilinearRGBA(u, v, mip0);
+            const SRMath::Color4 c0 = tex.SampleBilinearRGBA(u, v, mip0);
+            const SRMath::Color4 c1 = tex.SampleBilinearRGBA(u, v, mip1);
             return c0 + (c1 - c0) * frac;
         }
         const int mip = std::clamp(static_cast<int>(std::round(lod)), 0, tex.GetMipCount() - 1);
-        return tex.SampleNearest(u, v, mip);
+        return tex.SampleNearestRGBA(u, v, mip);
     }
     if (frame.bilinearFiltering)
-        return tex.SampleBilinear(u, v, 0);
-    return tex.Sample(u, v, lod);
+        return tex.SampleBilinearRGBA(u, v, 0);
+    return tex.SampleRGBA(u, v, lod);
+}
+
+namespace
+{
+SR_FORCEINLINE SRMath::vec3 sampleTexture(const Texture &tex, float u, float v, float lod,
+                                          const RenderFrameContext &frame)
+{
+    const auto c = Rasterizer::SampleTexture(tex, u, v, lod, frame);
+    return {c.r, c.g, c.b};
 }
 
 SRMath::vec3 perturbNormal(const SRMath::vec3 &normalWorld, const SRMath::vec3 &tangentWorld,

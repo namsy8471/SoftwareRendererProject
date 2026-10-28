@@ -71,6 +71,13 @@ std::expected<std::shared_ptr<::Texture>, AssetLoadError> decodeWithCodecs(std::
     material.shininess = std::clamp(2.f / std::max(roughness2 * roughness2, 1e-4f) - 2.f, 1.f, 256.f);
     material.opacity = base[3];
     material.normalScale = source.normalScale;
+    if (source.alphaMode == 1)
+        material.alphaMode = AlphaMode::Mask;
+    else if (source.alphaMode == 2)
+        material.alphaMode = AlphaMode::Blend;
+    else
+        material.alphaMode = AlphaMode::Opaque;
+    material.alphaCutoff = source.alphaCutoff;
     return material;
 }
 

@@ -153,7 +153,7 @@ std::expected<std::unordered_map<std::string, Material>, AssetLoadError> Texture
             else
                 currentMaterial->specular = *color;
         }
-        else if (command == "Ns" || command == "d")
+        else if (command == "Ns" || command == "d" || command == "Tr")
         {
             auto remaining = arguments;
             auto value = takeNumber<float>(remaining);
@@ -161,8 +161,18 @@ std::expected<std::unordered_map<std::string, Material>, AssetLoadError> Texture
                 return std::unexpected(malformedMtl(filepath, lineNumber, command));
             if (command == "Ns")
                 currentMaterial->shininess = *value;
+            else if (command == "d")
+            {
+                currentMaterial->opacity = std::clamp(*value, 0.0f, 1.0f);
+                if (currentMaterial->opacity < 1.0f)
+                    currentMaterial->alphaMode = AlphaMode::Blend;
+            }
             else
-                currentMaterial->opacity = *value;
+            {
+                currentMaterial->opacity = std::clamp(1.0f - *value, 0.0f, 1.0f);
+                if (currentMaterial->opacity < 1.0f)
+                    currentMaterial->alphaMode = AlphaMode::Blend;
+            }
         }
         else if (command == "map_Kd")
         {
