@@ -2,7 +2,7 @@
 
 소스 파일 하나당 한 줄 안내. "이 기능은 어느 파일에 있나"를 파일을 열기 전에 찾는 용도다.
 흐름·계층·스레드 계약은 [ARCHITECTURE.md](ARCHITECTURE.md), 변경 시 지킬 계약은 [MAINTENANCE.md](MAINTENANCE.md),
-작업 명령과 판정 기준은 [CLAUDE.md](CLAUDE.md)에 있다. 여기에는 그 내용을 되풀이하지 않는다.
+작업 명령과 판정 기준은 [AGENTS.md](AGENTS.md)(AI 공통 규칙, `CLAUDE.md`·`GEMINI.md`가 불러옴)에 있다. 여기에는 그 내용을 되풀이하지 않는다.
 
 - 표기: `A.h` · `A.cpp`처럼 같은 줄에 묶인 파일은 선언/구현 짝이다. 굵은 이름은 그 파일의 핵심 타입·함수다.
 - 범위: git이 추적하는 `.cpp/.h/.hpp/.ixx` 전부(`src/ThirdParty/` 제외). CI의 `tools/ci/check_codemap.py`가

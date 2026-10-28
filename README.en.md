@@ -91,7 +91,7 @@ Changes that were not at least 2% faster, or were slower, were dropped and the r
 
 | Item | Role |
 |---|---|
-| [CLAUDE.md](CLAUDE.md) | AI-facing summary: the 100 fps bar (p95 ≤ 9 ms), commands, workflow, verdict rules |
+| [AGENTS.md](AGENTS.md) | Shared rules for AI tools: the 100 fps bar (p95 ≤ 9 ms), commands, workflow, verdict rules. `CLAUDE.md` (Claude Code) and `GEMINI.md` (Gemini CLI) just import it |
 | Assembly-level optimization rule (CLAUDE.md, PR #19) | Optimize from the generated assembly (`/FAs`, `dumpbin /disasm`), not source-level guesses, and record before/after. Covers per-frame and load-time code |
 | Mandatory profiling rule (CLAUDE.md, PR #22) | Every optimization is profiled on the PC with both VTune and VS CPU Usage, before and after, with hotspot shares recorded |
 | [CODEMAP.md](CODEMAP.md) | One line per source file; CI (`tools/ci/check_codemap.py`) catches missing files |
@@ -478,7 +478,8 @@ SoftwareRendererProject/
 │  ├─ Scene/              # Camera and GameObject
 │  └─ Utils/              # Error types, fixed-capacity storage, timing
 ├─ ARCHITECTURE.md
-├─ CLAUDE.md              # AI-facing summary (commands, rules, performance bar)
+├─ AGENTS.md              # Shared AI rules (commands, rules, performance bar)
+├─ CLAUDE.md, GEMINI.md   # Claude Code / Gemini CLI entry files (import AGENTS.md)
 ├─ CMakeLists.txt         # Headless build (core, srcli, tests)
 ├─ MAINTENANCE.md
 ├─ PERFORMANCE.md

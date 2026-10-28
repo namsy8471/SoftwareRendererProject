@@ -91,7 +91,7 @@ PRごとに同じPCで変更前(base)と変更後(head)を交互に測り、2%�
 
 | 項目 | 役割 |
 |---|---|
-| [CLAUDE.md](CLAUDE.md) | AI向け要約: 100fps基準(p95 ≤ 9ms)、コマンド、作業手順、判定ルール |
+| [AGENTS.md](AGENTS.md) | AI共通ルール: 100fps基準(p95 ≤ 9ms)、コマンド、作業手順、判定ルール。`CLAUDE.md`(Claude Code)と`GEMINI.md`(Gemini CLI)はこれを読み込む入口 |
 | アセンブリ基準の最適化ルール (CLAUDE.md、PR #19) | ソースからの推測ではなく生成されたアセンブリ(`/FAs`、`dumpbin /disasm`)を見て最適化し、前後を記録。毎フレームのコードとロード時のコードに適用 |
 | プロファイリング必須ルール (CLAUDE.md、PR #22) | すべての最適化をPCでVTuneとVS CPU Usageの両方で前後計測し、ホットスポットの占有率を記録 |
 | [CODEMAP.md](CODEMAP.md) | ソースファイルごとの役割を1行で。CI(`tools/ci/check_codemap.py`)が漏れを検出 |
@@ -478,7 +478,8 @@ SoftwareRendererProject/
 │  ├─ Scene/              # CameraとGameObject
 │  └─ Utils/              # Error type、fixed-capacity storage、timing
 ├─ ARCHITECTURE.md
-├─ CLAUDE.md              # AI作業向け要約(コマンド、規則、性能基準)
+├─ AGENTS.md              # AI共通ルール(コマンド、規則、性能基準)
+├─ CLAUDE.md, GEMINI.md   # Claude Code / Gemini CLI の入口(AGENTS.mdを読み込む)
 ├─ CMakeLists.txt         # headlessビルド(core、srcli、テスト)
 ├─ MAINTENANCE.md
 ├─ PERFORMANCE.md
