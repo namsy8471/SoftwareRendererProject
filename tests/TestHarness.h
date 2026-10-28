@@ -64,6 +64,7 @@ void RegisterAnimationTests(TestRegistry &);
 void RegisterProjectTests(TestRegistry &);
 void RegisterImageCodecTests(TestRegistry &);
 void RegisterJobsTests(TestRegistry &);
+void RegisterBakerTests(TestRegistry &);
 #if SR_TEST_WIN32_APP
 void RegisterWin32AppTests(TestRegistry &);
 #endif
