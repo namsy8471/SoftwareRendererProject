@@ -7,6 +7,7 @@
 #include "Graphics/ModelLoader.h"
 #include "Renderer/Renderer.h"
 #include "Scene/GameObject.h"
+#include "Scene/ScenePicking.h"
 #include "Utils/AssetLoadError.h"
 #include "Utils/Utils.h"
 
@@ -63,6 +64,26 @@ class WindowDc final
     return converted;
 }
 
+[[nodiscard]] bool sceneContainsObject(const GameObject &node, const GameObject *target) noexcept
+{
+    if (&node == target)
+        return true;
+    for (const auto &child : node.GetChildren())
+        if (child && sceneContainsObject(*child, target))
+            return true;
+    return false;
+}
+
+[[nodiscard]] bool isObjectInScene(const Scene &scene, const std::shared_ptr<GameObject> &target) noexcept
+{
+    if (!target)
+        return false;
+    for (const auto &root : scene.GetRootObjects())
+        if (root && sceneContainsObject(*root, target.get()))
+            return true;
+    return false;
+}
+
 // 켜고 끄는 메뉴 항목 표. 라디오 그룹(선 알고리즘, AA)은 handleMenuCommand의 switch에 있다.
 struct DebugFlagMenu
 {
@@ -111,6 +132,22 @@ constexpr std::array animationMenuItems{
     AnimationMenuItem{ID_ANIM_LOOP, L"\uBC18\uBCF5\tL"},
     AnimationMenuItem{ID_ANIM_PREVCLIP, L"\uC774\uC804 \uD074\uB9BD\t["},
     AnimationMenuItem{ID_ANIM_NEXTCLIP, L"\uB2E4\uC74C \uD074\uB9BD\t]"}};
+
+struct EditMenuItem
+{
+    int commandId;
+    const wchar_t *label; // nullptr면 구분선
+};
+constexpr std::array editMenuItems{
+    EditMenuItem{ID_EDIT_UNDO, L"\uC2E4\uD589 \uCDE8\uC18C(&U)\tCtrl+Z"},
+    EditMenuItem{ID_EDIT_REDO, L"\uB2E4\uC2DC \uC2E4\uD589(&R)\tCtrl+Y"},
+    EditMenuItem{0, nullptr},
+    EditMenuItem{ID_EDIT_FOCUS, L"\uC120\uD0DD \uBB3C\uCCB4\uC5D0 \uCD08\uC810(&F)\tF"},
+    EditMenuItem{ID_EDIT_DESELECT, L"\uC120\uD0DD \uD574\uC81C(&C)\tEsc"},
+    EditMenuItem{0, nullptr},
+    EditMenuItem{ID_EDIT_MODE_TRANSLATE, L"\uC774\uB3D9 \uBAA8\uB4DC(&T)\t1"},
+    EditMenuItem{ID_EDIT_MODE_ROTATE, L"\uD68C\uC804 \uBAA8\uB4DC(&O)\t2"},
+    EditMenuItem{ID_EDIT_MODE_SCALE, L"\uD06C\uAE30 \uBAA8\uB4DC(&S)\t3"}};
 } // namespace
 
 Win32App::Win32App(HINSTANCE hInstance, int nCmdShow)
@@ -119,7 +156,27 @@ Win32App::Win32App(HINSTANCE hInstance, int nCmdShow)
           .onError = [this](const std::string &message) { m_pendingAssetErrors.push_back({message}); }}),
       m_projectSession(
           m_runner, m_loader, [this](AssetLoadError error) { m_pendingAssetErrors.push_back(std::move(error)); },
-          [this] { refreshWindowTitle(); })
+          [this]
+          {
+              if (m_editorState.HasSelection() &&
+                  !isObjectInScene(m_runner.GetScene(), m_editorState.GetSelectedObject()))
+              {
+                  m_editorState.ClearSelection();
+                  m_editorState.ClearHistory();
+              }
+              if (m_activeAnimator.expired())
+              {
+                  for (const auto &animator : m_runner.GetScene().GetAnimators())
+                      if (animator && animator->GetClipCount() > 0)
+                      {
+                          m_activeAnimator = animator;
+                          break;
+                      }
+              }
+              refreshAnimationMenu();
+              refreshEditMenu();
+              refreshWindowTitle();
+          })
 {
     initializeWindow(hInstance, nCmdShow);
     if (!resizeRenderTarget(m_hWnd))
@@ -186,6 +243,7 @@ void Win32App::initializeWindow(HINSTANCE hInstance, int nCmdShow)
         throw std::runtime_error("Failed to initialize file menu");
     initializeProjectMenu(fileMenu, 2);
     DragAcceptFiles(m_hWnd, TRUE);
+    initializeEditMenu();
     initializeAnimationMenu();
 
     ShowWindow(m_hWnd, nCmdShow);
@@ -248,6 +306,28 @@ void Win32App::loadModelAsync(std::filesystem::path path)
                            [](wchar_t c) { return static_cast<wchar_t>(std::towlower(c)); });
     if (extension == L".gltf" || extension == L".glb")
     {
+        // 프로젝트가 열려 있으면 Assets로 복사하고 에셋 표에 등록해 씬 저장/로드와 연동한다.
+        if (m_projectSession.HasProject())
+        {
+            m_projectSession.ImportModel(
+                std::move(path),
+                [this](sr::gltf::LoadedScene &scene, const std::shared_ptr<sr::anim::Animator> &animator)
+                    -> std::shared_ptr<GameObject>
+                {
+                    if (!animator)
+                        return placeLoadedObject(std::move(scene.root), scene.bounds);
+                    const AABB posedBounds = animator->GetBounds();
+                    auto object = placeLoadedObject(std::move(scene.root),
+                                                    posedBounds.IsValid() ? posedBounds : scene.bounds);
+                    if (object && animator->GetClipCount() > 0)
+                    {
+                        m_activeAnimator = animator;
+                        refreshAnimationMenu();
+                    }
+                    return object;
+                });
+            return;
+        }
         // 파싱과 스킨 준비(Animator::Create)는 작업 스레드에서, 장면·재생기 추가는 프레임 시작 훅에서 한다.
         struct LoadedGltf
         {
@@ -345,6 +425,118 @@ std::shared_ptr<GameObject> Win32App::placeLoadedObject(std::shared_ptr<GameObje
         return nullptr;
     }
     return object;
+}
+
+void Win32App::initializeEditMenu()
+{
+    m_editMenu = CreatePopupMenu();
+    if (!m_editMenu)
+        throw std::runtime_error("Failed to initialize edit menu");
+    for (const auto &item : editMenuItems)
+    {
+        const bool appended = item.label
+                                  ? AppendMenuW(m_editMenu, MF_STRING, static_cast<UINT_PTR>(item.commandId), item.label)
+                                  : AppendMenuW(m_editMenu, MF_SEPARATOR, 0, nullptr);
+        if (!appended)
+            throw std::runtime_error("Failed to initialize edit menu");
+    }
+    if (!AppendMenuW(GetMenu(m_hWnd), MF_POPUP, reinterpret_cast<UINT_PTR>(m_editMenu),
+                     L"\uD3B8\uC9D1(&E)"))
+        throw std::runtime_error("Failed to attach edit menu");
+    refreshEditMenu();
+}
+
+void Win32App::refreshEditMenu()
+{
+    if (!m_editMenu)
+        return;
+    EnableMenuItem(m_editMenu, ID_EDIT_UNDO,
+                   MF_BYCOMMAND | (m_editorState.CanUndo() ? MF_ENABLED : MF_GRAYED));
+    EnableMenuItem(m_editMenu, ID_EDIT_REDO,
+                   MF_BYCOMMAND | (m_editorState.CanRedo() ? MF_ENABLED : MF_GRAYED));
+    EnableMenuItem(m_editMenu, ID_EDIT_DESELECT,
+                   MF_BYCOMMAND | (m_editorState.HasSelection() ? MF_ENABLED : MF_GRAYED));
+
+    UINT activeModeId = ID_EDIT_MODE_TRANSLATE;
+    switch (m_editorState.GetTransformMode())
+    {
+    case sr::editor::TransformMode::Translate:
+        activeModeId = ID_EDIT_MODE_TRANSLATE;
+        break;
+    case sr::editor::TransformMode::Rotate:
+        activeModeId = ID_EDIT_MODE_ROTATE;
+        break;
+    case sr::editor::TransformMode::Scale:
+        activeModeId = ID_EDIT_MODE_SCALE;
+        break;
+    }
+    CheckMenuRadioItem(m_editMenu, ID_EDIT_MODE_TRANSLATE, ID_EDIT_MODE_SCALE, activeModeId, MF_BYCOMMAND);
+    DrawMenuBar(m_hWnd);
+}
+
+bool Win32App::handleEditCommand(int commandId)
+{
+    switch (commandId)
+    {
+    case ID_EDIT_UNDO:
+        if (m_editorState.Undo())
+        {
+            if (m_projectSession.HasProject())
+                m_projectSession.MarkDirty();
+            refreshEditMenu();
+        }
+        return true;
+    case ID_EDIT_REDO:
+        if (m_editorState.Redo())
+        {
+            if (m_projectSession.HasProject())
+                m_projectSession.MarkDirty();
+            refreshEditMenu();
+        }
+        return true;
+     case ID_EDIT_FOCUS:
+    {
+        AABB targetBounds;
+        if (const auto selected = m_editorState.GetSelectedObject())
+        {
+            targetBounds = sr::editor::ComputeObjectWorldBounds(*selected);
+            if (!targetBounds.IsValid())
+            {
+                const SRMath::vec3 pos = m_editorState.GetGizmoOrigin();
+                targetBounds.min = pos - SRMath::vec3{0.5f, 0.5f, 0.5f};
+                targetBounds.max = pos + SRMath::vec3{0.5f, 0.5f, 0.5f};
+            }
+        }
+        else
+        {
+            for (const auto &root : m_runner.GetScene().GetRootObjects())
+                if (root)
+                    targetBounds.Encapsulate(sr::editor::ComputeObjectWorldBounds(*root));
+        }
+        if (targetBounds.IsValid())
+            m_runner.GetScene().GetCamera().FocusOnBounds(targetBounds);
+        return true;
+    }
+    case ID_EDIT_DESELECT:
+        m_editorState.ClearSelection();
+        m_isDraggingGizmo = false;
+        refreshEditMenu();
+        return true;
+    case ID_EDIT_MODE_TRANSLATE:
+        m_editorState.SetTransformMode(sr::editor::TransformMode::Translate);
+        refreshEditMenu();
+        return true;
+    case ID_EDIT_MODE_ROTATE:
+        m_editorState.SetTransformMode(sr::editor::TransformMode::Rotate);
+        refreshEditMenu();
+        return true;
+    case ID_EDIT_MODE_SCALE:
+        m_editorState.SetTransformMode(sr::editor::TransformMode::Scale);
+        refreshEditMenu();
+        return true;
+    default:
+        return false;
+    }
 }
 
 void Win32App::initializeAnimationMenu()
@@ -509,10 +701,16 @@ void Win32App::showPendingAssetErrors()
 void Win32App::updateFrame(float deltaTime)
 {
     m_runner.Update(deltaTime, m_renderTarget.Width(), m_renderTarget.Height(), m_keys);
+    m_gizmosSubmitted = false;
 }
 
 void Win32App::renderFrame()
 {
+    if (!m_gizmosSubmitted)
+    {
+        m_editorState.AppendEditorGizmos(m_runner.GetRenderQueue());
+        m_gizmosSubmitted = true;
+    }
     m_runner.Render(m_renderTarget);
 }
 
@@ -560,18 +758,40 @@ LRESULT Win32App::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
 
     // Keyboard Input
     case WM_KEYDOWN:
+    case WM_SYSKEYDOWN:
         handleKeyDown(wParam, (lParam & (1LL << 30)) != 0);
         break;
     case WM_KEYUP:
+    case WM_SYSKEYUP:
         if (wParam < m_keys.size())
             m_keys[wParam] = false;
         break;
 
     // Mouse Input
+    case WM_LBUTTONDOWN:
+        handleLeftMouseDown(lParam);
+        break;
+    case WM_LBUTTONUP:
+        handleLeftMouseUp();
+        break;
+    case WM_MBUTTONDOWN:
+        m_isMiddleMouseDown = true;
+        m_lastMousePos = {static_cast<short>(LOWORD(lParam)), static_cast<short>(HIWORD(lParam))};
+        break;
+    case WM_MBUTTONUP:
+        m_isMiddleMouseDown = false;
+        break;
     case WM_RBUTTONDOWN:
         m_isRightMouseDown = true;
-        GetCursorPos(&m_lastMousePos);
-        ScreenToClient(hWnd, &m_lastMousePos);
+        if (lParam != 0)
+        {
+            m_lastMousePos = {static_cast<short>(LOWORD(lParam)), static_cast<short>(HIWORD(lParam))};
+        }
+        else
+        {
+            GetCursorPos(&m_lastMousePos);
+            ScreenToClient(hWnd, &m_lastMousePos);
+        }
         break;
     case WM_RBUTTONUP:
         m_isRightMouseDown = false;
@@ -579,6 +799,13 @@ LRESULT Win32App::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
     case WM_MOUSEMOVE:
         handleMouseMove(lParam);
         break;
+    case WM_MOUSEWHEEL:
+    {
+        const short wheelDelta = GET_WHEEL_DELTA_WPARAM(wParam);
+        m_runner.GetScene().GetCamera().Zoom(
+            static_cast<float>(wheelDelta) / static_cast<float>(WHEEL_DELTA) * 0.5f);
+        break;
+    }
 
     case WM_DROPFILES:
         handleDroppedFiles(wParam);
@@ -623,6 +850,9 @@ bool Win32App::handleMenuCommand(int commandId)
         return true;
     }
 
+    if (handleEditCommand(commandId))
+        return true;
+
     if (handleAnimationCommand(commandId))
         return true;
 
@@ -662,14 +892,113 @@ bool Win32App::handleMenuCommand(int commandId)
     return true;
 }
 
+void Win32App::handleLeftMouseDown(LPARAM position)
+{
+    m_isLeftMouseDown = true;
+    const POINT mousePos{static_cast<short>(LOWORD(position)), static_cast<short>(HIWORD(position))};
+    m_lastMousePos = mousePos;
+
+    const float width = static_cast<float>(m_renderTarget.Width());
+    const float height = static_cast<float>(m_renderTarget.Height());
+    if (width <= 0.f || height <= 0.f)
+        return;
+
+    const Ray ray = ScreenPointToRay(static_cast<float>(mousePos.x), static_cast<float>(mousePos.y), width,
+                                     height, m_runner.GetScene().GetCamera().GetViewParams());
+    if (m_editorState.HasSelection())
+    {
+        const GizmoAxis axis = m_editorState.PickGizmoAxis(ray);
+        if (axis != GizmoAxis::None)
+        {
+            m_editorState.SetActiveAxis(axis);
+            m_editorState.BeginTransformEdit();
+            m_isDraggingGizmo = true;
+            return;
+        }
+    }
+
+    m_isDraggingGizmo = false;
+    m_editorState.SetActiveAxis(GizmoAxis::None);
+    if (const auto hit = PickSceneObject(m_runner.GetScene(), ray))
+        m_editorState.Select(hit->object);
+    else
+        m_editorState.ClearSelection();
+    refreshEditMenu();
+}
+
+void Win32App::handleLeftMouseUp()
+{
+    m_isLeftMouseDown = false;
+    if (m_isDraggingGizmo)
+    {
+        m_isDraggingGizmo = false;
+        const bool changed = m_editorState.CommitTransformEdit();
+        m_editorState.SetActiveAxis(GizmoAxis::None);
+        if (changed && m_projectSession.HasProject())
+            m_projectSession.MarkDirty();
+        refreshEditMenu();
+    }
+}
+
 void Win32App::handleMouseMove(LPARAM position)
 {
-    if (!m_isRightMouseDown)
-        return;
     // 마우스 좌표는 음수일 수 있으므로 16-bit signed 좌표로 해석한다.
     const POINT currentMousePos = {static_cast<short>(LOWORD(position)), static_cast<short>(HIWORD(position))};
     const auto deltaX = currentMousePos.x - m_lastMousePos.x;
     const auto deltaY = currentMousePos.y - m_lastMousePos.y;
+
+    if (m_isDraggingGizmo && m_isLeftMouseDown && m_editorState.HasSelection())
+    {
+        const float amount = (static_cast<float>(deltaX) - static_cast<float>(deltaY)) * 0.01f;
+        SRMath::vec3 axisDir{0.f, 0.f, 0.f};
+        switch (m_editorState.GetActiveAxis())
+        {
+        case GizmoAxis::X:
+            axisDir = {1.f, 0.f, 0.f};
+            break;
+        case GizmoAxis::Y:
+            axisDir = {0.f, 1.f, 0.f};
+            break;
+        case GizmoAxis::Z:
+            axisDir = {0.f, 0.f, 1.f};
+            break;
+        case GizmoAxis::None:
+            break;
+        }
+        switch (m_editorState.GetTransformMode())
+        {
+        case TransformMode::Translate:
+            m_editorState.ApplyTranslation(axisDir * amount);
+            break;
+        case TransformMode::Rotate:
+            m_editorState.ApplyRotationEuler(axisDir * amount);
+            break;
+        case TransformMode::Scale:
+        {
+            const float factor = std::max(0.1f, 1.0f + amount);
+            const SRMath::vec3 scaleFactor{axisDir.x > 0.f ? factor : 1.0f,
+                                           axisDir.y > 0.f ? factor : 1.0f,
+                                           axisDir.z > 0.f ? factor : 1.0f};
+            m_editorState.ApplyScaleFactor(scaleFactor);
+            break;
+        }
+        }
+        if (const auto selected = m_editorState.GetSelectedObject())
+            selected->UpdateTransform(0.f, false);
+        m_lastMousePos = currentMousePos;
+        return;
+    }
+
+    const bool altDown = m_keys[VK_MENU] || (GetKeyState(VK_MENU) & 0x8000) != 0;
+    if (m_isMiddleMouseDown || (m_isRightMouseDown && altDown))
+    {
+        m_runner.GetScene().GetCamera().Orbit(-deltaX * 0.005f, -deltaY * 0.005f);
+        m_lastMousePos = currentMousePos;
+        return;
+    }
+
+    if (!m_isRightMouseDown)
+        return;
 
     Camera &camera = m_runner.GetScene().GetCamera();
     camera.SetCameraYaw(camera.GetCameraYaw() - deltaX * 0.005f);
@@ -689,6 +1018,8 @@ void Win32App::handleKeyDown(WPARAM key, bool repeated)
     m_keys[key] = true;
     if (repeated)
         return;
+    const bool controlDown = m_keys[VK_CONTROL] || (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+    const bool shiftDown = m_keys[VK_SHIFT] || (GetKeyState(VK_SHIFT) & 0x8000) != 0;
     if (key == VK_SPACE)
     {
         Scene &scene = m_runner.GetScene();
@@ -698,13 +1029,16 @@ void Win32App::handleKeyDown(WPARAM key, bool repeated)
         handleMenuCommand(ID_ANTIALIASING_NONE);
     else if (key == VK_F2)
         handleMenuCommand(ID_ANTIALIASING_FXAA);
-    else if ((GetKeyState(VK_CONTROL) & 0x8000) != 0)
+    else if (controlDown)
     {
-        const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
         if (key == 'O')
-            handleMenuCommand(shift ? ID_FILE_OPENPROJECT : ID_FILE_OPENMODEL);
+            handleMenuCommand(shiftDown ? ID_FILE_OPENPROJECT : ID_FILE_OPENMODEL);
         else if (key == 'S')
-            handleMenuCommand(shift ? ID_FILE_SAVESCENEAS : ID_FILE_SAVESCENE);
+            handleMenuCommand(shiftDown ? ID_FILE_SAVESCENEAS : ID_FILE_SAVESCENE);
+        else if (key == 'Z')
+            handleMenuCommand(ID_EDIT_UNDO);
+        else if (key == 'Y')
+            handleMenuCommand(ID_EDIT_REDO);
     }
     else if (key == 'P')
         handleMenuCommand(ID_ANIM_PLAYPAUSE);
@@ -716,6 +1050,16 @@ void Win32App::handleKeyDown(WPARAM key, bool repeated)
         handleMenuCommand(ID_ANIM_PREVCLIP);
     else if (key == VK_OEM_6) // ]
         handleMenuCommand(ID_ANIM_NEXTCLIP);
+    else if (key == 'F')
+        handleMenuCommand(ID_EDIT_FOCUS);
+    else if (key == VK_ESCAPE)
+        handleMenuCommand(ID_EDIT_DESELECT);
+    else if (key == '1')
+        handleMenuCommand(ID_EDIT_MODE_TRANSLATE);
+    else if (key == '2')
+        handleMenuCommand(ID_EDIT_MODE_ROTATE);
+    else if (key == '3')
+        handleMenuCommand(ID_EDIT_MODE_SCALE);
 }
 
 void Win32App::checkMenuItem(int menuId, bool checked) const noexcept

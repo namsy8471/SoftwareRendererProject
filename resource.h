@@ -1,4 +1,4 @@
-﻿//{{NO_DEPENDENCIES}}
+//{{NO_DEPENDENCIES}}
 // Microsoft Visual C++에서 생성한 포함 파일입니다.
 // SoftrendererProject.rc에서 사용되고 있습니다.
 //
@@ -32,6 +32,13 @@
 #define ID_FILE_OPENSCENE                32788
 #define ID_FILE_SAVESCENE                32789
 #define ID_FILE_SAVESCENEAS              32790
+#define ID_EDIT_UNDO                     32870
+#define ID_EDIT_REDO                     32871
+#define ID_EDIT_FOCUS                    32872
+#define ID_EDIT_DESELECT                 32873
+#define ID_EDIT_MODE_TRANSLATE           32874
+#define ID_EDIT_MODE_ROTATE              32875
+#define ID_EDIT_MODE_SCALE               32876
 #define IDC_STATIC                      -1
 
 // Next default values for new objects
@@ -40,7 +47,7 @@
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_NO_MFC                     1
 #define _APS_NEXT_RESOURCE_VALUE        129
-#define _APS_NEXT_COMMAND_VALUE         32791
+#define _APS_NEXT_COMMAND_VALUE         32877
 #define _APS_NEXT_CONTROL_VALUE         1000
 #define _APS_NEXT_SYMED_VALUE           110
 #endif

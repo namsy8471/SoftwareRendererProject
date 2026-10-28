@@ -1,11 +1,15 @@
 #include "Project/ProjectSession.h"
+#include "Animation/Animator.h"
 #include "Core/FrameRunner.h"
+#include "Graphics/GltfLoader.h"
 #include "Graphics/Model.h"
 #include "Graphics/ModelLoader.h"
 #include "IO/BackgroundLoader.h"
 #include "Renderer/Renderer.h"
 #include "Scene/GameObject.h"
 
+#include <algorithm>
+#include <cwctype>
 #include <exception>
 #include <thread>
 #include <utility>
@@ -54,6 +58,13 @@ template <class Work> auto guarded(Work work)
 {
     const auto text = file.stem().u8string();
     return {text.begin(), text.end()};
+}
+
+[[nodiscard]] std::wstring lowerExt(const fs::path &path)
+{
+    std::wstring ext = path.extension().wstring();
+    std::ranges::transform(ext, ext.begin(), [](wchar_t c) { return static_cast<wchar_t>(std::towlower(c)); });
+    return ext;
 }
 
 [[nodiscard]] std::expected<void, AssetLoadError> writeSnapshot(const fs::path &projectFile,
@@ -349,10 +360,34 @@ std::expected<void, AssetLoadError> ProjectSession::SaveSceneNow()
 }
 
 // --- 에셋 ---
+void ProjectSession::ImportModel(fs::path source)
+{
+    const std::wstring ext = lowerExt(source);
+    if (ext == L".gltf" || ext == L".glb")
+    {
+        ImportModel(std::move(source), PlaceGltf{});
+        return;
+    }
+    ImportModel(std::move(source),
+                [this](std::unique_ptr<Model> model)
+                {
+                    auto object = std::make_shared<GameObject>(SRMath::vec3{0.f, 0.f, 0.f},
+                                                               SRMath::vec3{0.f, 0.f, 0.f},
+                                                               SRMath::vec3{1.f, 1.f, 1.f}, std::move(model));
+                    return m_runner.GetScene().AddObject(object) ? object : nullptr;
+                });
+}
+
 void ProjectSession::ImportModel(fs::path source, PlaceModel place)
 {
     if (!m_project)
         return reportError({"No project is open", source});
+    const std::wstring ext = lowerExt(source);
+    if (ext == L".gltf" || ext == L".glb")
+    {
+        ImportModel(std::move(source), PlaceGltf{});
+        return;
+    }
     struct Imported
     {
         AssetEntry asset;
@@ -386,10 +421,90 @@ void ProjectSession::ImportModel(fs::path source, PlaceModel place)
                 return;
             if (!m_project->FindAsset(result->asset.id))
                 m_project->assets.push_back(result->asset);
-            const auto object = place(std::move(result->model));
+            std::shared_ptr<GameObject> object;
+            if (place)
+                object = place(std::move(result->model));
+            else
+            {
+                object = std::make_shared<GameObject>(SRMath::vec3{0.f, 0.f, 0.f}, SRMath::vec3{0.f, 0.f, 0.f},
+                                                      SRMath::vec3{1.f, 1.f, 1.f}, std::move(result->model));
+                if (!m_runner.GetScene().AddObject(object))
+                    object.reset();
+            }
             if (!object)
                 return reportError({"Failed to add the model to the scene"});
             object->SetEntityInfo({.id = NewId(), .name = name, .meshAsset = result->asset.id});
+            MarkDirty();
+        });
+}
+
+void ProjectSession::ImportModel(fs::path source, PlaceGltf place)
+{
+    if (!m_project)
+        return reportError({"No project is open", source});
+    struct ImportedGltf
+    {
+        AssetEntry asset;
+        sr::gltf::LoadedScene scene;
+        std::shared_ptr<sr::anim::Animator> animator;
+    };
+    using ImportResult = std::expected<ImportedGltf, AssetLoadError>;
+    ++m_pendingJobs;
+    m_loader.Submit(
+        guarded(
+            [root = GetProjectRoot(), project = *m_project, source](std::stop_token) -> ImportResult
+            {
+                auto asset = ImportModelAsset(root, project, source);
+                if (!asset)
+                    return std::unexpected(std::move(asset.error()));
+                auto path = ResolveProjectPath(root, asset->path);
+                if (!path)
+                    return std::unexpected(AssetLoadError{path.error(), source});
+                auto scene = sr::gltf::LoadScene(*path);
+                if (!scene)
+                    return std::unexpected(std::move(scene.error()));
+                auto animator = sr::anim::Animator::Create(*scene);
+                if (!animator)
+                    return std::unexpected(
+                        AssetLoadError{"Animation setup failed: " + animator.error(), *path});
+                return ImportedGltf{std::move(*asset), std::move(*scene), std::move(*animator)};
+            }),
+        [this, generation = m_generation, name = stemUtf8(source), source,
+         place = std::move(place)](ImportResult result)
+        {
+            --m_pendingJobs;
+            if (!result)
+                return reportError(std::move(result.error()));
+            if (generation != m_generation || !m_project)
+                return;
+            std::vector<std::string> warnings = result->scene.warnings;
+            if (result->animator)
+                warnings.insert(warnings.end(), result->animator->GetWarnings().begin(),
+                                result->animator->GetWarnings().end());
+            if (!warnings.empty())
+            {
+                std::string message = "Loaded with warnings:";
+                for (const auto &warning : warnings)
+                    message += "\n- " + warning;
+                reportError({std::move(message), source});
+            }
+            if (!m_project->FindAsset(result->asset.id))
+                m_project->assets.push_back(result->asset);
+            std::shared_ptr<GameObject> object;
+            if (place)
+                object = place(result->scene, result->animator);
+            else
+            {
+                object = result->scene.root;
+                if (object && !m_runner.GetScene().AddObject(object))
+                    object.reset();
+            }
+            if (!object)
+                return reportError({"Failed to add the model to the scene"});
+            object->SetEntityInfo({.id = NewId(), .name = name, .meshAsset = result->asset.id});
+            if (result->animator &&
+                (result->animator->GetClipCount() > 0 || !result->animator->GetSkinnedObjects().empty()))
+                m_runner.GetScene().AddAnimator(result->animator);
             MarkDirty();
         });
 }

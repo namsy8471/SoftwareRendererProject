@@ -36,6 +36,7 @@ class FrameRunner
     [[nodiscard]] DebugFlags &GetDebugFlags() noexcept { return m_debugFlags; }
     [[nodiscard]] Renderer &GetRenderer() noexcept { return *m_renderer; }
     [[nodiscard]] const Renderer &GetRenderer() const noexcept { return *m_renderer; }
+    [[nodiscard]] RenderQueue &GetRenderQueue() noexcept { return m_renderQueue; }
     [[nodiscard]] const RenderQueue &GetRenderQueue() const noexcept { return m_renderQueue; }
     void SetFrameStartHook(FrameStartHook hook) { m_frameStartHook = std::move(hook); }
 

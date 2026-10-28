@@ -22,7 +22,7 @@
 
 | 파일 | 역할 |
 | --- | --- |
-| `Win32App.h` · `Win32App.cpp` | **Win32App**: 창·메뉴·키 입력·파일 드롭, 프레임 루프(`Run` → `runFrame`), 모델 비동기 로드 후 배치, 애니메이션 메뉴, GDI Present. 프레임 내용은 FrameRunner에 맡긴다 |
+| `Win32App.h` · `Win32App.cpp` | **Win32App**: 창·메뉴·키/마우스 입력·파일 드롭, 프레임 루프(`Run` → `runFrame`), 모델 비동기 로드 후 배치, 편집(선택·기즈모·Undo/Redo), 애니메이션 메뉴, GDI Present |
 | `Win32AppProject.cpp` | Win32App의 프로젝트·씬 파일 메뉴(파일 대화상자, 저장 확인). 실제 읽기·쓰기는 ProjectSession |
 
 ## src/Core/ (앱·srcli·테스트가 공유하는 프레임 실행)
@@ -35,13 +35,15 @@
 | `DemoScene.h` · `DemoScene.cpp` | 벤치·골든 고정 장면. **`sr::demo::LoadScene`**(모델 표), **`FitCameraToScene`**/`FitCameraToBounds`. 바꾸면 벤치 기준·골든이 바뀐다 |
 | `HeadlessRunner.h` · `HeadlessRunner.cpp` | 창 없는 실행. **ViewMode**(Fill/Wire/Normal/AABB/FXAA), **RunConfig**, **`Run()`** → FrameTimings·RunResult(픽셀 해시 포함) |
 
-## src/Scene/ (장면 데이터, 렌더 명령을 모른다)
+## src/Scene/ (장면 데이터와 편집 상태)
 
 | 파일 | 역할 |
 | --- | --- |
 | `Scene.h` · `Scene.cpp` | **Scene**: 루트 GameObject 목록·광원·카메라·Animator. `Update`가 포즈 → transform → 스킨 순으로 갱신 |
 | `GameObject.h` · `GameObject.cpp` | **GameObject**: transform 계층(부모부터 갱신, 순환 거부), Model/SkinnedMesh 참조, **EntityInfo**(씬 파일 id·이름·에셋) |
-| `Camera.h` · `Camera.cpp` | **Camera**: 위치·yaw/pitch, 키 입력 이동, view/projection 행렬, `GetViewParams()` |
+| `Camera.h` · `Camera.cpp` | **Camera**: 위치·yaw/pitch, 키 입력 이동, `FocusOnBounds`/`Orbit`/`Zoom`, view/projection 행렬, `GetViewParams()` |
+| `ScenePicking.h` · `ScenePicking.cpp` | **Ray**, **PickHit**, `ScreenPointToRay`, `RayIntersectsAABB`, `RayIntersectsTriangle`, `PickSceneObject`(월드 AABB·Octree·SkinnedMesh 교차) |
+| `EditorState.h` · `EditorState.cpp` | **`sr::editor::EditorState`**: 선택, 3축 기즈모 판정(`PickGizmoAxis`), 이동/회전/스케일 편집, Undo/Redo 히스토리, `AppendEditorGizmos` |
 
 ## src/Renderer/ (래스터라이저 본체)
 
@@ -171,12 +173,12 @@
 | `AnimationTests.cpp` | `animation.*`: 쿼터니언, 샘플링, 스키닝(스칼라 = AVX), Animator, 장면 연결 |
 | `JobsTests.cpp` | `jobs.*`: `sr::jobs` 범위 분할(모든 항목 정확히 한 번), 예외 전달, 중첩·동시 호출, `ConcurrencyLimit`, `IsolatedRunner`, `PerWorker` |
 | `IOTests.cpp` | `io.*`: JSON 파싱·쓰기, 파일 함수, BackgroundLoader |
-| `ProjectTests.cpp` | `project.*`: 프로젝트/씬 JSON 왕복, 형식 오류, 생성·가져오기, ProjectSession |
+| `ProjectTests.cpp` | `project.*`, `editor.*`: 프로젝트/씬 JSON 왕복(쿼터니언·glTF 포함), 생성·가져오기, ProjectSession, 피킹·카메라·EditorState |
 | `RendererCoreTests.cpp` | `renderer.*`: 클리핑, 작업자 격리, 명령 캐시, 타일 참조, 래스터 경로, Phong, FXAA |
 | `RenderTargetTests.cpp` | `target.*`, `platform.*`: 연결 검증, stride, 선 행 밴드, presenter 수명 |
 | `VisibilityTests.cpp` | `visibility.*`: 깊이·Hi-Z, 숨은선, 결정성, 병렬 디버그 제출 |
 | `GoldenTests.cpp` | `golden.*`: 데모 장면을 작게 렌더해 `tests/golden/*.png`와 비교(허용 오차는 파일 상단) |
-| `Win32AppTests.cpp` | `win32app.*`: 입력·메뉴·애니메이션/프로젝트 메뉴. MSBuild 테스트 빌드에서만 |
+| `Win32AppTests.cpp` | `win32app.*`: 입력·메뉴·애니메이션/프로젝트/편집 메뉴. MSBuild 테스트 빌드에서만 |
 
 ## tools/
 

@@ -12,6 +12,7 @@
 #include "Project/ProjectSession.h"
 #include "Platform/Win32Headers.h"
 #include "Renderer/RenderTarget.h"
+#include "Scene/EditorState.h"
 #include "Utils/PerformanceAnalyzer.h"
 
 #include "Utils/AssetLoadError.h"
@@ -41,6 +42,9 @@ class Win32App
     void Run();
     LRESULT HandleMessage(HWND, UINT, WPARAM, LPARAM);
 
+    [[nodiscard]] sr::editor::EditorState &GetEditorState() noexcept { return m_editorState; }
+    [[nodiscard]] const sr::editor::EditorState &GetEditorState() const noexcept { return m_editorState; }
+
     static LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
     static INT_PTR CALLBACK About(HWND dialog, UINT message, WPARAM wParam, LPARAM lParam);
 
@@ -58,6 +62,7 @@ class Win32App
     sr::platform::GdiPresenter m_presenter;
     RenderTarget m_renderTarget;
     FrameRunner m_runner;
+    sr::editor::EditorState m_editorState;
     // runner보다 뒤에 선언해 먼저 파괴된다. 남은 apply(runner 장면 수정)는 실행되지 않고 버려진다.
     sr::io::BackgroundLoader m_loader;
     // loader보다 뒤에 선언해 먼저 파괴된다. 작업 스레드의 작업은 세션을 참조하지 않는다.
@@ -65,7 +70,11 @@ class Win32App
     PerformanceAnalyzer m_perfAnalyzer;
 
     std::array<bool, FrameRunner::keyCount> m_keys{};
+    bool m_isLeftMouseDown = false;
+    bool m_isMiddleMouseDown = false;
     bool m_isRightMouseDown = false;
+    bool m_isDraggingGizmo = false;
+    bool m_gizmosSubmitted = false;
     // 생성자가 끝나기 전(CreateWindow/ShowWindow 중) 오는 WM_SIZE·메뉴 명령은 무시한다.
     bool m_isInitialized = false;
     POINT m_lastMousePos{};
@@ -75,6 +84,7 @@ class Win32App
     // 애니메이션 메뉴·단축키가 조작하는 재생기: 마지막으로 연 클립 있는 glTF. 장면이 소유한다.
     std::weak_ptr<sr::anim::Animator> m_activeAnimator;
     HMENU m_animationMenu = nullptr; // 메뉴 막대가 소유한다(창과 함께 파괴)
+    HMENU m_editMenu = nullptr;      // 메뉴 막대가 소유한다(창과 함께 파괴)
 
     void initializeWindow(HINSTANCE instance, int showCommand);
     void initializeScene();
@@ -85,6 +95,8 @@ class Win32App
     void presentFrame(HWND window);
     void updateFrameTime();
     bool handleMenuCommand(int commandId);
+    void handleLeftMouseDown(LPARAM position);
+    void handleLeftMouseUp();
     void handleMouseMove(LPARAM position);
     void handleKeyDown(WPARAM key, bool repeated);
     void checkMenuItem(int menuId, bool checked) const noexcept;
@@ -102,6 +114,9 @@ class Win32App
     void refreshAnimationMenu();
     // 애니메이션 명령이면 처리하고 true.
     bool handleAnimationCommand(int commandId);
+    void initializeEditMenu();
+    void refreshEditMenu();
+    bool handleEditCommand(int commandId);
     void showOpenModelDialog();
     void handleDroppedFiles(WPARAM dropHandle); // WM_DROPFILES의 HDROP
 

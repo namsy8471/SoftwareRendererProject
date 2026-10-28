@@ -126,6 +126,73 @@ struct Win32AppTestAccess
         DestroyWindow(app.m_hWnd);
         std::filesystem::remove_all(directory, ignored);
     }
+
+    static void editorMenuAndPicking(const TestContext &context)
+    {
+        Win32App app(GetModuleHandleW(nullptr), SW_HIDE);
+        for (const int command : {ID_EDIT_UNDO, ID_EDIT_REDO, ID_EDIT_FOCUS, ID_EDIT_DESELECT,
+                                  ID_EDIT_MODE_TRANSLATE, ID_EDIT_MODE_ROTATE, ID_EDIT_MODE_SCALE})
+            check(GetMenuState(GetMenu(app.m_hWnd), command, MF_BYCOMMAND) != static_cast<UINT>(-1),
+                  "edit menu item exists");
+
+        // 장면을 비우고 카메라 정면(z=0)에 quad 하나를 배치한 뒤 마우스 클릭으로 피킹한다.
+        Scene cleanScene;
+        cleanScene.SetRotateMode(false);
+        cleanScene.GetCamera().SetCameraPos({0.f, 0.f, -5.f});
+        auto quad = loadObject(context.root / "tests/fixtures/quad.obj", {0.f, 0.f, 0.f});
+        check(cleanScene.AddObject(quad), "add quad");
+        app.m_runner.SetScene(std::move(cleanScene));
+        app.updateFrame(0.f);
+
+        const int centerX = app.m_renderTarget.Width() / 2;
+        const int centerY = app.m_renderTarget.Height() / 2;
+        const LPARAM centerParam = MAKELPARAM(centerX, centerY);
+        app.HandleMessage(app.m_hWnd, WM_LBUTTONDOWN, MK_LBUTTON, centerParam);
+        app.HandleMessage(app.m_hWnd, WM_LBUTTONUP, 0, centerParam);
+        check(app.m_editorState.GetSelectedObject() == quad, "WM_LBUTTONDOWN picks center object");
+
+        // 편집 모드 전환 단축키(1/2/3) 및 메뉴 체크 상태 확인
+        app.HandleMessage(app.m_hWnd, WM_KEYDOWN, '2', 0);
+        app.HandleMessage(app.m_hWnd, WM_KEYUP, '2', 0);
+        check(app.m_editorState.GetMode() == sr::editor::TransformMode::Rotate, "2 switches to Rotate mode");
+        check((GetMenuState(app.m_editMenu, ID_EDIT_MODE_ROTATE, MF_BYCOMMAND) & MF_CHECKED) != 0,
+              "Rotate menu item checked");
+        app.HandleMessage(app.m_hWnd, WM_COMMAND, ID_EDIT_MODE_SCALE, 0);
+        check(app.m_editorState.GetMode() == sr::editor::TransformMode::Scale, "Scale menu command");
+        app.HandleMessage(app.m_hWnd, WM_KEYDOWN, '1', 0);
+        app.HandleMessage(app.m_hWnd, WM_KEYUP, '1', 0);
+        check(app.m_editorState.GetMode() == sr::editor::TransformMode::Translate, "1 switches to Translate mode");
+
+        // 변환 편집 후 Ctrl+Z / Ctrl+Y 및 메뉴 명령으로 Undo/Redo 확인
+        app.m_editorState.BeginTransformEdit();
+        app.m_editorState.ApplyTranslation({1.5f, 0.f, 0.f});
+        check(app.m_editorState.CommitTransformEdit(), "commit translation");
+        app.refreshEditMenu();
+        check((GetMenuState(app.m_editMenu, ID_EDIT_UNDO, MF_BYCOMMAND) & MF_GRAYED) == 0, "Undo enabled");
+
+        app.HandleMessage(app.m_hWnd, WM_KEYDOWN, VK_CONTROL, 0);
+        app.HandleMessage(app.m_hWnd, WM_KEYDOWN, 'Z', 0);
+        app.HandleMessage(app.m_hWnd, WM_KEYUP, 'Z', 0);
+        app.HandleMessage(app.m_hWnd, WM_KEYUP, VK_CONTROL, 0);
+        check(approximatelyEqual(quad->GetPosition().x, 0.f), "Ctrl+Z undoes translation");
+        check((GetMenuState(app.m_editMenu, ID_EDIT_REDO, MF_BYCOMMAND) & MF_GRAYED) == 0, "Redo enabled");
+
+        app.HandleMessage(app.m_hWnd, WM_COMMAND, ID_EDIT_REDO, 0);
+        check(approximatelyEqual(quad->GetPosition().x, 1.5f), "ID_EDIT_REDO redoes translation");
+
+        // F(초점 맞추기)와 Esc(선택 해제)
+        app.updateFrame(0.f);
+        app.HandleMessage(app.m_hWnd, WM_KEYDOWN, 'F', 0);
+        app.HandleMessage(app.m_hWnd, WM_KEYUP, 'F', 0);
+        check(approximatelyEqual(app.m_runner.GetScene().GetCamera().GetOrbitTarget().x, 1.5f, 1e-2f),
+              "F focuses camera orbit target on selected object");
+
+        app.HandleMessage(app.m_hWnd, WM_KEYDOWN, VK_ESCAPE, 0);
+        app.HandleMessage(app.m_hWnd, WM_KEYUP, VK_ESCAPE, 0);
+        check(!app.m_editorState.HasSelection(), "Esc clears selection");
+
+        DestroyWindow(app.m_hWnd);
+    }
 };
 
 // 고정 입력으로 실제 Win32App/GDI 경로를 측정한다. 숨겨진 창이므로 DWM 표시 지연은 대표하지 않는다.
@@ -222,6 +289,7 @@ void sr::test::RegisterWin32AppTests(TestRegistry &registry)
     registry.Add("win32app.inputAndMenus", Win32AppTestAccess::inputAndMenus);
     registry.Add("win32app.animationMenu", Win32AppTestAccess::animationMenu);
     registry.Add("win32app.projectMenu", Win32AppTestAccess::projectMenu);
+    registry.Add("win32app.editorMenuAndPicking", Win32AppTestAccess::editorMenuAndPicking);
 }
 
 void RunWin32AppBenchmark(int frames, int width, int height, std::string_view mode, std::string_view optimization,

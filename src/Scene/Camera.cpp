@@ -1,11 +1,19 @@
-﻿#include "Camera.h"
+#include "Camera.h"
 
+#include <algorithm>
 #include <cmath>
 #include <numbers>
 
 Camera::Camera() : m_cameraPos({0.0f, 0.0f, 0.0f}) {}
 
 Camera::Camera(SRMath::vec3 pos) noexcept : m_cameraPos(pos) {}
+
+void Camera::updateForwardVector() noexcept
+{
+    m_cameraForward = {std::cos(m_cameraPitch) * std::sin(m_cameraYaw), std::sin(m_cameraPitch),
+                       std::cos(m_cameraPitch) * std::cos(m_cameraYaw)};
+    m_cameraForward = SRMath::normalize(m_cameraForward);
+}
 
 void Camera::Update(float deltaTime, std::span<const bool, keyCount> keyInput, float aspectRatio) noexcept
 {
@@ -22,12 +30,9 @@ void Camera::Update(float deltaTime, std::span<const bool, keyCount> keyInput, f
 
 void Camera::Move(float deltaTime, std::span<const bool, keyCount> keyInput) noexcept
 {
-    // --- 카메라의 실제 방향 벡터 계산 ---
-    // Yaw와 Pitch를 모두 사용하여 3D 방향 벡터를 계산합니다.
-    m_cameraForward = {std::cos(m_cameraPitch) * std::sin(m_cameraYaw), std::sin(m_cameraPitch),
-                       std::cos(m_cameraPitch) * std::cos(m_cameraYaw)};
-    m_cameraForward = SRMath::normalize(m_cameraForward); // 정규화하여 길이를 1로 만듦
+    updateForwardVector();
 
+    const bool moved = keyInput['W'] || keyInput['S'] || keyInput['D'] || keyInput['A'];
     if (keyInput['W'])
         moveForward(deltaTime);
     if (keyInput['S'])
@@ -36,4 +41,34 @@ void Camera::Move(float deltaTime, std::span<const bool, keyCount> keyInput) noe
         moveRight(deltaTime);
     if (keyInput['A'])
         moveLeft(deltaTime);
+    if (moved)
+        m_orbitTarget = m_cameraPos + m_cameraForward * m_orbitDistance;
+}
+
+void Camera::FocusOnBounds(const AABB &bounds, float distanceMultiplier) noexcept
+{
+    if (!bounds.IsValid())
+        return;
+    updateForwardVector();
+    m_orbitTarget = bounds.Center();
+    const float radius = SRMath::length(bounds.max - bounds.min) * 0.5f;
+    const float effectiveRadius = radius > 1e-4f ? radius : 1.0f;
+    m_orbitDistance = std::max(0.5f, effectiveRadius * distanceMultiplier);
+    m_cameraPos = m_orbitTarget - m_cameraForward * m_orbitDistance;
+}
+
+void Camera::Orbit(float deltaYawRadians, float deltaPitchRadians) noexcept
+{
+    constexpr float maxPitch = 89.0f * (std::numbers::pi_v<float> / 180.0f);
+    m_cameraYaw += deltaYawRadians;
+    m_cameraPitch = std::clamp(m_cameraPitch + deltaPitchRadians, -maxPitch, maxPitch);
+    updateForwardVector();
+    m_cameraPos = m_orbitTarget - m_cameraForward * m_orbitDistance;
+}
+
+void Camera::Zoom(float deltaDistance) noexcept
+{
+    updateForwardVector();
+    m_orbitDistance = std::max(0.5f, m_orbitDistance - deltaDistance);
+    m_cameraPos = m_orbitTarget - m_cameraForward * m_orbitDistance;
 }
