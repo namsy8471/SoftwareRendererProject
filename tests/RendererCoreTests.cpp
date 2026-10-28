@@ -1483,6 +1483,7 @@ void shadowMappingTests()
     memory.target.Clear();
     renderer.RenderScene(memory.target, queue, view, lights);
     check(opt.shadows == false, "Options shadows is false");
+}
 
 void alphaMaskTests()
 {
