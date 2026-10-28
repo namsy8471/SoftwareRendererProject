@@ -83,6 +83,28 @@ std::expected<RunResult, std::string> Run(const RunConfig &config)
             return std::unexpected(describe(loaded.error()));
         sr::demo::FitCameraToScene(*loaded, aspectRatio);
     }
+    else if (config.scenePath == "grid" || config.scenePath == "pbrgrid")
+    {
+        loaded = sr::demo::CreatePbrSphereGridScene();
+        sr::demo::FitCameraToScene(*loaded, aspectRatio);
+    }
+    else if (config.scenePath == "showcase" || config.scenePath == "pbrshowcase" || config.scenePath == "helmet")
+    {
+        loaded = sr::demo::CreatePbrShowcaseScene();
+        sr::demo::FitCameraToScene(*loaded, aspectRatio);
+    }
+    else if (config.scenePath == "terrain" || config.scenePath == "geometry")
+    {
+        loaded = sr::demo::CreatePolygonalTerrainScene();
+    }
+    else if (config.scenePath == "overdraw" || config.scenePath == "instances")
+    {
+        loaded = sr::demo::CreateInstancedFieldScene();
+    }
+    else if (config.scenePath == "arena" || config.scenePath == "lighting" || config.scenePath == "shadows")
+    {
+        loaded = sr::demo::CreateMultiLightArenaScene();
+    }
     else
     {
         auto gltfScene = sr::gltf::LoadScene(config.scenePath);

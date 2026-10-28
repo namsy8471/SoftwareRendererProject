@@ -210,7 +210,8 @@ void Renderer::renderScene(RenderTarget &target, const RenderQueue &queue, const
                              m_options.pbr,
                              m_options.ibl,
                              m_options.tonemap,
-                             activeIblMap};
+                             activeIblMap,
+                             m_options.shadingModel};
     prepareFrame();
     if (m_options.collectStats)
         m_stats.prepareMs = elapsedMilliseconds(started);

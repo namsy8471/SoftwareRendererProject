@@ -67,6 +67,13 @@ struct PreparedSpotLight
     [[nodiscard]] static PreparedSpotLight From(const SpotLight &light) noexcept;
 };
 
+enum class EShadingModel : std::uint8_t
+{
+    Auto = 0,
+    Phong = 1,
+    PBR = 2
+};
+
 struct RenderFrameContext
 {
     SRMath::mat4 viewProjection;
@@ -84,6 +91,7 @@ struct RenderFrameContext
     bool ibl = false;
     bool tonemap = false;
     const void *iblMap = nullptr; // const sr::IBLMap *
+    EShadingModel shadingModel = EShadingModel::Auto;
 };
 
 struct RenderOptions
@@ -101,6 +109,7 @@ struct RenderOptions
     bool pbr = false;
     bool ibl = false;
     bool tonemap = false;
+    EShadingModel shadingModel = EShadingModel::Auto;
 };
 
 struct RenderStats

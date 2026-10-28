@@ -7,6 +7,7 @@
 #include "Graphics/TextureLoader.h"
 #include "Graphics/Texture.h"
 #include "Graphics/IBL.h"
+#include "Core/DemoScene.h"
 #include "Graphics/Light.h"
 #include "Graphics/AssetParsing.h"
 #include "Scene/GameObject.h"
@@ -1904,6 +1905,110 @@ void iblAndTonemapTests()
 }
 } // namespace
 
+void swappableShadingTests([[maybe_unused]] const TestContext &context)
+{
+    static_assert(static_cast<int>(EShadingModel::Auto) == 0);
+    static_assert(static_cast<int>(EShadingModel::Phong) == 1);
+    static_assert(static_cast<int>(EShadingModel::PBR) == 2);
+
+    RenderOptions opts;
+    check(opts.shadingModel == EShadingModel::Auto, "default shading model is Auto");
+
+    // 1. Procedural 5 Benchmark Scenes tests
+    Scene gridScene = sr::demo::CreatePbrSphereGridScene();
+    check(gridScene.GetRootObjects().size() == 25, "5x5 sphere grid scene has 25 objects");
+
+    Scene showcaseScene = sr::demo::CreatePbrShowcaseScene();
+    check(!showcaseScene.GetRootObjects().empty(), "PBR showcase helmet scene has objects");
+
+    Scene terrainScene = sr::demo::CreatePolygonalTerrainScene();
+    check(!terrainScene.GetRootObjects().empty(), "Polygonal terrain scene has objects");
+
+    Scene instancedScene = sr::demo::CreateInstancedFieldScene();
+    check(instancedScene.GetRootObjects().size() == 120, "Instanced field scene has 120 objects");
+
+    Scene arenaScene = sr::demo::CreateMultiLightArenaScene();
+    check(!arenaScene.GetRootObjects().empty(), "Multi-light arena scene has objects");
+    check(arenaScene.GetPointLights().size() == 4, "Multi-light arena has 4 point lights");
+    check(arenaScene.GetSpotLights().size() == 1, "Multi-light arena has 1 spot light");
+
+    // Test swappable shading: Legacy Material in PBR mode, and PBR Material in Phong mode
+    Material legacyMat;
+    legacyMat.isPbr = false;
+    legacyMat.diffuse = {0.8f, 0.2f, 0.1f};
+    legacyMat.specular = {0.5f, 0.5f, 0.5f};
+    legacyMat.shininess = 32.0f;
+
+    Material pbrMat;
+    pbrMat.isPbr = true;
+    pbrMat.baseColor = {0.2f, 0.8f, 0.4f, 1.0f};
+    pbrMat.roughness = 0.3f;
+    pbrMat.metallic = 0.8f;
+
+    Rasterizer::SurfaceSample sample[4];
+    const Material *mat[4] = {&legacyMat, &pbrMat, &legacyMat, &pbrMat};
+    for (int i = 0; i < 4; ++i)
+    {
+        sample[i].positionWorld = {0.1f * i, 0.2f * i, 0.f};
+        sample[i].normalWorld = SRMath::normalize(SRMath::vec3(0.1f * i, 0.2f * i, 1.f));
+        sample[i].texcoord = {0.25f * i, 0.25f * i};
+        sample[i].lod = 0.f;
+    }
+
+    DirectionalLight dirLight{{-0.5f, -0.5f, -1.f}, {1.f, 1.f, 1.f}};
+    PreparedDirectionalLight prepLight = PreparedDirectionalLight::From(dirLight);
+
+    RenderFrameContext frameCtx{};
+    frameCtx.cameraPosition = {0.f, 0.f, 5.f};
+    frameCtx.lights = std::span<const PreparedDirectionalLight>(&prepLight, 1);
+    frameCtx.pbr = true;
+
+    // 1. Force Phong: legacy and PBR materials both render with Phong
+    frameCtx.shadingModel = EShadingModel::Phong;
+    SRMath::vec3 scalarPhong[4], ssePhong[4];
+    for (int i = 0; i < 4; ++i)
+        scalarPhong[i] = Rasterizer::ShadeSurface(sample[i], *mat[i], frameCtx);
+    Rasterizer::ShadeSurface4(sample, mat, frameCtx, ssePhong);
+    for (int i = 0; i < 4; ++i)
+    {
+        check(scalarPhong[i].x > 0.f || scalarPhong[i].y > 0.f || scalarPhong[i].z > 0.f, "Phong color non-zero");
+        check(std::abs(scalarPhong[i].x - ssePhong[i].x) < 1e-3f &&
+              std::abs(scalarPhong[i].y - ssePhong[i].y) < 1e-3f &&
+              std::abs(scalarPhong[i].z - ssePhong[i].z) < 1e-3f,
+              "Scalar and SSE match in forced Phong mode");
+    }
+
+    // 2. Force PBR: legacy and PBR materials both render with PBR
+    frameCtx.shadingModel = EShadingModel::PBR;
+    SRMath::vec3 scalarPbr[4], ssePbr[4];
+    for (int i = 0; i < 4; ++i)
+        scalarPbr[i] = Rasterizer::ShadeSurface(sample[i], *mat[i], frameCtx);
+    Rasterizer::ShadeSurface4(sample, mat, frameCtx, ssePbr);
+    for (int i = 0; i < 4; ++i)
+    {
+        check(scalarPbr[i].x > 0.f || scalarPbr[i].y > 0.f || scalarPbr[i].z > 0.f, "PBR color non-zero");
+        check(std::abs(scalarPbr[i].x - ssePbr[i].x) < 1e-3f &&
+              std::abs(scalarPbr[i].y - ssePbr[i].y) < 1e-3f &&
+              std::abs(scalarPbr[i].z - ssePbr[i].z) < 1e-3f,
+              "Scalar and SSE match in forced PBR mode");
+    }
+
+    // 3. Auto: each material uses its own shading model
+    frameCtx.shadingModel = EShadingModel::Auto;
+    SRMath::vec3 scalarAuto[4], sseAuto[4];
+    for (int i = 0; i < 4; ++i)
+        scalarAuto[i] = Rasterizer::ShadeSurface(sample[i], *mat[i], frameCtx);
+    Rasterizer::ShadeSurface4(sample, mat, frameCtx, sseAuto);
+    for (int i = 0; i < 4; ++i)
+    {
+        check(scalarAuto[i].x > 0.f || scalarAuto[i].y > 0.f || scalarAuto[i].z > 0.f, "Auto color non-zero");
+        check(std::abs(scalarAuto[i].x - sseAuto[i].x) < 1e-3f &&
+              std::abs(scalarAuto[i].y - sseAuto[i].y) < 1e-3f &&
+              std::abs(scalarAuto[i].z - sseAuto[i].z) < 1e-3f,
+              "Scalar and SSE match in Auto mode");
+    }
+}
+
 void sr::test::RegisterRendererTests(TestRegistry &registry)
 {
     registry.Add("renderer.iblAndTonemap", iblAndTonemapTests);
@@ -1927,4 +2032,5 @@ void sr::test::RegisterRendererTests(TestRegistry &registry)
     registry.Add("renderer.smoke", renderSmoke);
     registry.Add("renderer.primitiveIdPlaneOptional", primitiveIdPlaneOptional);
     registry.Add("renderer.shadowMapping", shadowMappingTests);
+    registry.Add("renderer.swappableShading", swappableShadingTests);
 }

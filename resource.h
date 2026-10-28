@@ -46,6 +46,15 @@
 #define ID_RENDER_PBR                    32881
 #define ID_RENDER_IBL                    32882
 #define ID_RENDER_TONEMAP                32883
+#define ID_SCENE_DEFAULT                 32884
+#define ID_SCENE_PBR_GRID                32885
+#define ID_SCENE_HELMET                  32886
+#define ID_SHADING_AUTO                  32887
+#define ID_SHADING_PHONG                 32888
+#define ID_SHADING_PBR                   32889
+#define ID_SCENE_TERRAIN                 32890
+#define ID_SCENE_OVERDRAW                32891
+#define ID_SCENE_ARENA                   32892
 #define IDC_STATIC                      -1
 
 // Next default values for new objects
@@ -54,7 +63,7 @@
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_NO_MFC                     1
 #define _APS_NEXT_RESOURCE_VALUE        129
-#define _APS_NEXT_COMMAND_VALUE         32884
+#define _APS_NEXT_COMMAND_VALUE         32893
 #define _APS_NEXT_CONTROL_VALUE         1000
 #define _APS_NEXT_SYMED_VALUE           110
 #endif
