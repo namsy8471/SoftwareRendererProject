@@ -83,6 +83,8 @@ class GameObject : public std::enable_shared_from_this<GameObject>
     {
         return m_useOrientation ? m_orientation : SRMath::from_rotation_vector(m_rotation);
     }
+    [[nodiscard]] bool HasOrientation() const noexcept { return m_useOrientation; }
+    [[nodiscard]] bool UsesOrientation() const noexcept { return m_useOrientation; }
     void SetScale(const SRMath::vec3 &scale) noexcept { m_scale = scale; }
     [[nodiscard]] const Model *GetModel() const noexcept { return m_model.get(); }
     // null이 아니면 스킨 메시다. 소유권은 이 물체에 있고 관절은 같은 계층의 다른 GameObject다.

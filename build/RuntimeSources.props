@@ -17,8 +17,10 @@
     <ClCompile Include="src\Renderer\FXAA.cpp" />
     <ClCompile Include="src\Renderer\Renderer.cpp" />
     <ClCompile Include="src\Scene\Camera.cpp" />
+    <ClCompile Include="src\Scene\EditorState.cpp" />
     <ClCompile Include="src\Scene\GameObject.cpp" />
     <ClCompile Include="src\Scene\Scene.cpp" />
+    <ClCompile Include="src\Scene\ScenePicking.cpp" />
     <ClCompile Include="src\Utils\PerformanceAnalyzer.cpp" />
     <ClCompile Include="src\Utils\Jobs.cpp" />
   </ItemGroup>
@@ -45,8 +47,10 @@
     <ClInclude Include="src\Renderer\Renderer.h" />
     <ClInclude Include="src\Renderer\RenderQueue.h" />
     <ClInclude Include="src\Scene\Camera.h" />
+    <ClInclude Include="src\Scene\EditorState.h" />
     <ClInclude Include="src\Scene\GameObject.h" />
     <ClInclude Include="src\Scene\Scene.h" />
+    <ClInclude Include="src\Scene\ScenePicking.h" />
     <ClInclude Include="src\Graphics\ViewParams.h" />
     <ClInclude Include="src\Utils\AssetLoadError.h" />
     <ClInclude Include="src\Utils\FixedCapacityVector.h" />

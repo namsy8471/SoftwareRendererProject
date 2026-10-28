@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "Math/SRMath.h"
 #include "Math/AABB.h"
 #include <vector>
@@ -47,7 +47,8 @@ struct MeshRenderCommand
 enum class DebugDepthPolicy
 {
     DepthTested,
-    Overlay
+    Overlay,
+    AlwaysVisible = Overlay
 };
 
 // 디버그용 렌더링을 위한 요청서

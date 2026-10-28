@@ -16,6 +16,14 @@ class FrameRunner;
 class GameObject;
 class Model;
 
+namespace sr::anim
+{
+class Animator;
+}
+namespace sr::gltf
+{
+struct LoadedScene;
+}
 namespace sr::io
 {
 class BackgroundLoader;
@@ -39,6 +47,9 @@ class ProjectSession
     using ChangedHandler = std::function<void()>;
     // 가져온 모델을 장면에 넣고 그 물체를 돌려준다(실패하면 null). 배치 규칙은 호출자 몫이다.
     using PlaceModel = std::function<std::shared_ptr<GameObject>(std::unique_ptr<Model>)>;
+    // 가져온 glTF 장면과 애니메이터를 장면에 넣고 루트 물체를 돌려준다(실패하면 null).
+    using PlaceGltf = std::function<std::shared_ptr<GameObject>(
+        sr::gltf::LoadedScene &, const std::shared_ptr<sr::anim::Animator> &)>;
 
     ProjectSession(FrameRunner &runner, io::BackgroundLoader &loader, ErrorHandler onError,
                    ChangedHandler onChanged = {});
@@ -78,8 +89,10 @@ class ProjectSession
     // 이 세션의 작업이 모두 반영될 때까지 loader.DrainCompleted를 직접 부르며 기다린다(다른 작업의
     // 결과도 같이 반영된다). 시간 안에 끝나면 true.
     bool WaitIdle(std::chrono::milliseconds timeout = std::chrono::seconds(30));
-    // 모델 파일을 프로젝트 Assets로 가져오고(ImportModelAsset) 읽은 뒤 place로 장면에 넣는다.
+    // 모델 파일(.obj, .gltf, .glb)을 프로젝트 Assets로 가져오고(ImportModelAsset) 읽은 뒤 장면에 넣는다.
+    void ImportModel(std::filesystem::path source);
     void ImportModel(std::filesystem::path source, PlaceModel place);
+    void ImportModel(std::filesystem::path source, PlaceGltf place);
     // 장면을 바꾼 편집(물체 추가, 이동 등)이 있었음을 알린다.
     void MarkDirty();
 

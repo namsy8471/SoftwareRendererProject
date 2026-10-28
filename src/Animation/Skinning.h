@@ -71,6 +71,12 @@ class SkinnedMesh
     void Update(const SRMath::mat4 &ownerWorld);
 
     [[nodiscard]] std::span<const Primitive> GetPrimitives() const noexcept { return m_primitives; }
+    [[nodiscard]] std::span<const Vertex> GetDeformedVertices(std::size_t primitiveIndex = 0) const noexcept
+    {
+        return primitiveIndex < m_primitives.size()
+                   ? std::span<const Vertex>{m_primitives[primitiveIndex].deformed.vertices}
+                   : std::span<const Vertex>{};
+    }
     [[nodiscard]] const AABB &GetWorldAABB() const noexcept { return m_worldBounds; }
     [[nodiscard]] std::size_t GetJointCount() const noexcept { return m_joints.size(); }
     [[nodiscard]] std::size_t GetVertexCount() const noexcept;

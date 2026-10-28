@@ -1,4 +1,6 @@
 #include "Project/ProjectFiles.h"
+#include "Animation/Animator.h"
+#include "Graphics/GltfLoader.h"
 #include "Graphics/Model.h"
 #include "Graphics/ModelLoader.h"
 #include "IO/FileIO.h"
@@ -68,6 +70,12 @@ constexpr std::string_view startupSceneName = "Main";
     return Value(Value::Array{floatValue(vector.x), floatValue(vector.y), floatValue(vector.z)});
 }
 
+[[nodiscard]] Value quatValue(const SRMath::quat &q)
+{
+    return Value(
+        Value::Array{floatValue(q.x), floatValue(q.y), floatValue(q.z), floatValue(q.w)});
+}
+
 // --- 읽기 도우미: 형식 오류는 "어디의 무엇" 문장으로 돌려준다. ---
 [[nodiscard]] std::expected<float, Error> toFloat(const Value &value, const std::string &what)
 {
@@ -132,6 +140,28 @@ constexpr std::string_view startupSceneName = "Main";
         result[index] = *component;
     }
     return result;
+}
+
+[[nodiscard]] std::expected<std::optional<SRMath::quat>, Error> getOptionalQuat(const Value &object,
+                                                                                std::string_view key,
+                                                                                const std::string &where)
+{
+    const Value *value = object.Find(key);
+    if (!value || value->IsNull())
+        return std::nullopt;
+    const std::string what = where + "." + std::string(key);
+    const Value::Array *array = value->AsArray();
+    if (!array || array->size() != 4)
+        return std::unexpected(what + " must be an array of 4 numbers");
+    std::array<float, 4> components{};
+    for (std::size_t index = 0; index < 4; ++index)
+    {
+        const auto component = toFloat((*array)[index], what);
+        if (!component)
+            return std::unexpected(component.error());
+        components[index] = *component;
+    }
+    return SRMath::quat{components[0], components[1], components[2], components[3]};
 }
 
 [[nodiscard]] std::expected<void, Error> checkHeader(const Value &root, std::string_view format)
@@ -230,6 +260,24 @@ constexpr std::string_view startupSceneName = "Main";
                 return std::unexpected(vector.error());
             *target = *vector;
         }
+        if (!transform->Find("rotationEuler") && transform->Find("rotation"))
+        {
+            const auto rotation = getVec3(*transform, "rotation", at, entity.rotationEuler);
+            if (!rotation)
+                return std::unexpected(rotation.error());
+            entity.rotationEuler = *rotation;
+        }
+        const auto quat = getOptionalQuat(*transform, "rotationQuat", at);
+        if (!quat)
+            return std::unexpected(quat.error());
+        entity.rotationQuat = *quat;
+    }
+    if (!entity.rotationQuat && value.Find("rotationQuat"))
+    {
+        const auto quat = getOptionalQuat(value, "rotationQuat", where);
+        if (!quat)
+            return std::unexpected(quat.error());
+        entity.rotationQuat = *quat;
     }
     return entity;
 }
@@ -286,6 +334,91 @@ constexpr std::string_view startupSceneName = "Main";
     return names;
 }
 
+[[nodiscard]] int hexDigitValue(char c) noexcept
+{
+    if (c >= '0' && c <= '9')
+        return c - '0';
+    if (c >= 'a' && c <= 'f')
+        return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F')
+        return c - 'A' + 10;
+    return -1;
+}
+
+[[nodiscard]] std::optional<std::string> decodePercentUri(std::string_view uri)
+{
+    std::string decoded;
+    decoded.reserve(uri.size());
+    for (std::size_t i = 0; i < uri.size(); ++i)
+    {
+        if (uri[i] != '%')
+        {
+            decoded.push_back(uri[i]);
+            continue;
+        }
+        if (i + 2 >= uri.size())
+            return std::nullopt;
+        const int hi = hexDigitValue(uri[i + 1]);
+        const int lo = hexDigitValue(uri[i + 2]);
+        if (hi < 0 || lo < 0)
+            return std::nullopt;
+        decoded.push_back(static_cast<char>((hi << 4) | lo));
+        i += 2;
+    }
+    return decoded;
+}
+
+// .gltf JSON 안의 buffers[].uri와 images[].uri(data: URI 제외) 상대 경로를 모으고 검증한다.
+[[nodiscard]] std::expected<std::vector<fs::path>, AssetLoadError> collectGltfExternalFiles(
+    const fs::path &gltfSource)
+{
+    auto root = readJsonFile(gltfSource);
+    if (!root)
+        return std::unexpected(std::move(root.error()));
+    if (!root->AsObject())
+        return std::unexpected(AssetLoadError{"Invalid glTF JSON root", gltfSource});
+
+    std::vector<fs::path> files;
+    std::error_code error;
+    for (const std::string_view section : {"buffers", "images"})
+    {
+        const Value *sectionVal = root->Find(section);
+        if (!sectionVal)
+            continue;
+        const Value::Array *array = sectionVal->AsArray();
+        if (!array)
+            return std::unexpected(
+                AssetLoadError{std::string(section) + " must be an array", gltfSource});
+        for (const Value &item : *array)
+        {
+            if (!item.AsObject())
+                continue;
+            const Value *uriVal = item.Find("uri");
+            if (!uriVal || uriVal->IsNull())
+                continue;
+            const std::string *uri = uriVal->AsString();
+            if (!uri || uri->empty() || uri->starts_with("data:"))
+                continue;
+            const auto colon = uri->find(':');
+            const auto slash = uri->find('/');
+            if (colon != std::string::npos && (slash == std::string::npos || colon < slash))
+                return std::unexpected(
+                    AssetLoadError{"External URI scheme is not supported: " + *uri, gltfSource});
+            const auto decoded = decodePercentUri(*uri);
+            if (!decoded || decoded->empty())
+                return std::unexpected(AssetLoadError{"Invalid URI in glTF: " + *uri, gltfSource});
+            const auto relative = checkRelative(*decoded);
+            if (!relative)
+                return std::unexpected(AssetLoadError{"Invalid glTF URI: " + relative.error(), gltfSource});
+            const fs::path sourceFile = gltfSource.parent_path() / *relative;
+            if (!fs::is_regular_file(sourceFile, error))
+                return std::unexpected(AssetLoadError{"Referenced glTF file not found", sourceFile});
+            files.push_back(*relative);
+        }
+    }
+    return files;
+}
+
 void captureObject(const GameObject &object, const std::string &parentId, CapturedScene &captured)
 {
     const EntityInfo &info = object.GetEntityInfo();
@@ -304,16 +437,25 @@ void captureObject(const GameObject &object, const std::string &parentId, Captur
         captured.skippedObjects += count;
         return;
     }
-    captured.document.entities.push_back(EntityDesc{.id = info.id,
-                                                    .name = info.name,
-                                                    .parent = parentId,
-                                                    .mesh = info.meshAsset,
-                                                    .position = object.GetPosition(),
-                                                    .rotationEuler = object.GetRotation(),
-                                                    .scale = object.GetScale()});
+    EntityDesc desc{.id = info.id,
+                    .name = info.name,
+                    .parent = parentId,
+                    .mesh = info.meshAsset,
+                    .position = object.GetPosition(),
+                    .rotationEuler = object.GetRotation(),
+                    .scale = object.GetScale()};
+    if (object.HasOrientation())
+        desc.rotationQuat = object.GetOrientation();
+    captured.document.entities.push_back(std::move(desc));
     for (const auto &child : object.GetChildren())
-        if (child)
-            captureObject(*child, info.id, captured);
+    {
+        if (!child)
+            continue;
+        // glTF처럼 에셋 자체에 노드 계층이 들어 있는 엔티티의 내부 자식 노드는 빠진 물체로 세지 않는다.
+        if (child->GetEntityInfo().id.empty() && !info.meshAsset.empty())
+            continue;
+        captureObject(*child, info.id, captured);
+    }
 }
 } // namespace
 
@@ -401,6 +543,8 @@ Value ToJson(const SceneDocument &scene)
         Value transform;
         transform.Set("position", vec3Value(entity.position));
         transform.Set("rotationEuler", vec3Value(entity.rotationEuler));
+        if (entity.rotationQuat)
+            transform.Set("rotationQuat", quatValue(*entity.rotationQuat));
         transform.Set("scale", vec3Value(entity.scale));
         entry.Set("transform", std::move(transform));
         entry.Set("mesh", entity.mesh.empty() ? Value(nullptr) : Value(entity.mesh));
@@ -701,8 +845,9 @@ std::expected<AssetEntry, AssetLoadError> ImportModelAsset(const fs::path &root,
                                                            const ProjectDocument &project,
                                                            const fs::path &source)
 {
-    if (lowerExtension(source) != L".obj")
-        return std::unexpected(AssetLoadError{"Unsupported file type (only .obj for now)", source});
+    const std::wstring ext = lowerExtension(source);
+    if (ext != L".obj" && ext != L".glb" && ext != L".gltf")
+        return std::unexpected(AssetLoadError{"Unsupported file type (.obj, .gltf, .glb)", source});
     std::error_code error;
     if (!fs::is_regular_file(source, error))
         return std::unexpected(AssetLoadError{"File not found", source});
@@ -714,6 +859,15 @@ std::expected<AssetEntry, AssetLoadError> ImportModelAsset(const fs::path &root,
         if (existing != project.assets.end())
             return *existing;
         return AssetEntry{.id = NewId(), .path = std::move(*inside)};
+    }
+
+    std::vector<fs::path> gltfExternalFiles;
+    if (ext == L".gltf")
+    {
+        auto collected = collectGltfExternalFiles(source);
+        if (!collected)
+            return std::unexpected(std::move(collected.error()));
+        gltfExternalFiles = std::move(*collected);
     }
 
     const std::string stem = toUtf8(source.stem());
@@ -738,23 +892,41 @@ std::expected<AssetEntry, AssetLoadError> ImportModelAsset(const fs::path &root,
     if (error)
         return std::unexpected(AssetLoadError{"Cannot copy file: " + error.message(), source});
 
-    // .mtl은 obj 기준 상대 경로라 같은 상대 위치로 복사한다. 없거나 밖을 가리키면 건너뛴다
-    // (ModelLoader가 누락 MTL을 기본 재질로 처리한다).
-    if (const auto text = io::ReadWholeFile(source))
-        for (const auto &library : materialLibraries(*text))
+    if (ext == L".obj")
+    {
+        // .mtl은 obj 기준 상대 경로라 같은 상대 위치로 복사한다. 없거나 밖을 가리키면 건너뛴다
+        // (ModelLoader가 누락 MTL을 기본 재질로 처리한다).
+        if (const auto text = io::ReadWholeFile(source))
+            for (const auto &library : materialLibraries(*text))
+            {
+                const auto relative = checkRelative(library);
+                if (!relative)
+                    continue;
+                const fs::path from = source.parent_path() / *relative;
+                if (!fs::is_regular_file(from, error))
+                    continue;
+                const fs::path to = folder / *relative;
+                fs::create_directories(to.parent_path(), error);
+                fs::copy_file(from, to, fs::copy_options::skip_existing, error);
+                if (error)
+                    return std::unexpected(AssetLoadError{"Cannot copy material: " + error.message(), from});
+            }
+    }
+    else if (ext == L".gltf")
+    {
+        for (const fs::path &relative : gltfExternalFiles)
         {
-            const auto relative = checkRelative(library);
-            if (!relative)
-                continue;
-            const fs::path from = source.parent_path() / *relative;
-            if (!fs::is_regular_file(from, error))
-                continue;
-            const fs::path to = folder / *relative;
+            const fs::path from = source.parent_path() / relative;
+            const fs::path to = folder / relative;
             fs::create_directories(to.parent_path(), error);
-            fs::copy_file(from, to, fs::copy_options::skip_existing, error);
             if (error)
-                return std::unexpected(AssetLoadError{"Cannot copy material: " + error.message(), from});
+                return std::unexpected(
+                    AssetLoadError{"Cannot create resource folder: " + error.message(), to.parent_path()});
+            fs::copy_file(from, to, fs::copy_options::overwrite_existing, error);
+            if (error)
+                return std::unexpected(AssetLoadError{"Cannot copy glTF resource: " + error.message(), from});
         }
+    }
 
     return AssetEntry{.id = NewId(),
                       .path = std::string(assetsFolder) + "/" + folderName + "/" + toUtf8(fileName)};
@@ -776,6 +948,7 @@ std::expected<Scene, AssetLoadError> BuildScene(const SceneDocument &document, c
 
     // 1. 물체와 모델: 파일 읽기와 파싱이 대부분의 시간이다.
     std::vector<std::shared_ptr<GameObject>> objects(entities.size());
+    std::vector<std::shared_ptr<sr::anim::Animator>> animators;
     for (std::size_t index = 0; index < entities.size(); ++index)
     {
         if (stop.stop_requested())
@@ -791,6 +964,31 @@ std::expected<Scene, AssetLoadError> BuildScene(const SceneDocument &document, c
             const auto path = ResolveProjectPath(root, asset->path);
             if (!path)
                 return std::unexpected(AssetLoadError{"Asset \"" + asset->id + "\": " + path.error()});
+            const std::wstring ext = lowerExtension(*path);
+            if (ext == L".gltf" || ext == L".glb")
+            {
+                auto loaded = sr::gltf::LoadScene(*path);
+                if (!loaded)
+                    return std::unexpected(std::move(loaded.error()));
+                auto animator = sr::anim::Animator::Create(*loaded);
+                if (!animator)
+                    return std::unexpected(
+                        AssetLoadError{"Animation setup failed: " + animator.error(), *path});
+                std::shared_ptr<GameObject> rootObject = std::move(loaded->root);
+                if (!rootObject)
+                    rootObject = std::make_shared<GameObject>(entity.position, entity.rotationEuler,
+                                                              entity.scale, nullptr);
+                rootObject->SetPosition(entity.position);
+                rootObject->SetRotation(entity.rotationEuler);
+                if (entity.rotationQuat)
+                    rootObject->SetOrientation(*entity.rotationQuat);
+                rootObject->SetScale(entity.scale);
+                rootObject->SetEntityInfo({.id = entity.id, .name = entity.name, .meshAsset = entity.mesh});
+                objects[index] = std::move(rootObject);
+                if ((*animator)->GetClipCount() > 0 || !(*animator)->GetSkinnedObjects().empty())
+                    animators.push_back(std::move(*animator));
+                continue;
+            }
             auto loaded = ModelLoader::LoadOBJ(*path);
             if (!loaded)
                 return std::unexpected(std::move(loaded.error()));
@@ -798,6 +996,11 @@ std::expected<Scene, AssetLoadError> BuildScene(const SceneDocument &document, c
         }
         objects[index] = std::make_shared<GameObject>(entity.position, entity.rotationEuler, entity.scale,
                                                       std::move(model));
+        if (entity.rotationQuat)
+        {
+            objects[index]->SetOrientation(*entity.rotationQuat);
+            objects[index]->UpdateTransform(0.f, false);
+        }
         objects[index]->SetEntityInfo({.id = entity.id, .name = entity.name, .meshAsset = entity.mesh});
     }
 
@@ -837,6 +1040,14 @@ std::expected<Scene, AssetLoadError> BuildScene(const SceneDocument &document, c
     for (std::size_t index = 0; index < entities.size(); ++index)
         if (auto attached = attach(attach, index); !attached)
             return std::unexpected(std::move(attached.error()));
+
+    for (auto &animator : animators)
+        scene.AddAnimator(std::move(animator));
+    for (const auto &rootObject : scene.GetRootObjects())
+        if (rootObject)
+            rootObject->Update(0.f, false);
+    for (const auto &animator : scene.GetAnimators())
+        animator->UpdateSkins();
 
     Camera camera(document.camera.position);
     camera.SetCameraYaw(document.camera.yaw);

@@ -1,14 +1,20 @@
+#include "Animation/Animator.h"
 #include "Core/FrameRunner.h"
+#include "Graphics/GltfLoader.h"
 #include "IO/BackgroundLoader.h"
 #include "IO/FileIO.h"
 #include "IO/Json.h"
 #include "Project/ProjectFiles.h"
 #include "Project/ProjectSession.h"
 #include "Renderer/Renderer.h"
+#include "Scene/Camera.h"
+#include "Scene/EditorState.h"
 #include "Scene/GameObject.h"
+#include "Scene/ScenePicking.h"
 
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <cstddef>
 #include <filesystem>
 #include <memory>
@@ -40,6 +46,15 @@ bool sameVec3(const SRMath::vec3 &a, const SRMath::vec3 &b)
     return a.x == b.x && a.y == b.y && a.z == b.z;
 }
 
+bool sameQuat(const std::optional<SRMath::quat> &a, const std::optional<SRMath::quat> &b)
+{
+    if (a.has_value() != b.has_value())
+        return false;
+    if (!a.has_value())
+        return true;
+    return a->x == b->x && a->y == b->y && a->z == b->z && a->w == b->w;
+}
+
 void checkSameScene(const project::SceneDocument &a, const project::SceneDocument &b)
 {
     check(a.name == b.name && a.autoRotate == b.autoRotate, "scene header");
@@ -60,7 +75,7 @@ void checkSameScene(const project::SceneDocument &a, const project::SceneDocumen
                   left.mesh == right.mesh,
               "entity fields");
         check(sameVec3(left.position, right.position) && sameVec3(left.rotationEuler, right.rotationEuler) &&
-                  sameVec3(left.scale, right.scale),
+                  sameVec3(left.scale, right.scale) && sameQuat(left.rotationQuat, right.rotationQuat),
               "entity transform bits");
     }
 }
@@ -123,6 +138,7 @@ void jsonRoundTripTests()
                               .mesh = "0123456789abcdef",
                               .position = {0.f, 1.f / 3.f, 0.f},
                               .rotationEuler = {0.1f, 0.2f, 0.3f},
+                              .rotationQuat = SRMath::quat{0.f, 0.70710677f, 0.f, 0.70710677f},
                               .scale = {0.04f, 0.04f, 0.04f}});
     scene.entities.push_back({.id = "root", .name = "Group"});
 
@@ -130,6 +146,7 @@ void jsonRoundTripTests()
     check(sceneText.has_value(), "write scene");
     check(sceneText->find("0.04,") != std::string::npos, "float written in shortest form: " + *sceneText);
     check(sceneText->find("\"parent\": null") != std::string::npos, "root parent is null");
+    check(sceneText->find("\"rotationQuat\"") != std::string::npos, "rotationQuat written");
     const auto sceneParsed = sr::json::Parse(*sceneText);
     check(sceneParsed.has_value(), "parse scene");
     const auto sceneBack = project::SceneFromJson(*sceneParsed);
@@ -177,6 +194,11 @@ void formatErrorTests()
         sceneError(R"({"format":"srscene","version":1,"entities":[{"id":"a","transform":{"scale":[1,2]}}]})")
                 .find("scene.entities[0].transform.scale") != std::string::npos,
         "error names the field");
+    check(
+        sceneError(
+            R"({"format":"srscene","version":1,"entities":[{"id":"a","transform":{"rotationQuat":[1,2,3]}}]})")
+                .find("scene.entities[0].transform.rotationQuat") != std::string::npos,
+        "error names rotationQuat field");
     sceneError(R"({"format":"srscene","version":1,"entities":[{"name":"no id"}]})");
     sceneError(R"({"format":"srscene","version":1,"camera":{"yaw":"left"}})");
     sceneError(R"({"format":"srscene","version":1,"camera":{"position":[0,0,1e300]}})");
@@ -495,6 +517,280 @@ void sessionTests(const TestContext &context)
     drive(runner, session);
     check(errors.size() == 1 && session.GetTitle() == "Live - Main", "failed open keeps current project");
 }
+
+// glTF(.gltf 외부 버퍼/텍스처 + .glb 애니메이션) 자산 등록 및 쿼터니언 회전 왕복 검증.
+void gltfAndQuatRoundTripTests(const TestContext &context)
+{
+    using namespace std::chrono_literals;
+    const auto directory = freshDirectory(context, "gltf_quat");
+    const auto projectFile = directory / "GltfProj/GltfProj.srproj";
+
+    std::vector<std::string> errors;
+    const auto onError = [&errors](AssetLoadError error) { errors.push_back(error.message); };
+    const auto drive = [](FrameRunner &runner, const project::ProjectSession &session)
+    {
+        const auto deadline = std::chrono::steady_clock::now() + 20s;
+        while (session.IsBusy() && std::chrono::steady_clock::now() < deadline)
+        {
+            runner.Update(0.f, 160, 120);
+            std::this_thread::sleep_for(1ms);
+        }
+        check(!session.IsBusy(), "session jobs finished");
+    };
+
+    const SRMath::quat expectedQuat = SRMath::from_axis_angle({0.f, 1.f, 0.f}, 0.65f);
+    std::vector<unsigned int> savedPixels;
+    {
+        FrameRunner runner;
+        sr::io::BackgroundLoader loader;
+        project::ProjectSession session(runner, loader, onError);
+        runner.SetFrameStartHook([&loader](FrameRunner &) { loader.DrainCompleted(); });
+
+        session.CreateProject(projectFile);
+        drive(runner, session);
+        check(errors.empty() && session.HasProject(), "project created");
+        const auto root = directory / "GltfProj";
+
+        // 1) 외부 .bin 과 외부 .png 를 참조하는 .gltf 가져오기(경고 1개는 line primitive 건너뛰기)
+        session.ImportModel(
+            context.root / "tests/fixtures/gltf/textured-quad.gltf",
+            [&runner, expectedQuat](sr::gltf::LoadedScene &loaded,
+                                    const std::shared_ptr<sr::anim::Animator> &) -> std::shared_ptr<GameObject>
+            {
+                loaded.root->SetPosition({-1.f, 0.f, 0.f});
+                loaded.root->SetOrientation(expectedQuat);
+                return runner.GetScene().AddObject(loaded.root) ? loaded.root : nullptr;
+            });
+        drive(runner, session);
+        errors.clear(); // textured-quad의 line primitive 경고 비우기
+        check(fs::exists(root / "Assets/textured-quad/textured-quad.gltf") &&
+                  fs::exists(root / "Assets/textured-quad/textured-quad.bin") &&
+                  fs::exists(root / "Assets/textured-quad/checker.png"),
+              "gltf + external bin + external png copied into Assets");
+
+        // 2) 스킨과 애니메이션 클립이 들어 있는 .glb 가져오기
+        session.ImportModel(
+            context.root / "tests/fixtures/gltf/skinned-tube.glb",
+            [&runner](sr::gltf::LoadedScene &loaded,
+                      const std::shared_ptr<sr::anim::Animator> &) -> std::shared_ptr<GameObject>
+            {
+                loaded.root->SetPosition({1.f, 0.f, 0.f});
+                return runner.GetScene().AddObject(loaded.root) ? loaded.root : nullptr;
+            });
+        drive(runner, session);
+        check(errors.empty(), "import glb errors: " + (errors.empty() ? std::string{} : errors.front()));
+        check(fs::exists(root / "Assets/skinned-tube/skinned-tube.glb"), "glb copied into Assets");
+        check(session.GetProject()->assets.size() == 2, "two glTF assets registered");
+        check(runner.GetScene().GetAnimators().size() >= 1, "animator registered on glb import");
+
+        runner.GetScene().SetRotateMode(false);
+        runner.GetScene().GetCamera().SetCameraPos({0.f, 0.f, -5.f});
+
+        // glTF 내부 자식 노드는 skippedObjects로 세지 않아야 한다.
+        const auto captured = project::CaptureScene(runner.GetScene(), "Main");
+        check(captured.skippedObjects == 0, "glTF internal child nodes not counted as skipped");
+        check(captured.document.entities.size() == 2, "two root entities captured");
+        check(captured.document.entities[0].rotationQuat.has_value() &&
+                  sameQuat(captured.document.entities[0].rotationQuat, expectedQuat),
+              "quaternion orientation captured");
+
+        check(session.SaveSceneNow().has_value() && !session.IsDirty(), "SaveSceneNow succeeds");
+        savedPixels = renderPixels(runner);
+    }
+
+    // 새 세션에서 프로젝트를 다시 열었을 때 glTF 모델, Animator, 쿼터니언 회전이 복원되어야 한다.
+    FrameRunner runner;
+    sr::io::BackgroundLoader loader;
+    project::ProjectSession session(runner, loader, onError);
+    runner.SetFrameStartHook([&loader](FrameRunner &) { loader.DrainCompleted(); });
+    session.OpenProject(projectFile);
+    drive(runner, session);
+    check(errors.empty(), "reopen errors: " + (errors.empty() ? std::string{} : errors.front()));
+    const auto &roots = runner.GetScene().GetRootObjects();
+    check(roots.size() == 2, "two roots restored");
+    check(roots[0]->HasOrientation() && sameQuat(roots[0]->GetOrientation(), expectedQuat),
+          "quaternion orientation restored on reload");
+    check(!runner.GetScene().GetAnimators().empty(), "animator restored on reload");
+    check(renderPixels(runner) == savedPixels, "reloaded glTF scene renders identical pixels");
+}
+
+void scenePickingTests(const TestContext &context)
+{
+    Camera camera({0.f, 0.f, -5.f});
+    camera.Update(0.f, std::array<bool, 256>{}, 4.f / 3.f);
+
+    const Ray centerRay = ScreenPointToRay(camera, 80.f, 60.f, 160, 120);
+    check(approximatelyEqual(centerRay.origin.z, -5.f) && centerRay.direction.z > 0.99f &&
+              std::abs(centerRay.direction.x) < 1e-4f && std::abs(centerRay.direction.y) < 1e-4f,
+          "center screen ray points along +Z");
+    const Ray invalidRay = ScreenPointToRay(camera, 0.f, 0.f, 0, 0);
+    check(SRMath::length(invalidRay.direction) == 0.f, "zero viewport returns empty ray");
+
+    const AABB box{{-1.f, -1.f, -1.f}, {1.f, 1.f, 1.f}};
+    const auto hitBox = RayIntersectsAABB(centerRay, box);
+    check(hitBox.has_value() && approximatelyEqual(*hitBox, 4.f, 1e-3f), "ray hits AABB at z=-1 (t=4)");
+    const Ray missRay{{0.f, 5.f, -5.f}, {0.f, 0.f, 1.f}};
+    check(!RayIntersectsAABB(missRay, box).has_value(), "ray above AABB misses");
+    const Ray insideRay{{0.f, 0.f, 0.f}, {0.f, 0.f, 1.f}};
+    check(RayIntersectsAABB(insideRay, box).value_or(-1.f) == 0.f, "ray origin inside AABB returns t=0");
+
+    const auto triHit =
+        RayIntersectsTriangle(centerRay, {-1.f, -1.f, 0.f}, {1.f, -1.f, 0.f}, {0.f, 1.f, 0.f});
+    check(triHit.has_value() && approximatelyEqual(*triHit, 5.f, 1e-3f), "ray hits triangle at z=0 (t=5)");
+    check(!RayIntersectsTriangle(missRay, {-1.f, -1.f, 0.f}, {1.f, -1.f, 0.f}, {0.f, 1.f, 0.f}).has_value(),
+          "ray misses triangle");
+
+    Scene scene;
+    scene.GetCamera().SetCameraPos({0.f, 0.f, -5.f});
+    auto nearObj = loadObject(context.root / "tests/fixtures/quad.obj", {0.f, 0.f, 0.f});
+    auto farObj = loadObject(context.root / "tests/fixtures/quad.obj", {0.f, 0.f, 3.f});
+    check(scene.AddObject(farObj) && scene.AddObject(nearObj), "add objects");
+    scene.Update(0.f, 4.f / 3.f, std::array<bool, Scene::keyCount>{});
+
+    const auto picked = PickSceneObject(scene, centerRay);
+    check(picked.has_value() && picked->object == nearObj, "PickSceneObject selects nearer object");
+    check(!PickSceneObject(scene, missRay).has_value(), "PickSceneObject returns nullopt on empty space");
+
+    // SkinnedMesh 교차 판정 및 루트 엔티티 반환 검증
+    Scene skinnedScene;
+    skinnedScene.GetCamera().SetCameraPos({0.f, 0.5f, -5.f});
+    auto loadedGltf = sr::gltf::LoadScene(context.root / "tests/fixtures/gltf/skinned-tube.glb");
+    check(loadedGltf.has_value(), "load skinned-tube");
+    loadedGltf->root->SetEntityInfo({.id = "skinned_root", .name = "Tube", .meshAsset = "asset1"});
+    auto animator = sr::anim::Animator::Create(*loadedGltf);
+    check(animator.has_value(), "create animator");
+    check(skinnedScene.AddObject(loadedGltf->root), "add skinned root");
+    skinnedScene.AddAnimator(*animator);
+    skinnedScene.Update(0.f, 4.f / 3.f, std::array<bool, Scene::keyCount>{});
+
+    const Ray tubeRay{{0.f, 0.5f, -5.f}, {0.f, 0.f, 1.f}};
+    const auto skinnedHit = PickSceneObject(skinnedScene, tubeRay);
+    check(skinnedHit.has_value() && skinnedHit->object == loadedGltf->root,
+          "PickSceneObject hits deformed SkinnedMesh and resolves to entity root");
+}
+
+void cameraControlTests()
+{
+    Camera camera({0.f, 0.f, -5.f});
+    const AABB bounds{{-2.f, 1.f, 3.f}, {2.f, 3.f, 7.f}};
+    camera.FocusOnBounds(bounds, 4.f / 3.f);
+    check(approximatelyEqual(camera.GetOrbitTarget().x, 0.f) &&
+              approximatelyEqual(camera.GetOrbitTarget().y, 2.f) &&
+              approximatelyEqual(camera.GetOrbitTarget().z, 5.f),
+          "FocusOnBounds centers orbit target on bounds center");
+    check(camera.GetOrbitDistance() > 2.f, "FocusOnBounds sets positive orbit distance");
+
+    const float initialDist = camera.GetOrbitDistance();
+    camera.Zoom(1.5f);
+    check(approximatelyEqual(camera.GetOrbitDistance(), std::max(0.5f, initialDist - 1.5f)),
+          "Zoom reduces orbit distance");
+    camera.Zoom(1000.f);
+    check(approximatelyEqual(camera.GetOrbitDistance(), 0.5f), "Zoom clamps to minimum distance 0.5");
+
+    camera.SetOrbitDistance(5.f);
+    camera.Orbit(0.4f, 0.25f);
+    check(approximatelyEqual(camera.GetCameraYaw(), 0.4f) &&
+              approximatelyEqual(camera.GetCameraPitch(), 0.25f),
+          "Orbit updates yaw and pitch");
+    const SRMath::vec3 toCamera = camera.GetCameraPos() - camera.GetOrbitTarget();
+    check(approximatelyEqual(SRMath::length(toCamera), 5.f, 1e-3f),
+          "Orbit keeps camera on sphere of radius orbitDistance around target");
+
+    // W 키 이동 시 orbitTarget도 함께 이동해 다음 Orbit 시 점프하지 않는다.
+    const SRMath::vec3 targetBeforeMove = camera.GetOrbitTarget();
+    const SRMath::vec3 posBeforeMove = camera.GetCameraPos();
+    std::array<bool, 256> keys{};
+    keys['W'] = true;
+    camera.Update(0.5f, keys, 4.f / 3.f);
+    const SRMath::vec3 posDelta = camera.GetCameraPos() - posBeforeMove;
+    const SRMath::vec3 targetDelta = camera.GetOrbitTarget() - targetBeforeMove;
+    check(SRMath::length(posDelta) > 0.1f &&
+              approximatelyEqual(posDelta.x, targetDelta.x, 1e-4f) &&
+              approximatelyEqual(posDelta.y, targetDelta.y, 1e-4f) &&
+              approximatelyEqual(posDelta.z, targetDelta.z, 1e-4f),
+          "WASD camera move shifts orbit target by the same delta");
+}
+
+void editorStateAndUndoTests(const TestContext &context)
+{
+    sr::editor::EditorState editor;
+    RenderQueue queue;
+    queue.Clear();
+    editor.AppendEditorGizmos(queue);
+    check(queue.GetDebugCommands().empty(), "unselected EditorState submits zero debug primitives");
+
+    auto object = loadObject(context.root / "tests/fixtures/quad.obj", {1.f, 2.f, 3.f});
+    Scene scene;
+    check(scene.AddObject(object), "add object");
+    scene.Update(0.f, 4.f / 3.f, std::array<bool, Scene::keyCount>{});
+
+    editor.Select(object);
+    check(editor.HasSelection() && editor.GetSelectedObject() == object, "object selected");
+    queue.Clear();
+    editor.AppendEditorGizmos(queue);
+    check(!queue.GetDebugCommands().empty(), "selected EditorState submits AABB and gizmo lines");
+    for (const auto &cmd : queue.GetDebugCommands())
+        check(cmd.depthPolicy == DebugDepthPolicy::AlwaysVisible, "editor gizmos use AlwaysVisible depth policy");
+
+    // 기즈모 축 피킹 검증
+    const SRMath::vec3 center = editor.GetGizmoOrigin();
+    const float halfAxis = editor.GetGizmoAxisLength() * 0.5f;
+    const Ray xRay{{center.x + halfAxis, center.y, center.z - 2.f}, {0.f, 0.f, 1.f}};
+    const Ray yRay{{center.x, center.y + halfAxis, center.z - 2.f}, {0.f, 0.f, 1.f}};
+    const Ray zRay{{center.x - 2.f, center.y, center.z + halfAxis}, {1.f, 0.f, 0.f}};
+    check(editor.PickGizmoAxis(xRay) == sr::editor::GizmoAxis::X, "PickGizmoAxis hits X axis");
+    check(editor.PickGizmoAxis(yRay) == sr::editor::GizmoAxis::Y, "PickGizmoAxis hits Y axis");
+    check(editor.PickGizmoAxis(zRay) == sr::editor::GizmoAxis::Z, "PickGizmoAxis hits Z axis");
+    check(editor.PickGizmoAxis(Ray{{100.f, 100.f, -5.f}, {0.f, 0.f, 1.f}}) == sr::editor::GizmoAxis::None,
+          "PickGizmoAxis returns None for far ray");
+
+    // 변경 없는 Begin/Commit은 히스토리에 쌓이지 않는다.
+    editor.BeginTransformEdit();
+    check(!editor.CommitTransformEdit() && !editor.CanUndo(), "no-op edit is not committed");
+
+    // 이동 편집 후 Undo/Redo 왕복
+    editor.BeginTransformEdit();
+    editor.ApplyTranslation({2.f, -1.f, 0.5f});
+    check(editor.CommitTransformEdit() && editor.CanUndo(), "translation edit committed");
+    check(approximatelyEqual(object->GetPosition().x, 3.f) &&
+              approximatelyEqual(object->GetPosition().y, 1.f) &&
+              approximatelyEqual(object->GetPosition().z, 3.5f),
+          "translated position");
+    check(editor.Undo() && !editor.CanUndo() && editor.CanRedo(), "Undo restores state");
+    check(approximatelyEqual(object->GetPosition().x, 1.f) &&
+              approximatelyEqual(object->GetPosition().y, 2.f) &&
+              approximatelyEqual(object->GetPosition().z, 3.f),
+          "position after Undo");
+    check(editor.Redo() && editor.CanUndo() && !editor.CanRedo(), "Redo reapplies state");
+    check(approximatelyEqual(object->GetPosition().x, 3.f), "position after Redo");
+
+    // 쿼터니언 기반 오브젝트 회전 및 스케일 하한(0.001f) 검증
+    object->SetOrientation(SRMath::quat::identity());
+    editor.BeginTransformEdit();
+    editor.ApplyRotationEuler({0.f, 0.5f, 0.f});
+    editor.ApplyScaleFactor({0.00001f, 2.f, 1.f});
+    check(editor.CommitTransformEdit(), "quat rotation + scale edit committed");
+    check(object->HasOrientation() && std::abs(object->GetOrientation().y) > 0.1f,
+          "ApplyRotationEuler updates quaternion orientation when active");
+    check(approximatelyEqual(object->GetScale().x, 0.001f) && approximatelyEqual(object->GetScale().y, 2.f),
+          "ApplyScaleFactor clamps minimum scale to 0.001f");
+
+    // 최대 64단계 Undo 히스토리 상한 검증
+    editor.ClearHistory();
+    for (int i = 0; i < 70; ++i)
+    {
+        editor.BeginTransformEdit();
+        editor.ApplyTranslation({1.f, 0.f, 0.f});
+        check(editor.CommitTransformEdit(), "commit step");
+    }
+    int undoSteps = 0;
+    while (editor.Undo())
+        ++undoSteps;
+    check(undoSteps == static_cast<int>(sr::editor::EditorState::kMaxHistory), "Undo history capped at 64");
+
+    editor.ClearSelection();
+    check(!editor.HasSelection() && editor.GetSelectedObject() == nullptr, "ClearSelection clears selection");
+}
 } // namespace
 
 namespace sr::test
@@ -507,5 +803,9 @@ void RegisterProjectTests(TestRegistry &registry)
     registry.Add("project.import_and_build", importAndBuildTests);
     registry.Add("project.capture_round_trip", captureRoundTripTests);
     registry.Add("project.session", sessionTests);
+    registry.Add("project.gltf_and_quat_round_trip", gltfAndQuatRoundTripTests);
+    registry.Add("editor.scene_picking", scenePickingTests);
+    registry.Add("editor.camera_controls", cameraControlTests);
+    registry.Add("editor.state_and_undo", editorStateAndUndoTests);
 }
 } // namespace sr::test

@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <expected>
 #include <filesystem>
+#include <optional>
 #include <stop_token>
 #include <string>
 #include <string_view>
@@ -19,7 +20,7 @@
 //   MyProject/
 //     MyProject.srproj     프로젝트: 이름, 렌더 설정, 시작 씬, 씬 목록, 에셋 표(id → 경로)
 //     Scenes/Main.srscene  씬: 카메라, 광원, 엔티티(id, 이름, 부모 id, 로컬 변환, 메시 에셋 id)
-//     Assets/              가져온 원본 파일(.obj와 그 .mtl)
+//     Assets/              가져온 원본 파일(.obj와 그 .mtl, .gltf/.glb와 외부 버퍼·텍스처)
 //     Cache/               이후 단계의 임포트 캐시(.srmesh 등). 지워도 다시 만든다
 //
 // 파일 안의 경로는 모두 프로젝트 폴더 기준 상대 경로이고 '/'로 구분한 UTF-8이다. 절대 경로와 '..'는
@@ -30,7 +31,6 @@
 namespace sr::project
 {
 // 이 코드가 쓰는 형식 버전. 읽을 때 더 큰 버전은 거부한다(새 렌더러로 저장한 파일).
-// 회전은 버전 1에서 라디안 오일러각(rotationEuler)이다. 쿼터니언이 생기면 버전 2에서 rotation을 더한다.
 inline constexpr int formatVersion = 1;
 inline constexpr std::string_view projectExtension = ".srproj";
 inline constexpr std::string_view sceneExtension = ".srscene";
@@ -42,7 +42,7 @@ struct AssetEntry
 {
     std::string id;
     std::string path;           // 프로젝트 폴더 기준 상대 경로
-    std::string kind = "model"; // 지금은 model(.obj)만 있다
+    std::string kind = "model"; // model(.obj, .gltf, .glb)
 
     friend bool operator==(const AssetEntry &, const AssetEntry &) = default;
 };
@@ -75,6 +75,7 @@ struct EntityDesc
     std::string mesh{};   // 에셋 id. 빈 문자열이면 그리지 않는 그룹 노드
     SRMath::vec3 position{0.f, 0.f, 0.f};
     SRMath::vec3 rotationEuler{0.f, 0.f, 0.f}; // 라디안, GameObject::SetRotation과 같은 규약
+    std::optional<SRMath::quat> rotationQuat{};
     SRMath::vec3 scale{1.f, 1.f, 1.f};
 };
 
@@ -135,8 +136,8 @@ struct CreatedProject
 [[nodiscard]] SceneDocument MakeEmptyScene(std::string name);
 
 // --- 에셋 가져오기 ---
-// source가 이미 root 안에 있으면 복사하지 않고 그 경로를 쓴다. 아니면 Assets/<이름>/에 .obj와
-// 그 파일의 mtllib가 가리키는 .mtl을 복사한다(같은 이름의 폴더가 있으면 <이름>-2, -3 ...).
+// source가 이미 root 안에 있으면 복사하지 않고 그 경로를 쓴다. 아니면 Assets/<이름>/에 .obj(+ .mtl)
+// 또는 .glb, .gltf(+ 외부 버퍼·이미지)를 복사한다(같은 이름의 폴더가 있으면 <이름>-2, -3 ...).
 // 반환한 항목은 아직 프로젝트 표에 없다. 호출자가 프레임 루프 스레드에서 assets에 넣는다.
 // 같은 경로가 표에 이미 있으면 그 항목을 그대로 돌려준다.
 [[nodiscard]] std::expected<AssetEntry, AssetLoadError> ImportModelAsset(const std::filesystem::path &root,
