@@ -2,6 +2,7 @@
 #include "Renderer/RenderQueue.h"
 #include "Renderer/FXAA.h"
 #include "Graphics/Light.h"
+#include "Graphics/Material.h"
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -316,6 +317,7 @@ void Renderer::renderTileRange(RenderTarget &target, const FrameContext &frame, 
                                std::size_t last, bool needsDepthPrepass, bool clearTiles,
                                std::vector<TriangleRef *> &gathered, TileBuffer &tileBuffer)
 {
+    std::vector<const PreparedTriangle *> blendTriangles;
     for (auto index = first; index != last; ++index)
     {
         gatherTileReferences(index, gathered);
@@ -343,23 +345,71 @@ void Renderer::renderTileRange(RenderTarget &target, const FrameContext &frame, 
         Rasterizer rasterizer(target, frame, m_options.collectStats ? &stats : nullptr);
         rasterizer.BeginTile({x, y, std::min(x + tileSize, m_width), std::min(y + tileSize, m_height)},
                              m_options.hiZ, clearTiles, &tileBuffer);
+        blendTriangles.clear();
         if (needsDepthPrepass)
         {
             // 혼합 모드도 모든 면의 깊이를 먼저 완성해야 뒤쪽 채움 색이 남지 않는다.
             for (const auto *triangle : bin)
-                rasterizer.DrawTriangle(*triangle, RasterPass::DepthOnly);
+            {
+                const Material *mat = (triangle->sourceCommand && triangle->sourceCommand->material)
+                                          ? triangle->sourceCommand->material
+                                          : nullptr;
+                if (!mat || mat->alphaMode == AlphaMode::Opaque)
+                    rasterizer.DrawTriangle(*triangle, RasterPass::DepthOnly);
+                else if (mat->alphaMode == AlphaMode::Mask)
+                    rasterizer.DrawTriangleAlphaMask(*triangle, RasterPass::DepthOnly);
+            }
             for (const auto *triangle : bin)
+            {
                 if (triangle->sourceCommand->rasterizeMode == ERasterizeMode::Fill)
-                    rasterizer.DrawTriangle(*triangle, RasterPass::ShadeVisible);
+                {
+                    const Material *mat = (triangle->sourceCommand && triangle->sourceCommand->material)
+                                              ? triangle->sourceCommand->material
+                                              : nullptr;
+                    if (!mat || mat->alphaMode == AlphaMode::Opaque)
+                        rasterizer.DrawTriangle(*triangle, RasterPass::ShadeVisible);
+                    else if (mat->alphaMode == AlphaMode::Mask)
+                        rasterizer.DrawTriangleAlphaMask(*triangle, RasterPass::ShadeVisible);
+                    else if (mat->alphaMode == AlphaMode::Blend)
+                        blendTriangles.push_back(triangle);
+                }
+            }
         }
         else
         {
             // 겹친 픽셀(평균 1.8번 덮임)을 매번 셰이딩하지 않는다. 깊이 검사를 끝까지 한 뒤
             // 마지막에 색을 썼을 삼각형으로만 픽셀당 한 번 셰이딩한다. 같은 식이라 색이 같다.
             for (const auto *triangle : bin)
+            {
                 if (triangle->sourceCommand->rasterizeMode == ERasterizeMode::Fill)
-                    rasterizer.DrawTriangle(*triangle, RasterPass::DepthOwner);
+                {
+                    const Material *mat = (triangle->sourceCommand && triangle->sourceCommand->material)
+                                              ? triangle->sourceCommand->material
+                                              : nullptr;
+                    if (!mat || mat->alphaMode == AlphaMode::Opaque)
+                        rasterizer.DrawTriangle(*triangle, RasterPass::DepthOwner);
+                    else if (mat->alphaMode == AlphaMode::Mask)
+                        rasterizer.DrawTriangleAlphaMask(*triangle, RasterPass::DepthOwner);
+                    else if (mat->alphaMode == AlphaMode::Blend)
+                        blendTriangles.push_back(triangle);
+                }
+            }
             rasterizer.ShadeOwners();
+        }
+
+        if (!blendTriangles.empty())
+        {
+            std::sort(blendTriangles.begin(), blendTriangles.end(),
+                      [](const PreparedTriangle *a, const PreparedTriangle *b) noexcept
+                      {
+                          const float avgA = (a->rv0.oneOverW + a->rv1.oneOverW + a->rv2.oneOverW) * (1.0f / 3.0f);
+                          const float avgB = (b->rv0.oneOverW + b->rv1.oneOverW + b->rv2.oneOverW) * (1.0f / 3.0f);
+                          if (avgA != avgB)
+                              return avgA < avgB;
+                          return a->primitiveId < b->primitiveId;
+                      });
+            for (const auto *triangle : blendTriangles)
+                rasterizer.DrawTriangleAlphaBlend(*triangle);
         }
     }
 }

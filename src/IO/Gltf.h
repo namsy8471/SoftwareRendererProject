@@ -113,6 +113,8 @@ struct Material
     std::array<float, 3> emissiveFactor{0.f, 0.f, 0.f};
     TextureRef emissiveTexture{}; // 아직 샘플링하지 않는다. 있으면 emissiveFactor도 쓰지 않는다
     bool doubleSided = false;
+    int alphaMode = 0; // 0: OPAQUE, 1: MASK, 2: BLEND
+    float alphaCutoff = 0.5f;
 };
 
 struct Image

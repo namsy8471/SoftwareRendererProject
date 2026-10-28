@@ -1,6 +1,7 @@
 #include "Renderer/Rasterizer.h"
 #include "Renderer/RenderCommand.h"
 #include "Graphics/Material.h"
+#include "Graphics/Texture.h"
 #include "Platform/Compiler.h"
 #include "Renderer/Tile.h"
 #include <algorithm>
@@ -398,6 +399,329 @@ bool Rasterizer::IsOccluded(const PreparedTriangle &t)
     if (hidden && m_stats)
         ++m_stats->hiZRejected;
     return hidden;
+}
+
+void Rasterizer::DrawTriangleAlphaMask(const PreparedTriangle &t, RasterPass pass)
+{
+    if (m_target.Empty() || !m_idBase)
+        return;
+    if (m_hiZ && pass != RasterPass::ShadeVisible && IsOccluded(t))
+        return;
+    const auto draw = [&]<RasterPass Pass>()
+    {
+        if (m_stats)
+            DrawTriangleAlphaMaskImpl<true, Pass>(t);
+        else
+            DrawTriangleAlphaMaskImpl<false, Pass>(t);
+    };
+    switch (pass)
+    {
+    case RasterPass::Shaded:
+        draw.template operator()<RasterPass::Shaded>();
+        break;
+    case RasterPass::DepthOnly:
+        draw.template operator()<RasterPass::DepthOnly>();
+        break;
+    case RasterPass::ShadeVisible:
+        draw.template operator()<RasterPass::ShadeVisible>();
+        break;
+    case RasterPass::DepthOwner:
+        draw.template operator()<RasterPass::DepthOwner>();
+        break;
+    }
+    if (m_hiZ && pass != RasterPass::ShadeVisible)
+        RefreshHiZ();
+}
+
+void Rasterizer::DrawTriangleAlphaBlend(const PreparedTriangle &t)
+{
+    if (m_target.Empty() || !m_idBase)
+        return;
+    if (m_hiZ && IsOccluded(t))
+        return;
+    if (m_stats)
+        DrawTriangleAlphaBlendImpl<true>(t);
+    else
+        DrawTriangleAlphaBlendImpl<false>(t);
+}
+
+template <bool Instrumented, RasterPass Pass>
+void Rasterizer::DrawTriangleAlphaMaskImpl(const PreparedTriangle &t)
+{
+    const int x0 = std::max(t.minX, m_bounds.minX);
+    const int y0 = std::max(t.minY, m_bounds.minY);
+    const int x1 = std::min(t.maxX, m_bounds.maxX - 1);
+    const int y1 = std::min(t.maxY, m_bounds.maxY - 1);
+    if (x0 > x1 || y0 > y1)
+        return;
+    const auto &p0 = t.rv0.screenPos;
+    const auto &p1 = t.rv1.screenPos;
+    const auto &p2 = t.rv2.screenPos;
+    std::int64_t r0, r1, r2;
+    if (!toFixed(t.dy12 * (x0 + 0.5f - p1.x) - t.dx12 * (y0 + 0.5f - p1.y), r0) ||
+        !toFixed(t.dy20 * (x0 + 0.5f - p2.x) - t.dx20 * (y0 + 0.5f - p2.y), r1) ||
+        !toFixed(t.dy01 * (x0 + 0.5f - p0.x) - t.dx01 * (y0 + 0.5f - p0.y), r2))
+        return;
+    const auto safeEdge = [&](std::int64_t r, std::int64_t dx, std::int64_t dy)
+    {
+        const double budget = std::abs(static_cast<double>(r)) +
+                              std::abs(static_cast<double>(dx)) * (y1 - y0 + 1.) +
+                              std::abs(static_cast<double>(dy)) * (x1 - x0 + 1.);
+        return budget < 0x1p62;
+    };
+    const auto magnitude = [](std::int64_t v) { return static_cast<std::uint64_t>(v < 0 ? -v : v); };
+    const bool smallEdges = (magnitude(r0) | magnitude(r1) | magnitude(r2) | magnitude(t.dx12Fixed) |
+                             magnitude(t.dy12Fixed) | magnitude(t.dx20Fixed) | magnitude(t.dy20Fixed) |
+                             magnitude(t.dx01Fixed) | magnitude(t.dy01Fixed)) < (std::uint64_t{1} << 56) &&
+                            (x1 - x0) + (y1 - y0) < 60;
+    if (!smallEdges && (!safeEdge(r0, t.dx12Fixed, t.dy12Fixed) || !safeEdge(r1, t.dx20Fixed, t.dy20Fixed) ||
+                        !safeEdge(r2, t.dx01Fixed, t.dy01Fixed)))
+        return;
+
+    float *const depth = m_depthBase;
+    std::uint64_t *const ids = m_idBase;
+    unsigned int *const colors = m_colorBase;
+    const Material *const mat = (t.sourceCommand && t.sourceCommand->material) ? t.sourceCommand->material : nullptr;
+    const float opacity = mat ? mat->opacity : 1.0f;
+    const float cutoff = mat ? mat->alphaCutoff : 0.5f;
+    const Texture *const diffTex = (mat && mat->diffuseTexture) ? mat->diffuseTexture.get() : nullptr;
+    const float lod = (diffTex && m_frame.mipmapping) ? ComputeTriangleLod(t) : 0.f;
+
+    const auto shadePixel = [&](int x, int y, std::int64_t w0, std::int64_t w1, std::int64_t w2)
+                                SR_FORCEINLINE_LAMBDA
+    {
+        const float f0 = static_cast<float>(w0) / 256.f;
+        const float f1 = static_cast<float>(w1) / 256.f;
+        const float f2 = static_cast<float>(w2) / 256.f;
+        const float total = f0 + f1 + f2;
+        if (std::isfinite(total) && total >= 1e-5f)
+        {
+            if constexpr (Instrumented)
+                ++m_stats->coveragePassed;
+            const float inverse = 1.f / total;
+            const float a = f0 * inverse, b = f1 * inverse, c = f2 * inverse;
+            float q = t.rv0.oneOverW * a;
+            q += t.rv1.oneOverW * b;
+            q += t.rv2.oneOverW * c;
+            const auto index = static_cast<std::size_t>(y - m_originY) * m_depthStride + (x - m_originX);
+            const bool finite = std::isfinite(q) && q > 0.f;
+            const bool visible = Pass == RasterPass::ShadeVisible
+                                     ? ids[index] == t.primitiveId && depth[index] == q
+                                     : q > depth[index] || (q == depth[index] && t.primitiveId < ids[index]);
+            if (finite && visible)
+            {
+                if constexpr (Pass != RasterPass::ShadeVisible)
+                {
+                    float alpha = opacity;
+                    if (diffTex)
+                    {
+                        const float invQ = 1.0f / q;
+                        const float u = (t.rv0.texcoordOverW.x * a + t.rv1.texcoordOverW.x * b +
+                                         t.rv2.texcoordOverW.x * c) * invQ;
+                        const float v = (t.rv0.texcoordOverW.y * a + t.rv1.texcoordOverW.y * b +
+                                         t.rv2.texcoordOverW.y * c) * invQ;
+                        const auto texColor = SampleTexture(*diffTex, u, v, lod, m_frame);
+                        alpha *= texColor.a;
+                    }
+                    if (alpha < cutoff)
+                    {
+                        if constexpr (Instrumented)
+                            ++m_stats->depthRejected;
+                        return;
+                    }
+                    depth[index] = q;
+                    ids[index] = t.primitiveId;
+                }
+                if constexpr (Pass == RasterPass::DepthOwner)
+                {
+                    if (mat)
+                    {
+                        const auto cell =
+                            static_cast<std::size_t>(y - m_bounds.minY) * 16 + (x - m_bounds.minX);
+                        m_ownerScratch.triangles[cell] = &t;
+                        m_ownerScratch.samples[cell] = {a, b, c, q};
+                        m_ownerMask[cell >> 6] |= std::uint64_t{1} << (cell & 63);
+                    }
+                }
+                else if constexpr (Pass != RasterPass::DepthOnly)
+                {
+                    if (mat)
+                    {
+                        auto sample = InterpolateSurface(t.rv0, t.rv1, t.rv2, a, b, c, 1.f / q);
+                        if (mat->normalTexture)
+                            ComputeTriangleTangentFrame(t, sample.tangentWorld, sample.bitangentWorld);
+                        if (m_frame.mipmapping)
+                            sample.lod = lod;
+                        colors[static_cast<std::size_t>(y - m_originY) * m_colorStride + (x - m_originX)] =
+                            packColor(ShadeSurface(sample, *mat, m_frame));
+                        if constexpr (Instrumented)
+                            ++m_stats->shadedPixels;
+                    }
+                }
+            }
+            else if constexpr (Instrumented)
+                ++m_stats->depthRejected;
+        }
+    };
+
+    for (int y = y0; y <= y1; ++y)
+    {
+        auto w0 = r0, w1 = r1, w2 = r2;
+        int x = x0;
+        while (x <= x1 && (w0 | w1 | w2) < 0)
+        {
+            w0 += t.dy12Fixed;
+            w1 += t.dy20Fixed;
+            w2 += t.dy01Fixed;
+            ++x;
+        }
+        for (; x <= x1 && (w0 | w1 | w2) >= 0; ++x)
+        {
+            shadePixel(x, y, w0, w1, w2);
+            w0 += t.dy12Fixed;
+            w1 += t.dy20Fixed;
+            w2 += t.dy01Fixed;
+        }
+        r0 -= t.dx12Fixed;
+        r1 -= t.dx20Fixed;
+        r2 -= t.dx01Fixed;
+    }
+}
+
+template <bool Instrumented>
+void Rasterizer::DrawTriangleAlphaBlendImpl(const PreparedTriangle &t)
+{
+    const int x0 = std::max(t.minX, m_bounds.minX);
+    const int y0 = std::max(t.minY, m_bounds.minY);
+    const int x1 = std::min(t.maxX, m_bounds.maxX - 1);
+    const int y1 = std::min(t.maxY, m_bounds.maxY - 1);
+    if (x0 > x1 || y0 > y1)
+        return;
+    const auto &p0 = t.rv0.screenPos;
+    const auto &p1 = t.rv1.screenPos;
+    const auto &p2 = t.rv2.screenPos;
+    std::int64_t r0, r1, r2;
+    if (!toFixed(t.dy12 * (x0 + 0.5f - p1.x) - t.dx12 * (y0 + 0.5f - p1.y), r0) ||
+        !toFixed(t.dy20 * (x0 + 0.5f - p2.x) - t.dx20 * (y0 + 0.5f - p2.y), r1) ||
+        !toFixed(t.dy01 * (x0 + 0.5f - p0.x) - t.dx01 * (y0 + 0.5f - p0.y), r2))
+        return;
+    const auto safeEdge = [&](std::int64_t r, std::int64_t dx, std::int64_t dy)
+    {
+        const double budget = std::abs(static_cast<double>(r)) +
+                              std::abs(static_cast<double>(dx)) * (y1 - y0 + 1.) +
+                              std::abs(static_cast<double>(dy)) * (x1 - x0 + 1.);
+        return budget < 0x1p62;
+    };
+    const auto magnitude = [](std::int64_t v) { return static_cast<std::uint64_t>(v < 0 ? -v : v); };
+    const bool smallEdges = (magnitude(r0) | magnitude(r1) | magnitude(r2) | magnitude(t.dx12Fixed) |
+                             magnitude(t.dy12Fixed) | magnitude(t.dx20Fixed) | magnitude(t.dy20Fixed) |
+                             magnitude(t.dx01Fixed) | magnitude(t.dy01Fixed)) < (std::uint64_t{1} << 56) &&
+                            (x1 - x0) + (y1 - y0) < 60;
+    if (!smallEdges && (!safeEdge(r0, t.dx12Fixed, t.dy12Fixed) || !safeEdge(r1, t.dx20Fixed, t.dy20Fixed) ||
+                        !safeEdge(r2, t.dx01Fixed, t.dy01Fixed)))
+        return;
+
+    const float *const depth = m_depthBase;
+    unsigned int *const colors = m_colorBase;
+    const Material *const mat = (t.sourceCommand && t.sourceCommand->material) ? t.sourceCommand->material : nullptr;
+    if (!mat)
+        return;
+
+    const float lod = (mat->diffuseTexture && m_frame.mipmapping) ? ComputeTriangleLod(t) : 0.f;
+    SRMath::vec3 tangentWorld{1.f, 0.f, 0.f};
+    SRMath::vec3 bitangentWorld{0.f, 1.f, 0.f};
+    if (mat->normalTexture)
+        ComputeTriangleTangentFrame(t, tangentWorld, bitangentWorld);
+
+    const auto shadePixel = [&](int x, int y, std::int64_t w0, std::int64_t w1, std::int64_t w2)
+                                SR_FORCEINLINE_LAMBDA
+    {
+        const float f0 = static_cast<float>(w0) / 256.f;
+        const float f1 = static_cast<float>(w1) / 256.f;
+        const float f2 = static_cast<float>(w2) / 256.f;
+        const float total = f0 + f1 + f2;
+        if (std::isfinite(total) && total >= 1e-5f)
+        {
+            if constexpr (Instrumented)
+                ++m_stats->coveragePassed;
+            const float inverse = 1.f / total;
+            const float a = f0 * inverse, b = f1 * inverse, c = f2 * inverse;
+            float q = t.rv0.oneOverW * a;
+            q += t.rv1.oneOverW * b;
+            q += t.rv2.oneOverW * c;
+            const auto index = static_cast<std::size_t>(y - m_originY) * m_depthStride + (x - m_originX);
+            const bool finite = std::isfinite(q) && q > 0.f;
+            // Depth test: read-only, NO depth write!
+            const bool visible = q > depth[index];
+            if (finite && visible)
+            {
+                const float invQ = 1.0f / q;
+                SurfaceSample sample = InterpolateSurface(t.rv0, t.rv1, t.rv2, a, b, c, invQ);
+                sample.lod = lod;
+                sample.tangentWorld = tangentWorld;
+                sample.bitangentWorld = bitangentWorld;
+
+                float alpha = mat->opacity;
+                if (mat->diffuseTexture)
+                {
+                    const auto texColor = SampleTexture(*mat->diffuseTexture, sample.texcoord.x,
+                                                        sample.texcoord.y, lod, m_frame);
+                    alpha *= texColor.a;
+                }
+                alpha = std::clamp(alpha, 0.0f, 1.0f);
+                const int alpha255 = static_cast<int>(std::round(alpha * 255.0f));
+                if (alpha255 > 0)
+                {
+                    const SRMath::vec3 srcColor = ShadeSurface(sample, *mat, m_frame);
+                    const std::uint32_t srcPacked = packColor(srcColor);
+                    const auto colorIndex = static_cast<std::size_t>(y - m_originY) * m_colorStride + (x - m_originX);
+                    const std::uint32_t dstPacked = colors[colorIndex];
+
+                    const int srcB = static_cast<int>((srcPacked >> 0) & 0xFF);
+                    const int srcG = static_cast<int>((srcPacked >> 8) & 0xFF);
+                    const int srcR = static_cast<int>((srcPacked >> 16) & 0xFF);
+
+                    const int dstB = static_cast<int>((dstPacked >> 0) & 0xFF);
+                    const int dstG = static_cast<int>((dstPacked >> 8) & 0xFF);
+                    const int dstR = static_cast<int>((dstPacked >> 16) & 0xFF);
+
+                    const int invA = 255 - alpha255;
+                    const int outB = (srcB * alpha255 + dstB * invA + 127) / 255;
+                    const int outG = (srcG * alpha255 + dstG * invA + 127) / 255;
+                    const int outR = (srcR * alpha255 + dstR * invA + 127) / 255;
+
+                    colors[colorIndex] = static_cast<std::uint32_t>(outB | (outG << 8) | (outR << 16));
+                    if constexpr (Instrumented)
+                        ++m_stats->shadedPixels;
+                }
+            }
+            else if constexpr (Instrumented)
+                ++m_stats->depthRejected;
+        }
+    };
+
+    for (int y = y0; y <= y1; ++y)
+    {
+        auto w0 = r0, w1 = r1, w2 = r2;
+        int x = x0;
+        while (x <= x1 && (w0 | w1 | w2) < 0)
+        {
+            w0 += t.dy12Fixed;
+            w1 += t.dy20Fixed;
+            w2 += t.dy01Fixed;
+            ++x;
+        }
+        for (; x <= x1 && (w0 | w1 | w2) >= 0; ++x)
+        {
+            shadePixel(x, y, w0, w1, w2);
+            w0 += t.dy12Fixed;
+            w1 += t.dy20Fixed;
+            w2 += t.dy01Fixed;
+        }
+        r0 -= t.dx12Fixed;
+        r1 -= t.dx20Fixed;
+        r2 -= t.dx01Fixed;
+    }
 }
 
 void Rasterizer::DrawTriangle(const PreparedTriangle &t, RasterPass pass)

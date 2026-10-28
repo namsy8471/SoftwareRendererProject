@@ -652,6 +652,28 @@ Result<Material> parseMaterial(const Value &item, const std::string &context)
     material.emissiveTexture = *emissiveTexture;
     material.normalTexture = *normalTexture;
     material.doubleSided = *doubleSided;
+    auto alphaModeStr = readString(item, "alphaMode", context);
+    if (!alphaModeStr)
+        return std::unexpected(alphaModeStr.error());
+    if (!alphaModeStr->empty())
+    {
+        if (*alphaModeStr == "OPAQUE")
+            material.alphaMode = 0;
+        else if (*alphaModeStr == "MASK")
+            material.alphaMode = 1;
+        else if (*alphaModeStr == "BLEND")
+            material.alphaMode = 2;
+        else
+            return std::unexpected(context + ".alphaMode is invalid: " + *alphaModeStr);
+    }
+    else
+    {
+        material.alphaMode = 0;
+    }
+    auto alphaCutoff = readFloat(item, "alphaCutoff", context, 0.5f);
+    if (!alphaCutoff)
+        return std::unexpected(alphaCutoff.error());
+    material.alphaCutoff = *alphaCutoff;
     if (auto normalInfo = optionalObject(item, "normalTexture", context); !normalInfo)
         return std::unexpected(normalInfo.error());
     else if (*normalInfo)

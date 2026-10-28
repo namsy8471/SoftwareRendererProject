@@ -1482,11 +1482,213 @@ void shadowMappingTests()
     memory.target.Clear();
     renderer.RenderScene(memory.target, queue, view, lights);
     check(opt.shadows == false, "Options shadows is false");
+
+void alphaMaskTests()
+{
+    Camera camera({0.f, 0.f, 5.f});
+    camera.SetCameraYaw(std::numbers::pi_v<float>);
+    std::array<bool, 256> keys{};
+    camera.Update(0.f, keys, 1.f);
+
+    // Background quad at z = -0.5f (Red, Opaque)
+    Mesh bgMesh;
+    bgMesh.vertices = {{{-1.f, -1.f, -0.5f}, {0.f, 0.f}, {0.f, 0.f, 1.f}},
+                       {{1.f, -1.f, -0.5f}, {1.f, 0.f}, {0.f, 0.f, 1.f}},
+                       {{1.f, 1.f, -0.5f}, {1.f, 1.f}, {0.f, 0.f, 1.f}},
+                       {{-1.f, 1.f, -0.5f}, {0.f, 1.f}, {0.f, 0.f, 1.f}}};
+    bgMesh.indices = {0, 2, 1, 0, 3, 2};
+    bgMesh.material.ambient = {1.f, 0.f, 0.f};
+    bgMesh.material.diffuse = {0.f, 0.f, 0.f};
+    bgMesh.material.specular = {};
+    bgMesh.material.alphaMode = AlphaMode::Opaque;
+
+    // Foreground quad at z = 0.5f (Green, Mask, cutoff = 0.5)
+    // 2x1 texture: left texel alpha = 0, right texel alpha = 255
+    Mesh fgMesh;
+    fgMesh.vertices = {{{-1.f, -1.f, 0.5f}, {0.f, 0.f}, {0.f, 0.f, 1.f}},
+                       {{1.f, -1.f, 0.5f}, {1.f, 0.f}, {0.f, 0.f, 1.f}},
+                       {{1.f, 1.f, 0.5f}, {1.f, 1.f}, {0.f, 0.f, 1.f}},
+                       {{-1.f, 1.f, 0.5f}, {0.f, 1.f}, {0.f, 0.f, 1.f}}};
+    fgMesh.indices = {0, 2, 1, 0, 3, 2};
+    fgMesh.material.ambient = {0.f, 1.f, 0.f};
+    fgMesh.material.diffuse = {0.f, 1.f, 0.f};
+    fgMesh.material.specular = {};
+    fgMesh.material.alphaMode = AlphaMode::Mask;
+    fgMesh.material.alphaCutoff = 0.5f;
+    fgMesh.material.diffuseTexture =
+        std::make_shared<Texture>(2, 1, std::vector<unsigned char>{0, 255, 0, 0, 0, 255, 0, 255});
+
+    Renderer renderer;
+    MemorySurface memory(32, 32);
+    RenderQueue queue;
+    queue.Submit(MeshRenderCommand{&bgMesh, bgMesh.indices, SRMath::mat4::identity(), &bgMesh.material,
+                                   ERasterizeMode::Fill});
+    queue.Submit(MeshRenderCommand{&fgMesh, fgMesh.indices, SRMath::mat4::identity(), &fgMesh.material,
+                                   ERasterizeMode::Fill});
+    memory.target.Clear();
+    renderer.RenderScene(memory.target, queue, camera.GetViewParams(), {});
+
+    // Left half (x = 10, y = 16): foreground discarded, background red shows through
+    const std::uint32_t leftPixel = memory.pixels[16 * 32 + 10];
+    const auto leftR = (leftPixel >> 16) & 0xFF;
+    const auto leftG = (leftPixel >> 8) & 0xFF;
+    const auto leftB = leftPixel & 0xFF;
+    check(leftR > 200 && leftG == 0 && leftB == 0, "alpha mask lets background red show through on left half");
+
+    // Right half (x = 22, y = 16): foreground kept, occludes background with green
+    const std::uint32_t rightPixel = memory.pixels[16 * 32 + 22];
+    const auto rightR = (rightPixel >> 16) & 0xFF;
+    const auto rightG = (rightPixel >> 8) & 0xFF;
+    const auto rightB = rightPixel & 0xFF;
+    check(rightG > 200 && rightR == 0 && rightB == 0, "alpha mask foreground green occludes background on right half");
+
+    // Depth: right half (foreground at z = 0.5f, dist = 4.5f) has larger 1/w than left half (background at z = -0.5f, dist = 5.5f)
+    const float leftDepth = memory.target.Depth()[16 * 32 + 10];
+    const float rightDepth = memory.target.Depth()[16 * 32 + 22];
+    check(rightDepth > leftDepth, "alpha mask updates depth only on right half");
+}
+
+void alphaBlendTests()
+{
+    Camera camera({0.f, 0.f, 5.f});
+    camera.SetCameraYaw(std::numbers::pi_v<float>);
+    std::array<bool, 256> keys{};
+    camera.Update(0.f, keys, 1.f);
+
+    // Background blue quad at z = -0.5f
+    Mesh bgMesh;
+    bgMesh.vertices = {{{-1.f, -1.f, -0.5f}, {}, {0.f, 0.f, 1.f}},
+                       {{1.f, -1.f, -0.5f}, {}, {0.f, 0.f, 1.f}},
+                       {{1.f, 1.f, -0.5f}, {}, {0.f, 0.f, 1.f}},
+                       {{-1.f, 1.f, -0.5f}, {}, {0.f, 0.f, 1.f}}};
+    bgMesh.indices = {0, 2, 1, 0, 3, 2};
+    bgMesh.material.ambient = {0.f, 0.f, 1.f};
+    bgMesh.material.diffuse = {};
+    bgMesh.material.specular = {};
+    bgMesh.material.alphaMode = AlphaMode::Opaque;
+
+    // Foreground translucent red quad at z = 0.5f (opacity = 0.5)
+    Mesh fgMesh;
+    fgMesh.vertices = {{{-1.f, -1.f, 0.5f}, {}, {0.f, 0.f, 1.f}},
+                       {{1.f, -1.f, 0.5f}, {}, {0.f, 0.f, 1.f}},
+                       {{1.f, 1.f, 0.5f}, {}, {0.f, 0.f, 1.f}},
+                       {{-1.f, 1.f, 0.5f}, {}, {0.f, 0.f, 1.f}}};
+    fgMesh.indices = {0, 2, 1, 0, 3, 2};
+    fgMesh.material.ambient = {1.f, 0.f, 0.f};
+    fgMesh.material.diffuse = {};
+    fgMesh.material.specular = {};
+    fgMesh.material.opacity = 0.5f;
+    fgMesh.material.alphaMode = AlphaMode::Blend;
+
+    Renderer renderer;
+    MemorySurface memory(32, 32);
+    RenderQueue queue;
+    queue.Submit(MeshRenderCommand{&bgMesh, bgMesh.indices, SRMath::mat4::identity(), &bgMesh.material,
+                                   ERasterizeMode::Fill});
+    queue.Submit(MeshRenderCommand{&fgMesh, fgMesh.indices, SRMath::mat4::identity(), &fgMesh.material,
+                                   ERasterizeMode::Fill});
+    memory.target.Clear();
+    renderer.RenderScene(memory.target, queue, camera.GetViewParams(), {});
+
+    const std::uint32_t centerPixel = memory.pixels[16 * 32 + 16];
+    const auto r = (centerPixel >> 16) & 0xFF;
+    const auto g = (centerPixel >> 8) & 0xFF;
+    const auto b = centerPixel & 0xFF;
+    check(r > 100 && b > 100 && g == 0, "semi-transparent red quad over blue quad produces blended purple pixel");
+
+    // Depth check: translucent quad should NOT write to depth, depth should remain background depth
+    MemorySurface bgOnly(32, 32);
+    RenderQueue bgQueue;
+    bgQueue.Submit(MeshRenderCommand{&bgMesh, bgMesh.indices, SRMath::mat4::identity(), &bgMesh.material,
+                                     ERasterizeMode::Fill});
+    bgOnly.target.Clear();
+    renderer.RenderScene(bgOnly.target, bgQueue, camera.GetViewParams(), {});
+    check(approximatelyEqual(memory.target.Depth()[16 * 32 + 16], bgOnly.target.Depth()[16 * 32 + 16]),
+          "translucent quad does not overwrite depth buffer");
+
+    // Back-to-front sorting test: two overlapping translucent quads at different depths
+    Mesh quadA; // Farther translucent quad at z = 0.0f (Red)
+    quadA.vertices = {{{-1.f, -1.f, 0.0f}, {}, {0.f, 0.f, 1.f}},
+                      {{1.f, -1.f, 0.0f}, {}, {0.f, 0.f, 1.f}},
+                      {{1.f, 1.f, 0.0f}, {}, {0.f, 0.f, 1.f}},
+                      {{-1.f, 1.f, 0.0f}, {}, {0.f, 0.f, 1.f}}};
+    quadA.indices = {0, 2, 1, 0, 3, 2};
+    quadA.material.ambient = {1.f, 0.f, 0.f};
+    quadA.material.opacity = 0.5f;
+    quadA.material.alphaMode = AlphaMode::Blend;
+
+    Mesh quadB; // Closer translucent quad at z = 1.0f (Green)
+    quadB.vertices = {{{-1.f, -1.f, 1.0f}, {}, {0.f, 0.f, 1.f}},
+                      {{1.f, -1.f, 1.0f}, {}, {0.f, 0.f, 1.f}},
+                      {{1.f, 1.f, 1.0f}, {}, {0.f, 0.f, 1.f}},
+                      {{-1.f, 1.f, 1.0f}, {}, {0.f, 0.f, 1.f}}};
+    quadB.indices = {0, 2, 1, 0, 3, 2};
+    quadB.material.ambient = {0.f, 1.f, 0.f};
+    quadB.material.opacity = 0.5f;
+    quadB.material.alphaMode = AlphaMode::Blend;
+
+    // Order 1: Background, Quad A (far), Quad B (close)
+    MemorySurface surface1(32, 32);
+    RenderQueue q1;
+    q1.Submit(MeshRenderCommand{&bgMesh, bgMesh.indices, SRMath::mat4::identity(), &bgMesh.material,
+                                ERasterizeMode::Fill});
+    q1.Submit(MeshRenderCommand{&quadA, quadA.indices, SRMath::mat4::identity(), &quadA.material,
+                                ERasterizeMode::Fill});
+    q1.Submit(MeshRenderCommand{&quadB, quadB.indices, SRMath::mat4::identity(), &quadB.material,
+                                ERasterizeMode::Fill});
+    surface1.target.Clear();
+    renderer.RenderScene(surface1.target, q1, camera.GetViewParams(), {});
+
+    // Order 2: Background, Quad B (close), Quad A (far) -- opposite submission order!
+    MemorySurface surface2(32, 32);
+    RenderQueue q2;
+    q2.Submit(MeshRenderCommand{&bgMesh, bgMesh.indices, SRMath::mat4::identity(), &bgMesh.material,
+                                ERasterizeMode::Fill});
+    q2.Submit(MeshRenderCommand{&quadB, quadB.indices, SRMath::mat4::identity(), &quadB.material,
+                                ERasterizeMode::Fill});
+    q2.Submit(MeshRenderCommand{&quadA, quadA.indices, SRMath::mat4::identity(), &quadA.material,
+                                ERasterizeMode::Fill});
+    surface2.target.Clear();
+    renderer.RenderScene(surface2.target, q2, camera.GetViewParams(), {});
+
+    check(surface1.pixels == surface2.pixels,
+          "translucent quads blend deterministically regardless of submission order");
+}
+
+void mtlAlphaTests()
+{
+    const auto mtlPath = std::filesystem::temp_directory_path() / "test_alpha.mtl";
+    {
+        std::ofstream out(mtlPath);
+        out << "newmtl BlendMat_d\n"
+            << "d 0.6\n"
+            << "newmtl BlendMat_Tr\n"
+            << "Tr 0.4\n"
+            << "newmtl OpaqueMat\n"
+            << "d 1.0\n";
+    }
+    auto loaded = TextureLoader::LoadMTLFile(mtlPath);
+    std::filesystem::remove(mtlPath);
+    check(loaded.has_value(), "load test_alpha.mtl");
+    check(loaded->contains("BlendMat_d"), "BlendMat_d parsed");
+    check(approximatelyEqual((*loaded)["BlendMat_d"].opacity, 0.6f), "d 0.6 opacity");
+    check((*loaded)["BlendMat_d"].alphaMode == AlphaMode::Blend, "d 0.6 alphaMode Blend");
+
+    check(loaded->contains("BlendMat_Tr"), "BlendMat_Tr parsed");
+    check(approximatelyEqual((*loaded)["BlendMat_Tr"].opacity, 0.6f), "Tr 0.4 opacity");
+    check((*loaded)["BlendMat_Tr"].alphaMode == AlphaMode::Blend, "Tr 0.4 alphaMode Blend");
+
+    check(loaded->contains("OpaqueMat"), "OpaqueMat parsed");
+    check(approximatelyEqual((*loaded)["OpaqueMat"].opacity, 1.0f), "d 1.0 opacity");
+    check((*loaded)["OpaqueMat"].alphaMode == AlphaMode::Opaque, "d 1.0 alphaMode Opaque");
 }
 } // namespace
 
 void sr::test::RegisterRendererTests(TestRegistry &registry)
 {
+    registry.Add("renderer.alphaMask", alphaMaskTests);
+    registry.Add("renderer.alphaBlend", alphaBlendTests);
+    registry.Add("renderer.mtlAlpha", mtlAlphaTests);
     registry.Add("renderer.clippingAndViewport", RendererTestAccess::clippingAndViewport);
     registry.Add("renderer.workerIsolation", RendererTestAccess::workerIsolation);
     registry.Add("renderer.commandTransformCache", RendererTestAccess::commandTransformCache);
