@@ -38,6 +38,11 @@ class Rasterizer
         float lod = 0.f;
     };
 
+    struct OwnerSample
+    {
+        float a, b, c, q;
+    };
+
     // 동차 변환/클리핑은 한 번만 수행하고 행 worker가 불변 결과를 공유한다.
     // 색상은 시작 정점의 BGRX 값이며, 깊이는 기존 화면 선의 1/w 보간 규약이다.
     struct PreparedDebugLine
@@ -104,6 +109,8 @@ class Rasterizer
     // 같은 순서로 하므로 결과가 비트 단위로 같다(dot은 _mm_dp_ps(0x71)의 (x+y)+(z+0) 순서를 따른다).
     static void ShadeSurface4(const SurfaceSample (&)[4], const Material *const (&)[4],
                               const RenderFrameContext &, SRMath::vec3 (&)[4]);
+    static void ShadeSurface8(const SurfaceSample (&)[8], const Material *const (&)[8],
+                              const RenderFrameContext &, SRMath::vec3 (&)[8]);
     static SRMath::Color4 SampleTexture(const Texture &tex, float u, float v, float lod,
                                         const RenderFrameContext &frame);
 
@@ -122,10 +129,6 @@ class Rasterizer
     // 그때 계산한 barycentric a, b, c와 보간 1/w(q)를 남긴다. 16x16 타일 기준이다.
     // ShadeOwners는 같은 값을 다시 계산하지 않고 이것을 읽는다. 유효한 칸은 m_ownerMask 비트로만 판단하므로
     // 배열은 지우지 않는다(타일마다 6 KB 0 초기화를 피하려고 스레드별 저장소를 빌려 쓴다).
-    struct OwnerSample
-    {
-        float a, b, c, q;
-    };
     struct OwnerScratch
     {
         std::array<const PreparedTriangle *, 256> triangles;
@@ -137,6 +140,8 @@ class Rasterizer
     // ShadeOwners의 4픽셀 묶음. 보간(InterpolateSurface)과 ShadeSurface4를 같은 번역 단위에서 inline한다.
     static void ShadeOwnerQuad(const PreparedTriangle *const (&)[4], const OwnerSample *const (&)[4],
                                const RenderFrameContext &, SRMath::vec3 (&)[4]);
+    static void ShadeOwner8(const PreparedTriangle *const (&)[8], const OwnerSample *const (&)[8],
+                            const RenderFrameContext &, SRMath::vec3 (&)[8]);
     OwnerScratch &m_ownerScratch;
     std::array<std::uint64_t, 4> m_ownerMask{};
     // 픽셀 (x, y)는 base[(y - m_originY) * stride + (x - m_originX)]다. 타일 버퍼거나 타깃 전체다.

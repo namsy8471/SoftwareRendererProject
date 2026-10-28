@@ -72,6 +72,39 @@ void cpuid(std::array<int, 4> &registers, int leaf, int subleaf) noexcept
     return true;
 }
 
+[[nodiscard]] bool detect_avx2() noexcept
+{
+    if (!detect_avx())
+    {
+        return false;
+    }
+
+    std::array<int, 4> registers{};
+    cpuid(registers, 0, 0);
+    const int maximum_leaf = registers[0];
+    if (maximum_leaf < 7)
+    {
+        return false;
+    }
+
+    cpuid(registers, 7, 0);
+    constexpr int avx2_bit = 1 << 5;
+    return (registers[1] & avx2_bit) != 0;
+}
+
+[[nodiscard]] bool detect_fma() noexcept
+{
+    if (!detect_avx())
+    {
+        return false;
+    }
+
+    std::array<int, 4> registers{};
+    cpuid(registers, 1, 0);
+    constexpr int fma_bit = 1 << 12;
+    return (registers[2] & fma_bit) != 0;
+}
+
 } // namespace
 
 using TransformPairFunction = TransformPair (*)(const mat4 &, const vec4 &, const vec4 &) noexcept;
@@ -81,6 +114,18 @@ using TransformPairFunction = TransformPair (*)(const mat4 &, const vec4 &, cons
 [[nodiscard]] bool avx_available() noexcept
 {
     static const bool available = detect_avx();
+    return available;
+}
+
+[[nodiscard]] bool avx2_available() noexcept
+{
+    static const bool available = detect_avx2();
+    return available;
+}
+
+[[nodiscard]] bool fma_available() noexcept
+{
+    static const bool available = detect_fma();
     return available;
 }
 
