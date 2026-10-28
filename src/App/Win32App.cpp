@@ -242,6 +242,13 @@ void Win32App::initializeWindow(HINSTANCE hInstance, int nCmdShow)
         if (!AppendMenuW(algorithmsMenu, MF_STRING | MF_UNCHECKED, menu.commandId, menu.label))
             throw std::runtime_error("Failed to initialize rendering options menu");
 
+    AppendMenuW(algorithmsMenu, MF_SEPARATOR, 0, nullptr);
+    const HMENU shadingSubMenu = CreatePopupMenu();
+    AppendMenuW(shadingSubMenu, MF_STRING | MF_CHECKED, ID_SHADING_AUTO, L"Auto (Material default)");
+    AppendMenuW(shadingSubMenu, MF_STRING | MF_UNCHECKED, ID_SHADING_PHONG, L"Force Phong");
+    AppendMenuW(shadingSubMenu, MF_STRING | MF_UNCHECKED, ID_SHADING_PBR, L"Force PBR (Cook-Torrance)");
+    AppendMenuW(algorithmsMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(shadingSubMenu), L"Shading Model");
+
     // 파일 메뉴 맨 위에 모델 열기를 넣는다. 탐색기에서 창으로 끌어다 놓아도 같은 경로로 로드된다.
     const HMENU fileMenu = GetSubMenu(GetMenu(m_hWnd), 0);
     if (!fileMenu || !InsertMenuW(fileMenu, 0, MF_BYPOSITION | MF_STRING, ID_FILE_OPENMODEL,
@@ -249,6 +256,15 @@ void Win32App::initializeWindow(HINSTANCE hInstance, int nCmdShow)
         !InsertMenuW(fileMenu, 1, MF_BYPOSITION | MF_SEPARATOR, 0, nullptr))
         throw std::runtime_error("Failed to initialize file menu");
     initializeProjectMenu(fileMenu, 2);
+    AppendMenuW(fileMenu, MF_SEPARATOR, 0, nullptr);
+    const HMENU sceneSubMenu = CreatePopupMenu();
+    AppendMenuW(sceneSubMenu, MF_STRING, ID_SCENE_DEFAULT, L"0. 기본 데모 씬 (IronMan + Teapot)");
+    AppendMenuW(sceneSubMenu, MF_STRING, ID_SCENE_PBR_GRID, L"1. PBR 구체 그리드 (5x5 룩뎁)");
+    AppendMenuW(sceneSubMenu, MF_STRING, ID_SCENE_HELMET, L"2. 사이버네틱 헬멧 (PBR 쇼케이스)");
+    AppendMenuW(sceneSubMenu, MF_STRING, ID_SCENE_TERRAIN, L"3. 고밀도 폴리곤 지형 (50k+ 트라이앵글)");
+    AppendMenuW(sceneSubMenu, MF_STRING, ID_SCENE_OVERDRAW, L"4. 인스턴스 소행성군 (Hi-Z 오버드로)");
+    AppendMenuW(sceneSubMenu, MF_STRING, ID_SCENE_ARENA, L"5. 멀티 라이트 아레나 (섀도우 & 광원)");
+    AppendMenuW(fileMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(sceneSubMenu), L"벤치마크 씬(&B)");
     DragAcceptFiles(m_hWnd, TRUE);
     initializeEditMenu();
     initializeAnimationMenu();
@@ -881,6 +897,65 @@ bool Win32App::handleMenuCommand(int commandId)
         renderer.SetAAAlgorithm(fxaa ? EAAAlgorithm::FXAA : EAAAlgorithm::None);
         checkMenuItem(ID_ANTIALIASING_NONE, !fxaa);
         checkMenuItem(ID_ANTIALIASING_FXAA, fxaa);
+        break;
+    }
+    case ID_SHADING_AUTO:
+    case ID_SHADING_PHONG:
+    case ID_SHADING_PBR:
+    {
+        auto options = renderer.GetOptions();
+        if (commandId == ID_SHADING_PHONG)
+            options.shadingModel = EShadingModel::Phong;
+        else if (commandId == ID_SHADING_PBR)
+        {
+            options.shadingModel = EShadingModel::PBR;
+            options.pbr = true;
+        }
+        else
+            options.shadingModel = EShadingModel::Auto;
+        renderer.SetOptions(options);
+        checkMenuItem(ID_SHADING_AUTO, options.shadingModel == EShadingModel::Auto);
+        checkMenuItem(ID_SHADING_PHONG, options.shadingModel == EShadingModel::Phong);
+        checkMenuItem(ID_SHADING_PBR, options.shadingModel == EShadingModel::PBR);
+        break;
+    }
+    case ID_SCENE_DEFAULT:
+        initializeScene();
+        break;
+    case ID_SCENE_PBR_GRID:
+    {
+        auto gridScene = sr::demo::CreatePbrSphereGridScene();
+        const float aspectRatio =
+            static_cast<float>(m_renderTarget.Width()) / std::max(1.0f, static_cast<float>(m_renderTarget.Height()));
+        sr::demo::FitCameraToScene(gridScene, aspectRatio);
+        m_runner.SetScene(std::move(gridScene));
+        break;
+    }
+    case ID_SCENE_HELMET:
+    {
+        auto showcase = sr::demo::CreatePbrShowcaseScene();
+        const float aspectRatio =
+            static_cast<float>(m_renderTarget.Width()) / std::max(1.0f, static_cast<float>(m_renderTarget.Height()));
+        sr::demo::FitCameraToScene(showcase, aspectRatio);
+        m_runner.SetScene(std::move(showcase));
+        break;
+    }
+    case ID_SCENE_TERRAIN:
+    {
+        auto terrain = sr::demo::CreatePolygonalTerrainScene();
+        m_runner.SetScene(std::move(terrain));
+        break;
+    }
+    case ID_SCENE_OVERDRAW:
+    {
+        auto overdraw = sr::demo::CreateInstancedFieldScene();
+        m_runner.SetScene(std::move(overdraw));
+        break;
+    }
+    case ID_SCENE_ARENA:
+    {
+        auto arena = sr::demo::CreateMultiLightArenaScene();
+        m_runner.SetScene(std::move(arena));
         break;
     }
     case ID_FILE_OPENMODEL:

@@ -37,13 +37,14 @@ options:
   --srgb              enable sRGB gamma correction
   --shadows           enable directional & spot light shadow mapping (2x2 PCF)
   --pbr               enable physically based rendering (glTF metallic-roughness)
+  --shading S         auto | phong | pbr (default auto)
   --ibl               enable image-based lighting (diffuse SH + prefiltered specular)
   --tonemap           enable ACES film tone mapping
   --dda               DDA lines instead of Bresenham
   --stats             collect renderer counters and pass timings (slower)
   --threads N         limit sr::jobs parallelism (default: all cores)
   --load-every N      bench: load teapot.obj in the background every N frames (results discarded)
-  --scene FILE        render this .gltf/.glb instead of the demo scene and play its animation
+  --scene S           grid | helmet | terrain | overdraw | arena | <file.gltf>
   --clip N            animation clip index for --scene (default 0)
   --assets DIR        asset folder (default: <exe dir>/assets, then repo assets/, then ./assets)
   --target-fps F      fps goal reported in output (default 100)
@@ -153,6 +154,18 @@ Options parseArguments(int argc, char **argv)
             config.options.shadows = true;
         else if (argument == "--pbr")
             config.options.pbr = true;
+        else if (argument == "--shading")
+        {
+            const auto text = next();
+            if (text == "phong")
+                config.options.shadingModel = EShadingModel::Phong;
+            else if (text == "pbr")
+                config.options.shadingModel = EShadingModel::PBR;
+            else if (text == "auto")
+                config.options.shadingModel = EShadingModel::Auto;
+            else
+                usageError("unknown shading model: " + std::string(text));
+        }
         else if (argument == "--ibl")
             config.options.ibl = true;
         else if (argument == "--tonemap")

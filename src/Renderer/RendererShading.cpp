@@ -246,6 +246,14 @@ SRMath::vec3 ShadeSurfacePBR(const Rasterizer::SurfaceSample &surface, const Mat
                              const RenderFrameContext &frame)
 {
     SRMath::vec3 baseColor{material.baseColor.x, material.baseColor.y, material.baseColor.z};
+    float roughness = material.roughness;
+    float metallic = material.metallic;
+    if (!material.isPbr)
+    {
+        baseColor = material.diffuse;
+        metallic = 0.0f;
+        roughness = std::clamp(std::sqrt(2.0f / (material.shininess + 2.0f)), 0.04f, 1.0f);
+    }
     if (material.diffuseTexture)
     {
         const auto diff = Rasterizer::SampleTexture(*material.diffuseTexture, surface.texcoord.x,
@@ -254,9 +262,6 @@ SRMath::vec3 ShadeSurfacePBR(const Rasterizer::SurfaceSample &surface, const Mat
         baseColor.y *= sRGBToLinear(diff.g);
         baseColor.z *= sRGBToLinear(diff.b);
     }
-
-    float roughness = material.roughness;
-    float metallic = material.metallic;
     if (material.metallicRoughnessTexture)
     {
         const auto mr = Rasterizer::SampleTexture(*material.metallicRoughnessTexture, surface.texcoord.x,
@@ -473,7 +478,11 @@ SRMath::vec3 ShadeSurfacePBR(const Rasterizer::SurfaceSample &surface, const Mat
 SRMath::vec3 Rasterizer::ShadeSurface(const SurfaceSample &surface, const Material &material,
                                       const RenderFrameContext &frame)
 {
-    if (frame.pbr && material.isPbr)
+    const bool usePbr = (frame.shadingModel == EShadingModel::Phong)
+                            ? false
+                            : ((frame.shadingModel == EShadingModel::PBR) ? frame.pbr
+                                                                          : (frame.pbr && material.isPbr));
+    if (usePbr)
         return ShadeSurfacePBR(surface, material, frame);
     SRMath::vec3 baseColor;
 
@@ -767,7 +776,18 @@ void ShadeLanesPBR(const Lanes3 &normal, const Lanes3 &position, const float (&u
     for (int i = 0; i < 4; ++i)
     {
         const Material &m = *material[i];
-        baseColor[i] = {m.baseColor.x, m.baseColor.y, m.baseColor.z};
+        if (m.isPbr)
+        {
+            baseColor[i] = {m.baseColor.x, m.baseColor.y, m.baseColor.z};
+            roughness[i] = m.roughness;
+            metallic[i] = m.metallic;
+        }
+        else
+        {
+            baseColor[i] = m.diffuse;
+            metallic[i] = 0.0f;
+            roughness[i] = std::clamp(std::sqrt(2.0f / (m.shininess + 2.0f)), 0.04f, 1.0f);
+        }
         if (m.diffuseTexture)
         {
             const auto diff = Rasterizer::SampleTexture(*m.diffuseTexture, u[i], v[i], lod[i], frame);
@@ -775,9 +795,6 @@ void ShadeLanesPBR(const Lanes3 &normal, const Lanes3 &position, const float (&u
             baseColor[i].y *= sRGBToLinear(diff.g);
             baseColor[i].z *= sRGBToLinear(diff.b);
         }
-
-        roughness[i] = m.roughness;
-        metallic[i] = m.metallic;
         if (m.metallicRoughnessTexture)
         {
             const auto mr = Rasterizer::SampleTexture(*m.metallicRoughnessTexture, u[i], v[i], lod[i], frame);
@@ -1138,7 +1155,46 @@ void ShadeLanes(const Lanes3 &normal, const Lanes3 &position, const float (&u)[4
                 const float (&lod)[4], const Material *const (&material)[4], const RenderFrameContext &frame,
                 SRMath::vec3 (&colors)[4])
 {
-    if (frame.pbr && (material[0]->isPbr || material[1]->isPbr || material[2]->isPbr || material[3]->isPbr))
+    const bool anyPbr = material[0]->isPbr || material[1]->isPbr || material[2]->isPbr || material[3]->isPbr;
+    const bool allPbr = material[0]->isPbr && material[1]->isPbr && material[2]->isPbr && material[3]->isPbr;
+
+    if (frame.shadingModel == EShadingModel::Auto && frame.pbr && anyPbr != allPbr)
+    {
+        alignas(16) float px[4], py[4], pz[4];
+        alignas(16) float nx[4], ny[4], nz[4];
+        _mm_store_ps(px, position.x);
+        _mm_store_ps(py, position.y);
+        _mm_store_ps(pz, position.z);
+        _mm_store_ps(nx, normal.x);
+        _mm_store_ps(ny, normal.y);
+        _mm_store_ps(nz, normal.z);
+        for (int i = 0; i < 4; ++i)
+        {
+            Rasterizer::SurfaceSample s;
+            s.positionWorld = SRMath::vec3(px[i], py[i], pz[i]);
+            s.normalWorld = SRMath::vec3(nx[i], ny[i], nz[i]);
+            s.texcoord = SRMath::vec2(u[i], v[i]);
+            s.lod = lod[i];
+            colors[i] = Rasterizer::ShadeSurface(s, *material[i], frame);
+        }
+        return;
+    }
+
+    bool runPbr = false;
+    if (frame.shadingModel == EShadingModel::Phong)
+    {
+        runPbr = false;
+    }
+    else if (frame.shadingModel == EShadingModel::PBR)
+    {
+        runPbr = frame.pbr;
+    }
+    else
+    {
+        runPbr = frame.pbr && allPbr;
+    }
+
+    if (runPbr)
     {
         ShadeLanesPBR(normal, position, u, v, lod, material, frame, colors);
         return;
