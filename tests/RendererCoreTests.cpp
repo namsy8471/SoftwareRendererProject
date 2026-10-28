@@ -1351,6 +1351,138 @@ void srgbGammaTests()
                   std::bit_cast<std::uint32_t>(laneOut[i].z) == std::bit_cast<std::uint32_t>(srgbColor.z),
               "ShadeSurface4 matches ShadeSurface bitwise with srgbGamma");
 }
+
+void shadowMappingTests()
+{
+    Mesh receiverMesh;
+    receiverMesh.vertices = {
+        {{-4.f, 0.f, -4.f}, {0.f, 0.f}, {0.f, 1.f, 0.f}},
+        {{ 4.f, 0.f, -4.f}, {1.f, 0.f}, {0.f, 1.f, 0.f}},
+        {{ 4.f, 0.f,  4.f}, {1.f, 1.f}, {0.f, 1.f, 0.f}},
+        {{-4.f, 0.f,  4.f}, {0.f, 1.f}, {0.f, 1.f, 0.f}}
+    };
+    receiverMesh.indices = {0, 1, 2, 0, 2, 3};
+    receiverMesh.material.ambient = {0.1f, 0.1f, 0.1f};
+    receiverMesh.material.diffuse = {0.8f, 0.8f, 0.8f};
+    receiverMesh.material.specular = {0.f, 0.f, 0.f};
+    receiverMesh.localAABB = ComputeLocalAABB(receiverMesh);
+
+    Mesh casterMesh;
+    casterMesh.vertices = {
+        {{-1.f, 2.f, -1.f}, {0.f, 0.f}, {0.f, 1.f, 0.f}},
+        {{ 1.f, 2.f, -1.f}, {1.f, 0.f}, {0.f, 1.f, 0.f}},
+        {{ 1.f, 2.f,  1.f}, {1.f, 1.f}, {0.f, 1.f, 0.f}},
+        {{-1.f, 2.f,  1.f}, {0.f, 1.f}, {0.f, 1.f, 0.f}}
+    };
+    casterMesh.indices = {0, 1, 2, 0, 2, 3};
+    casterMesh.material.ambient = {0.1f, 0.1f, 0.1f};
+    casterMesh.material.diffuse = {0.5f, 0.5f, 0.5f};
+    casterMesh.localAABB = ComputeLocalAABB(casterMesh);
+
+    const std::array<DirectionalLight, 1> lights{DirectionalLight{{0.f, -1.f, 0.f}, {1.f, 1.f, 1.f}}};
+    const std::array prepared{PreparedDirectionalLight::From(lights[0])};
+
+    ShadowMap shadowMap;
+    RenderQueue queue;
+    MeshRenderCommand receiverCmd;
+    receiverCmd.sourceMesh = &receiverMesh;
+    receiverCmd.indicesToDraw = receiverMesh.indices;
+    receiverCmd.rasterizeMode = ERasterizeMode::Fill;
+    receiverCmd.worldTransform = SRMath::mat4::identity();
+    receiverCmd.material = &receiverMesh.material;
+    queue.AddMeshRenderCommand(receiverCmd);
+
+    MeshRenderCommand casterCmd;
+    casterCmd.sourceMesh = &casterMesh;
+    casterCmd.indicesToDraw = casterMesh.indices;
+    casterCmd.rasterizeMode = ERasterizeMode::Fill;
+    casterCmd.worldTransform = SRMath::mat4::identity();
+    casterCmd.material = &casterMesh.material;
+    queue.AddMeshRenderCommand(casterCmd);
+
+    const SRMath::mat4 lightView = SRMath::lookAt({0.f, 10.f, 0.f}, {0.f, 0.f, 0.f}, {0.f, 0.f, 1.f});
+    const SRMath::mat4 lightProj = SRMath::ortho(-5.f, 5.f, -5.f, 5.f, 0.1f, 20.f);
+    shadowMap.Render(queue, lightProj * lightView);
+
+    RenderFrameContext shadowFrame{SRMath::mat4::identity(), {0.f, 5.f, 0.f}, prepared, 1, 1};
+    shadowFrame.shadowMap = &shadowMap;
+
+    RenderFrameContext noShadowFrame = shadowFrame;
+    noShadowFrame.shadowMap = nullptr;
+
+    const Rasterizer::SurfaceSample centerSample{{0.f, 1.f, 0.f}, {0.5f, 0.5f}, {0.f, 0.f, 0.f}};
+    const Rasterizer::SurfaceSample outsideSample{{0.f, 1.f, 0.f}, {0.5f, 0.5f}, {3.f, 0.f, 0.f}};
+
+    const SRMath::vec3 centerShadowed = Rasterizer::ShadeSurface(centerSample, receiverMesh.material, shadowFrame);
+    const SRMath::vec3 outsideLit = Rasterizer::ShadeSurface(outsideSample, receiverMesh.material, shadowFrame);
+
+    check(centerShadowed.x < outsideLit.x * 0.3f, "Shadowed pixel is significantly darker than unshadowed pixel");
+    check(approximatelyEqual(centerShadowed.x, 0.1f), "Shadowed pixel retains ambient light (0.1)");
+    check(approximatelyEqual(outsideLit.x, 0.9f), "Unshadowed pixel has ambient + diffuse = 0.9");
+
+    const SRMath::vec3 centerUnshadowed = Rasterizer::ShadeSurface(centerSample, receiverMesh.material, noShadowFrame);
+    check(approximatelyEqual(centerUnshadowed.x, 0.9f), "When shadows disabled, receiver is fully lit (0.9)");
+
+    bool foundIntermediate = false;
+    for (float x = 0.95f; x <= 1.05f; x += 0.005f)
+    {
+        const float vis = shadowMap.SampleVisibility({x, 0.f, 0.f}, {0.f, 1.f, 0.f}, {0.f, 1.f, 0.f});
+        if (vis > 0.01f && vis < 0.99f)
+        {
+            foundIntermediate = true;
+            break;
+        }
+    }
+    check(foundIntermediate, "2x2 bilinear PCF produces intermediate shadow values (0.0 < visibility < 1.0) at shadow boundary");
+
+    const Rasterizer::SurfaceSample samples4[4] = {
+        centerSample,
+        outsideSample,
+        {{0.f, 1.f, 0.f}, {0.5f, 0.5f}, {1.0f, 0.f, 0.f}},
+        {{0.f, 1.f, 0.f}, {0.5f, 0.5f}, {-2.5f, 0.f, 0.f}}
+    };
+    const Material *mats4[4] = {
+        &receiverMesh.material,
+        &receiverMesh.material,
+        &receiverMesh.material,
+        &receiverMesh.material
+    };
+    SRMath::vec3 scalarOut[4];
+    for (int i = 0; i < 4; ++i)
+        scalarOut[i] = Rasterizer::ShadeSurface(samples4[i], *mats4[i], shadowFrame);
+
+    SRMath::vec3 laneOut[4];
+    Rasterizer::ShadeSurface4(samples4, mats4, shadowFrame, laneOut);
+    for (int i = 0; i < 4; ++i)
+    {
+        check(std::bit_cast<std::uint32_t>(laneOut[i].x) == std::bit_cast<std::uint32_t>(scalarOut[i].x) &&
+              std::bit_cast<std::uint32_t>(laneOut[i].y) == std::bit_cast<std::uint32_t>(scalarOut[i].y) &&
+              std::bit_cast<std::uint32_t>(laneOut[i].z) == std::bit_cast<std::uint32_t>(scalarOut[i].z),
+              "ShadeSurface4 matches ShadeSurface bitwise with shadow mapping");
+    }
+
+    MemorySurface memory(64, 64);
+    Renderer renderer;
+    RenderOptions opt;
+    opt.shadows = true;
+    renderer.SetOptions(opt);
+
+    ViewParams view;
+    view.position = {0.f, 5.f, 0.01f};
+    view.view = SRMath::lookAt(view.position, {0.f, 0.f, 0.f}, {0.f, 0.f, -1.f});
+    view.projection = SRMath::ortho(-4.f, 4.f, -4.f, 4.f, 0.1f, 10.f);
+
+    renderer.RenderScene(memory.target, queue, view, lights);
+    const unsigned int outsidePixelShadowed = memory.pixels[32 * 64 + 10];
+    const auto rOutside = (outsidePixelShadowed >> 16) & 0xFF;
+    check(rOutside > 150, "Outside receiver is brightly lit");
+
+    opt.shadows = false;
+    renderer.SetOptions(opt);
+    memory.target.Clear();
+    renderer.RenderScene(memory.target, queue, view, lights);
+    check(opt.shadows == false, "Options shadows is false");
+}
 } // namespace
 
 void sr::test::RegisterRendererTests(TestRegistry &registry)
@@ -1370,4 +1502,5 @@ void sr::test::RegisterRendererTests(TestRegistry &registry)
     registry.Add("renderer.srgbGamma", srgbGammaTests);
     registry.Add("renderer.smoke", renderSmoke);
     registry.Add("renderer.primitiveIdPlaneOptional", primitiveIdPlaneOptional);
+    registry.Add("renderer.shadowMapping", shadowMappingTests);
 }

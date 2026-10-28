@@ -104,6 +104,91 @@ void Renderer::renderScene(RenderTarget &target, const RenderQueue &queue, const
         return;
     const auto started = FrameClock::now();
     ensureViewport(target.Width(), target.Height());
+
+    const ShadowMap *activeShadowMap = nullptr;
+    if (m_options.shadows && (!lights.empty() || !spotLights.empty()) && !queue.GetRenderCommands().empty())
+    {
+        if (!m_shadowMap)
+            m_shadowMap = std::make_unique<ShadowMap>();
+
+        if (!lights.empty())
+        {
+            m_shadowMap->lightType = ShadowMap::LightType::Directional;
+            AABB sceneBounds;
+            for (const auto &cmd : queue.GetRenderCommands())
+            {
+                if (cmd.sourceMesh)
+                {
+                    const AABB localBox = cmd.sourceMesh->GetLocalAABB().IsValid()
+                                              ? cmd.sourceMesh->GetLocalAABB()
+                                              : ComputeLocalAABB(*cmd.sourceMesh);
+                    sceneBounds.Encapsulate(localBox.Transform(cmd.worldTransform));
+                }
+            }
+            if (!sceneBounds.IsValid() || SRMath::length(sceneBounds.max - sceneBounds.min) < 1e-3f)
+            {
+                sceneBounds.min = SRMath::vec3(-10.0f, -10.0f, -10.0f);
+                sceneBounds.max = SRMath::vec3(10.0f, 10.0f, 10.0f);
+            }
+            const SRMath::vec3 center = sceneBounds.Center();
+            float radius = 0.5f * SRMath::length(sceneBounds.max - sceneBounds.min);
+            radius = std::max(radius, 10.0f);
+
+            const PreparedDirectionalLight primaryLight = PreparedDirectionalLight::From(lights[0]);
+            const SRMath::vec3 lightDir = primaryLight.directionToLight;
+            const SRMath::vec3 eye = center + lightDir * (radius * 2.0f);
+            const SRMath::vec3 up =
+                std::abs(lightDir.y) > 0.99f ? SRMath::vec3(0.f, 0.f, 1.f) : SRMath::vec3(0.f, 1.f, 0.f);
+            const SRMath::mat4 lightView = SRMath::lookAt(eye, center, up);
+
+            const auto corners = sceneBounds.Corners();
+            float minX = std::numeric_limits<float>::max();
+            float maxX = std::numeric_limits<float>::lowest();
+            float minY = std::numeric_limits<float>::max();
+            float maxY = std::numeric_limits<float>::lowest();
+            float minZ = std::numeric_limits<float>::max();
+            float maxZ = std::numeric_limits<float>::lowest();
+            for (const auto &c : corners)
+            {
+                const SRMath::vec4 lp = lightView * SRMath::vec4(c, 1.0f);
+                minX = std::min(minX, lp.x);
+                maxX = std::max(maxX, lp.x);
+                minY = std::min(minY, lp.y);
+                maxY = std::max(maxY, lp.y);
+                minZ = std::min(minZ, lp.z);
+                maxZ = std::max(maxZ, lp.z);
+            }
+            const float padXY = std::max(1.0f, (maxX - minX) * 0.05f);
+            minX -= padXY;
+            maxX += padXY;
+            minY -= padXY;
+            maxY += padXY;
+            float zNear = -maxZ - std::max(1.0f, radius * 0.5f);
+            float zFar = -minZ + std::max(1.0f, radius * 0.5f);
+            if (zNear < 0.1f)
+                zNear = 0.1f;
+            if (zFar <= zNear + 1.0f)
+                zFar = zNear + 20.0f;
+
+            const SRMath::mat4 lightProj = SRMath::ortho(minX, maxX, minY, maxY, zNear, zFar);
+            m_shadowMap->Render(queue, lightProj * lightView);
+        }
+        else
+        {
+            m_shadowMap->lightType = ShadowMap::LightType::Spot;
+            const PreparedSpotLight spot = PreparedSpotLight::From(spotLights[0]);
+            const float range = 1.0f / spot.invRange;
+            const SRMath::vec3 rayDir = -1.0f * spot.directionToLight;
+            const SRMath::vec3 up =
+                std::abs(rayDir.y) > 0.99f ? SRMath::vec3(0.f, 0.f, 1.f) : SRMath::vec3(0.f, 1.f, 0.f);
+            const SRMath::mat4 lightView = SRMath::lookAt(spot.position, spot.position + rayDir * range, up);
+            const float fov = 2.0f * std::acos(std::clamp(spot.outerConeCos, -1.0f, 1.0f));
+            const SRMath::mat4 lightProj = SRMath::perspective(fov, 1.0f, 0.1f, range);
+            m_shadowMap->Render(queue, lightProj * lightView);
+        }
+        activeShadowMap = m_shadowMap.get();
+    }
+
     const FrameContext frame{view.projection * view.view,
                              view.position,
                              prepareLights(lights),
@@ -113,7 +198,8 @@ void Renderer::renderScene(RenderTarget &target, const RenderQueue &queue, const
                              prepareSpotLights(spotLights),
                              m_options.bilinearFiltering,
                              m_options.mipmapping,
-                             m_options.srgbGamma};
+                             m_options.srgbGamma,
+                             activeShadowMap};
     prepareFrame();
     if (m_options.collectStats)
         m_stats.prepareMs = elapsedMilliseconds(started);

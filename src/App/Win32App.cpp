@@ -108,7 +108,8 @@ constexpr std::array renderOptionMenus{
                      L"Hidden-line wireframe (depth prepass)"},
     RenderOptionMenu{ID_RENDER_BILINEAR, &RenderOptions::bilinearFiltering, L"Bilinear texture filtering"},
     RenderOptionMenu{ID_RENDER_MIPMAP, &RenderOptions::mipmapping, L"Mipmap texture filtering"},
-    RenderOptionMenu{ID_RENDER_SRGB, &RenderOptions::srgbGamma, L"sRGB gamma correction"}};
+    RenderOptionMenu{ID_RENDER_SRGB, &RenderOptions::srgbGamma, L"sRGB gamma correction"},
+    RenderOptionMenu{ID_RENDER_SHADOWS, &RenderOptions::shadows, L"Shadow mapping (2x2 PCF)"}};
 // 프레임마다 로드 완료분을 장면에 넣는 데 쓰는 최대 시간. 넘치면 다음 프레임으로 미룬다.
 constexpr std::chrono::microseconds assetApplyBudget{500};
 // 새 모델은 카메라 앞 이 거리에, 가장 긴 변이 이 크기가 되도록 놓는다(월드 단위).
