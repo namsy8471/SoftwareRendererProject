@@ -1493,10 +1493,10 @@ void alphaMaskTests()
 
     // Background quad at z = -0.5f (Red, Opaque)
     Mesh bgMesh;
-    bgMesh.vertices = {{{-1.f, -1.f, -0.5f}, {0.f, 0.f}, {0.f, 0.f, 1.f}},
-                       {{1.f, -1.f, -0.5f}, {1.f, 0.f}, {0.f, 0.f, 1.f}},
-                       {{1.f, 1.f, -0.5f}, {1.f, 1.f}, {0.f, 0.f, 1.f}},
-                       {{-1.f, 1.f, -0.5f}, {0.f, 1.f}, {0.f, 0.f, 1.f}}};
+    bgMesh.vertices = {{{-2.f, -2.f, -0.5f}, {0.f, 0.f}, {0.f, 0.f, 1.f}},
+                       {{2.f, -2.f, -0.5f}, {1.f, 0.f}, {0.f, 0.f, 1.f}},
+                       {{2.f, 2.f, -0.5f}, {1.f, 1.f}, {0.f, 0.f, 1.f}},
+                       {{-2.f, 2.f, -0.5f}, {0.f, 1.f}, {0.f, 0.f, 1.f}}};
     bgMesh.indices = {0, 2, 1, 0, 3, 2};
     bgMesh.material.ambient = {1.f, 0.f, 0.f};
     bgMesh.material.diffuse = {0.f, 0.f, 0.f};
@@ -1506,10 +1506,10 @@ void alphaMaskTests()
     // Foreground quad at z = 0.5f (Green, Mask, cutoff = 0.5)
     // 2x1 texture: left texel alpha = 0, right texel alpha = 255
     Mesh fgMesh;
-    fgMesh.vertices = {{{-1.f, -1.f, 0.5f}, {0.f, 0.f}, {0.f, 0.f, 1.f}},
-                       {{1.f, -1.f, 0.5f}, {1.f, 0.f}, {0.f, 0.f, 1.f}},
-                       {{1.f, 1.f, 0.5f}, {1.f, 1.f}, {0.f, 0.f, 1.f}},
-                       {{-1.f, 1.f, 0.5f}, {0.f, 1.f}, {0.f, 0.f, 1.f}}};
+    fgMesh.vertices = {{{-2.f, -2.f, 0.5f}, {0.f, 0.f}, {0.f, 0.f, 1.f}},
+                       {{2.f, -2.f, 0.5f}, {1.f, 0.f}, {0.f, 0.f, 1.f}},
+                       {{2.f, 2.f, 0.5f}, {1.f, 1.f}, {0.f, 0.f, 1.f}},
+                       {{-2.f, 2.f, 0.5f}, {0.f, 1.f}, {0.f, 0.f, 1.f}}};
     fgMesh.indices = {0, 2, 1, 0, 3, 2};
     fgMesh.material.ambient = {0.f, 1.f, 0.f};
     fgMesh.material.diffuse = {0.f, 1.f, 0.f};
