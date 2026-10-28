@@ -634,8 +634,11 @@ Result<Material> parseMaterial(const Value &item, const std::string &context)
     auto doubleSided = readBool(item, "doubleSided", context, false);
     auto pbr = optionalObject(item, "pbrMetallicRoughness", context);
     auto emissiveTexture = parseTextureRef(item, "emissiveTexture", context);
+    auto normalTexture = parseTextureRef(item, "normalTexture", context);
     if (!emissiveTexture)
         return std::unexpected(emissiveTexture.error());
+    if (!normalTexture)
+        return std::unexpected(normalTexture.error());
     if (!name)
         return std::unexpected(name.error());
     if (!emissive)
@@ -647,7 +650,17 @@ Result<Material> parseMaterial(const Value &item, const std::string &context)
     material.name = std::move(*name);
     material.emissiveFactor = *emissive;
     material.emissiveTexture = *emissiveTexture;
+    material.normalTexture = *normalTexture;
     material.doubleSided = *doubleSided;
+    if (auto normalInfo = optionalObject(item, "normalTexture", context); !normalInfo)
+        return std::unexpected(normalInfo.error());
+    else if (*normalInfo)
+    {
+        auto scale = readFloat(**normalInfo, "scale", context + ".normalTexture", 1.f);
+        if (!scale)
+            return std::unexpected(scale.error());
+        material.normalScale = *scale;
+    }
     if (*pbr)
     {
         const std::string pbrContext = context + ".pbrMetallicRoughness";
@@ -955,7 +968,8 @@ Result<void> validateDocument(Document &document)
         }
     for (std::size_t i = 0; i < document.materials.size(); ++i)
         for (const auto &reference :
-             {document.materials[i].baseColorTexture, document.materials[i].emissiveTexture})
+             {document.materials[i].baseColorTexture, document.materials[i].emissiveTexture,
+              document.materials[i].normalTexture})
             if (auto valid = validateIndex(reference.texture, document.textures.size(), where("materials", i),
                                            "texture");
                 !valid)

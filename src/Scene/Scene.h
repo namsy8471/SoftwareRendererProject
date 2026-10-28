@@ -35,6 +35,8 @@ class Scene
     [[nodiscard]] bool AddObject(std::shared_ptr<GameObject> object,
                                  const std::shared_ptr<GameObject> &parent = nullptr);
     void AddLight(const DirectionalLight &light) { m_lights.push_back(light); }
+    void AddPointLight(const PointLight &light) { m_pointLights.push_back(light); }
+    void AddSpotLight(const SpotLight &light) { m_spotLights.push_back(light); }
     void SetCamera(const Camera &camera) noexcept { m_camera = camera; }
     // 재생기의 node들은 이 장면에 넣은 물체여야 한다(보통 같은 glTF root). null은 무시한다.
     void AddAnimator(std::shared_ptr<sr::anim::Animator> animator);
@@ -46,6 +48,8 @@ class Scene
     [[nodiscard]] Camera &GetCamera() noexcept { return m_camera; }
     [[nodiscard]] const Camera &GetCamera() const noexcept { return m_camera; }
     [[nodiscard]] std::span<const DirectionalLight> GetLights() const noexcept { return m_lights; }
+    [[nodiscard]] std::span<const PointLight> GetPointLights() const noexcept { return m_pointLights; }
+    [[nodiscard]] std::span<const SpotLight> GetSpotLights() const noexcept { return m_spotLights; }
     [[nodiscard]] std::span<const std::shared_ptr<GameObject>> GetRootObjects() const noexcept
     {
         return m_rootObjects;
@@ -61,6 +65,8 @@ class Scene
   private:
     std::vector<std::shared_ptr<GameObject>> m_rootObjects;
     std::vector<DirectionalLight> m_lights;
+    std::vector<PointLight> m_pointLights;
+    std::vector<SpotLight> m_spotLights;
     std::vector<std::shared_ptr<sr::anim::Animator>> m_animators;
     Camera m_camera;
     bool m_isRotateMode = true;

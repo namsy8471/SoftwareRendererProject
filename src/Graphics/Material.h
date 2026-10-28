@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include <memory>
 #include <string>
 #include "Math/SRMath.h"
@@ -17,5 +17,7 @@ struct Material
     // 여러 mesh material이 같은 이미지 수명을 공유하므로 shared_ptr가 맞다.
     // 빈 상태는 nullptr 리터럴보다 값 초기화로 표현한다.
     std::shared_ptr<Texture> diffuseTexture{};
+    std::shared_ptr<Texture> normalTexture{};
+    float normalScale = 1.0f;
     int illuminationModel = 2; // MTL illum 2: Phong 반사 모델
 };

@@ -67,12 +67,12 @@
 
 | 파일 | 역할 |
 | --- | --- |
-| `Mesh.h` · `Mesh.cpp` | **Vertex**, **Mesh**(정점·인덱스·재질·Octree), `ComputeLocalAABB` |
+| `Mesh.h` · `Mesh.cpp` | **Vertex**, **Mesh**(정점·인덱스·탄젠트·재질·Octree), `ComputeLocalAABB`, `ComputeTangents` |
 | `Model.h` · `Model.cpp` | **Model**: Mesh 묶음 + 모델 AABB. ModelLoader만 채운다. `Model.cpp`는 빈 파일 |
-| `Material.h` | **Material**: MTL/Phong 값(ambient·diffuse·specular·shininess·opacity)과 diffuse 텍스처 |
-| `Light.h` | **DirectionalLight**(방향 = 광선 진행 방향) |
+| `Material.h` | **Material**: MTL/Phong 값(ambient·diffuse·specular·shininess·opacity)과 diffuse·normal 텍스처 |
+| `Light.h` | **DirectionalLight**(방향 = 광선 진행 방향), **PointLight**, **SpotLight** |
 | `ViewParams.h` | **ViewParams**: 렌더러에 넘기는 view/projection/카메라 위치. Renderer가 Camera를 모르게 한다 |
-| `Texture.h` · `Texture.cpp` | **Texture**: RGBA 저장, `Sample(u, v)`, **TextureWrap**(ClampToEdge/Repeat/MirroredRepeat) |
+| `Texture.h` · `Texture.cpp` | **Texture**: RGBA·밉맵 체인 저장, Nearest/Bilinear/Trilinear 샘플링, **TextureWrap**, **TextureFilter** |
 | `Octree.h` · `Octree.cpp` | **Octree**: 메시 삼각형 공간 분할, `ForEachVisibleNode`(프러스텀 질의) |
 | `ModelLoader.h` · `ModelLoader.cpp` | **ModelLoader**: `LoadOBJ`(OBJ 파싱 → 인덱스 검증 → 누락 법선 → AABB/Octree), `FromMeshes`(glTF 등에 같은 후처리) |
 | `TextureLoader.h` · `TextureLoader.cpp` | **TextureLoader**: `LoadImageFile`(코덱 → Texture), `LoadMTLFile`(재질, 같은 텍스처 공유) |

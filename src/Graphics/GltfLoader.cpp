@@ -42,7 +42,9 @@ std::expected<std::shared_ptr<::Texture>, AssetLoadError> decodeWithCodecs(std::
         std::span<const std::uint8_t>(reinterpret_cast<const std::uint8_t *>(bytes.data()), bytes.size()));
     if (!image)
         return std::unexpected(AssetLoadError{"Unable to decode image (" + image.error() + ")"});
-    return std::make_shared<::Texture>(image->width, image->height, std::move(image->rgba));
+    auto texture = std::make_shared<::Texture>(image->width, image->height, std::move(image->rgba));
+    texture->GenerateMipmaps();
+    return texture;
 }
 
 // 렌더러는 Phong이다. metallic-roughness를 보기 좋은 쪽으로 근사한다:
@@ -68,6 +70,7 @@ std::expected<std::shared_ptr<::Texture>, AssetLoadError> decodeWithCodecs(std::
     const float roughness2 = source.roughnessFactor * source.roughnessFactor;
     material.shininess = std::clamp(2.f / std::max(roughness2 * roughness2, 1e-4f) - 2.f, 1.f, 256.f);
     material.opacity = base[3];
+    material.normalScale = source.normalScale;
     return material;
 }
 
@@ -373,11 +376,17 @@ class SceneBuilder
         int texCoordSet = 0;
         if (primitive.material != none)
         {
-            const auto &textureRef =
-                m_document.materials[static_cast<std::size_t>(primitive.material)].baseColorTexture;
+            const auto &matDoc = m_document.materials[static_cast<std::size_t>(primitive.material)];
+            const auto &textureRef = matDoc.baseColorTexture;
             texCoordSet = textureRef.texCoord;
             if (textureRef.texture != none)
                 source.material.diffuseTexture = texture(textureRef.texture);
+            if (matDoc.normalTexture.texture != none)
+            {
+                if (textureRef.texture == none)
+                    texCoordSet = matDoc.normalTexture.texCoord;
+                source.material.normalTexture = texture(matDoc.normalTexture.texture);
+            }
         }
         if (const int uvAccessor = primitive.FindAttribute("TEXCOORD_" + std::to_string(texCoordSet));
             uvAccessor != none)
@@ -390,11 +399,12 @@ class SceneBuilder
             for (std::size_t v = 0; v < vertexCount; ++v)
                 source.vertices[v].texcoord = {(*uvs)[v * 2], (*uvs)[v * 2 + 1]};
         }
-        else if (source.material.diffuseTexture)
+        else if (source.material.diffuseTexture || source.material.normalTexture)
         {
             m_warnings.push_back(context + ": texture without TEXCOORD_" + std::to_string(texCoordSet) +
                                  " ignored");
             source.material.diffuseTexture.reset();
+            source.material.normalTexture.reset();
         }
 
         const int jointsAccessor = primitive.FindAttribute("JOINTS_0");

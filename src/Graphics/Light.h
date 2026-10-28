@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "Math/SRMath.h"
 
 struct DirectionalLight
@@ -8,4 +8,23 @@ struct DirectionalLight
     // 밝고 어두운 면이 뒤집혔으므로 의미를 타입 가까이에 명시한다.
     SRMath::vec3 rayDirection = {0.f, 0.f, 1.0f};
     SRMath::vec3 color = {1.0f, 1.0f, 1.0f};
+};
+
+struct PointLight
+{
+    SRMath::vec3 position = {0.f, 2.f, 0.f};
+    SRMath::vec3 color = {1.f, 1.f, 1.f};
+    float range = 10.f;
+    float constant = 1.f, linear = 0.09f, quadratic = 0.032f;
+};
+
+struct SpotLight
+{
+    SRMath::vec3 position = {0.f, 2.f, 0.f};
+    SRMath::vec3 rayDirection = {0.f, -1.f, 0.f};
+    SRMath::vec3 color = {1.f, 1.f, 1.f};
+    float range = 12.f;
+    float innerConeCos = 0.9063f;
+    float outerConeCos = 0.8191f;
+    float constant = 1.f, linear = 0.09f, quadratic = 0.032f;
 };

@@ -106,6 +106,8 @@ struct Material
     std::string name;
     std::array<float, 4> baseColorFactor{1.f, 1.f, 1.f, 1.f};
     TextureRef baseColorTexture{};
+    TextureRef normalTexture{};
+    float normalScale = 1.f;
     float metallicFactor = 1.f;
     float roughnessFactor = 1.f;
     std::array<float, 3> emissiveFactor{0.f, 0.f, 0.f};

@@ -515,7 +515,11 @@ template <bool Instrumented, RasterPass Pass> void Rasterizer::DrawTriangleImpl(
                 else if constexpr (Pass != RasterPass::DepthOnly)
                     if (t.sourceCommand && t.sourceCommand->material)
                     {
-                        const auto sample = InterpolateSurface(t.rv0, t.rv1, t.rv2, a, b, c, 1.f / q);
+                        auto sample = InterpolateSurface(t.rv0, t.rv1, t.rv2, a, b, c, 1.f / q);
+                        if (t.sourceCommand->material->normalTexture)
+                            ComputeTriangleTangentFrame(t, sample.tangentWorld, sample.bitangentWorld);
+                        if (m_frame.mipmapping)
+                            sample.lod = ComputeTriangleLod(t);
                         colors[static_cast<std::size_t>(y - m_originY) * m_colorStride + (x - m_originX)] =
                             packColor(ShadeSurface(sample, *t.sourceCommand->material, m_frame));
                         if constexpr (Instrumented)
@@ -603,7 +607,11 @@ void Rasterizer::ShadeOwners()
     {
         const PreparedTriangle *t = m_ownerScratch.triangles[pending[i]];
         const OwnerSample &s = m_ownerScratch.samples[pending[i]];
-        const auto sample = InterpolateSurface(t->rv0, t->rv1, t->rv2, s.a, s.b, s.c, 1.f / s.q);
+        auto sample = InterpolateSurface(t->rv0, t->rv1, t->rv2, s.a, s.b, s.c, 1.f / s.q);
+        if (t->sourceCommand->material->normalTexture)
+            ComputeTriangleTangentFrame(*t, sample.tangentWorld, sample.bitangentWorld);
+        if (m_frame.mipmapping)
+            sample.lod = ComputeTriangleLod(*t);
         store(pending[i], ShadeSurface(sample, *t->sourceCommand->material, m_frame));
         ++shaded;
     }

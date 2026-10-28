@@ -60,29 +60,60 @@ std::span<const PreparedDirectionalLight> Renderer::prepareLights(std::span<cons
     return m_preparedLights;
 }
 
-void Renderer::RenderScene(RenderTarget &target, const RenderQueue &queue, const ViewParams &view,
-                           std::span<const DirectionalLight> lights)
+std::span<const PreparedPointLight> Renderer::preparePointLights(std::span<const PointLight> lights)
 {
-    renderScene(target, queue, view, lights, false);
+    m_preparedPointLights.clear();
+    m_preparedPointLights.reserve(lights.size());
+    for (const auto &light : lights)
+        m_preparedPointLights.push_back(PreparedPointLight::From(light));
+    return m_preparedPointLights;
+}
+
+std::span<const PreparedSpotLight> Renderer::prepareSpotLights(std::span<const SpotLight> lights)
+{
+    m_preparedSpotLights.clear();
+    m_preparedSpotLights.reserve(lights.size());
+    for (const auto &light : lights)
+        m_preparedSpotLights.push_back(PreparedSpotLight::From(light));
+    return m_preparedSpotLights;
+}
+
+void Renderer::RenderScene(RenderTarget &target, const RenderQueue &queue, const ViewParams &view,
+                           std::span<const DirectionalLight> lights,
+                           std::span<const PointLight> pointLights,
+                           std::span<const SpotLight> spotLights)
+{
+    renderScene(target, queue, view, lights, pointLights, spotLights, false);
 }
 
 void Renderer::ClearAndRenderScene(RenderTarget &target, const RenderQueue &queue, const ViewParams &view,
-                                   std::span<const DirectionalLight> lights)
+                                   std::span<const DirectionalLight> lights,
+                                   std::span<const PointLight> pointLights,
+                                   std::span<const SpotLight> spotLights)
 {
-    renderScene(target, queue, view, lights, true);
+    renderScene(target, queue, view, lights, pointLights, spotLights, true);
 }
 
 void Renderer::renderScene(RenderTarget &target, const RenderQueue &queue, const ViewParams &view,
-                           std::span<const DirectionalLight> lights, bool clearTarget)
+                           std::span<const DirectionalLight> lights,
+                           std::span<const PointLight> pointLights,
+                           std::span<const SpotLight> spotLights, bool clearTarget)
 {
     m_stats = {};
     if (target.Empty())
         return;
     const auto started = FrameClock::now();
     ensureViewport(target.Width(), target.Height());
-    const FrameContext frame{view.projection * view.view, view.position,
-                             prepareLights(lights), (m_width + tileSize - 1) / tileSize,
-                             (m_height + tileSize - 1) / tileSize};
+    const FrameContext frame{view.projection * view.view,
+                             view.position,
+                             prepareLights(lights),
+                             (m_width + tileSize - 1) / tileSize,
+                             (m_height + tileSize - 1) / tileSize,
+                             preparePointLights(pointLights),
+                             prepareSpotLights(spotLights),
+                             m_options.bilinearFiltering,
+                             m_options.mipmapping,
+                             m_options.srgbGamma};
     prepareFrame();
     if (m_options.collectStats)
         m_stats.prepareMs = elapsedMilliseconds(started);

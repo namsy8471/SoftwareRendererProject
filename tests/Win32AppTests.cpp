@@ -89,6 +89,12 @@ struct Win32AppTestAccess
         check(!app.m_runner.GetRenderer().GetOptions().hiddenWireframe, "hidden-wire menu toggle off");
         check((GetMenuState(GetMenu(app.m_hWnd), ID_RENDER_HIDDEN_WIRE, MF_BYCOMMAND) & MF_CHECKED) == 0,
               "hidden-wire unchecked menu state");
+        app.HandleMessage(app.m_hWnd, WM_COMMAND, ID_RENDER_BILINEAR, 0);
+        check(app.m_runner.GetRenderer().GetOptions().bilinearFiltering, "bilinear menu toggle");
+        app.HandleMessage(app.m_hWnd, WM_COMMAND, ID_RENDER_MIPMAP, 0);
+        check(app.m_runner.GetRenderer().GetOptions().mipmapping, "mipmap menu toggle");
+        app.HandleMessage(app.m_hWnd, WM_COMMAND, ID_RENDER_SRGB, 0);
+        check(app.m_runner.GetRenderer().GetOptions().srgbGamma, "sRGB menu toggle");
         app.updateFrame(0.f);
         app.renderFrame();
         app.HandleMessage(app.m_hWnd, WM_COMMAND, ID_DEBUG_NORMALVECTOR, 0);
