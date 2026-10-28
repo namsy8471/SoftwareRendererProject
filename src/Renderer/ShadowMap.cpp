@@ -2,29 +2,87 @@
 #include "Renderer/RenderQueue.h"
 #include "Renderer/RenderCommand.h"
 #include "Graphics/Mesh.h"
+#include "Utils/Jobs.h"
 #include <algorithm>
 #include <cmath>
+#include <bit>
+#include <atomic>
+#if defined(_MSC_VER)
+#include <intrin.h>
+#endif
 
 namespace
 {
+inline void atomicMinDepth(float *depthAddress, float d) noexcept
+{
+    const uint32_t dBits = std::bit_cast<uint32_t>(d);
+#if defined(_MSC_VER)
+    volatile long *target = reinterpret_cast<volatile long*>(depthAddress);
+    long cur = *target;
+    while (static_cast<long>(dBits) < cur)
+    {
+        const long prev = _InterlockedCompareExchange(target, static_cast<long>(dBits), cur);
+        if (prev == cur)
+            break;
+        cur = prev;
+    }
+#elif defined(__cpp_lib_atomic_ref)
+    std::atomic_ref<uint32_t> target(*reinterpret_cast<uint32_t*>(depthAddress));
+    uint32_t cur = target.load(std::memory_order_relaxed);
+    while (dBits < cur)
+    {
+        if (target.compare_exchange_weak(cur, dBits, std::memory_order_relaxed, std::memory_order_relaxed))
+            break;
+    }
+#else
+    uint32_t *target = reinterpret_cast<uint32_t*>(depthAddress);
+    uint32_t cur = __atomic_load_n(target, __ATOMIC_RELAXED);
+    while (dBits < cur)
+    {
+        if (__atomic_compare_exchange_n(target, &cur, dBits, true, __ATOMIC_RELAXED, __ATOMIC_RELAXED))
+            break;
+    }
+#endif
+}
+
 struct ClipPoly
 {
     SRMath::vec4 v[16];
     int count = 0;
 };
 
-float planeDistance(const SRMath::vec4 &p, int plane) noexcept
+bool isInsidePlane(const SRMath::vec4 &p, int plane) noexcept
 {
     switch (plane)
     {
-    case 0: return p.w + p.x; // left: w + x >= 0
-    case 1: return p.w - p.x; // right: w - x >= 0
-    case 2: return p.w + p.y; // bottom: w + y >= 0
-    case 3: return p.w - p.y; // top: w - y >= 0
-    case 4: return p.w + p.z; // near: w + z >= 0
-    case 5: return p.w - p.z; // far: w - z >= 0
-    default: return 0.0f;
+    case 0: return p.x >= -p.w; // Left
+    case 1: return p.x <=  p.w; // Right
+    case 2: return p.y >= -p.w; // Bottom
+    case 3: return p.y <=  p.w; // Top
+    case 4: return p.z >= -p.w; // Near
+    case 5: return p.z <=  p.w; // Far
+    default: return false;
     }
+}
+
+SRMath::vec4 intersectPlane(const SRMath::vec4 &a, const SRMath::vec4 &b, int plane) noexcept
+{
+    float da = 0.0f;
+    float db = 0.0f;
+    switch (plane)
+    {
+    case 0: da = a.x + a.w; db = b.x + b.w; break;
+    case 1: da = a.w - a.x; db = b.w - b.x; break;
+    case 2: da = a.y + a.w; db = b.y + b.w; break;
+    case 3: da = a.w - a.y; db = b.w - b.y; break;
+    case 4: da = a.z + a.w; db = b.z + b.w; break;
+    case 5: da = a.w - a.z; db = b.w - b.z; break;
+    default: break;
+    }
+
+    const float denom = da - db;
+    const float t = (std::abs(denom) > 1e-6f) ? (da / denom) : 0.0f;
+    return a + (b - a) * t;
 }
 
 void clipPolyAgainstPlane(ClipPoly &outPoly, const ClipPoly &inPoly, int plane) noexcept
@@ -35,28 +93,22 @@ void clipPolyAgainstPlane(ClipPoly &outPoly, const ClipPoly &inPoly, int plane) 
 
     for (int i = 0; i < inPoly.count; ++i)
     {
-        const SRMath::vec4 &curr = inPoly.v[i];
-        const SRMath::vec4 &prev = inPoly.v[i == 0 ? inPoly.count - 1 : i - 1];
+        const SRMath::vec4 &cur = inPoly.v[i];
+        const SRMath::vec4 &next = inPoly.v[(i + 1) % inPoly.count];
 
-        const float dCurr = planeDistance(curr, plane);
-        const float dPrev = planeDistance(prev, plane);
+        const bool curIn = isInsidePlane(cur, plane);
+        const bool nextIn = isInsidePlane(next, plane);
 
-        const bool currIn = (dCurr >= 0.0f);
-        const bool prevIn = (dPrev >= 0.0f);
-
-        if (currIn != prevIn)
+        if (curIn)
         {
-            const float denom = dPrev - dCurr;
-            const float t = std::abs(denom) > 1e-7f ? dPrev / denom : 0.0f;
-            const SRMath::vec4 intersect = prev + (curr - prev) * t;
             if (outPoly.count < 16)
-                outPoly.v[outPoly.count++] = intersect;
+                outPoly.v[outPoly.count++] = cur;
+            if (!nextIn && outPoly.count < 16)
+                outPoly.v[outPoly.count++] = intersectPlane(cur, next, plane);
         }
-
-        if (currIn)
+        else if (nextIn && outPoly.count < 16)
         {
-            if (outPoly.count < 16)
-                outPoly.v[outPoly.count++] = curr;
+            outPoly.v[outPoly.count++] = intersectPlane(cur, next, plane);
         }
     }
 }
@@ -69,7 +121,11 @@ ShadowMap::ShadowMap()
 
 void ShadowMap::Clear() noexcept
 {
-    depthBuffer.assign(static_cast<std::size_t>(width) * height, 1.0f);
+    const std::size_t targetSize = static_cast<std::size_t>(width) * height;
+    if (depthBuffer.size() != targetSize)
+        depthBuffer.assign(targetSize, 1.0f);
+    else
+        std::fill(depthBuffer.begin(), depthBuffer.end(), 1.0f);
 }
 
 void ShadowMap::Render(const RenderQueue &queue, const SRMath::mat4 &lightVP)
@@ -77,65 +133,29 @@ void ShadowMap::Render(const RenderQueue &queue, const SRMath::mat4 &lightVP)
     lightViewProjection = lightVP;
     Clear();
 
-    ClipPoly polyA, polyB;
+    const auto &commands = queue.GetRenderCommands();
+    if (commands.empty())
+        return;
 
-    for (const auto &cmd : queue.GetRenderCommands())
-    {
-        if (cmd.rasterizeMode != ERasterizeMode::Fill || !cmd.sourceMesh || cmd.indicesToDraw.empty())
-            continue;
+    const float fWidth = static_cast<float>(width);
+    const float fHeight = static_cast<float>(height);
 
-        const Mesh &mesh = *cmd.sourceMesh;
-        const auto &indices = cmd.indicesToDraw;
-        const auto &vertices = mesh.vertices;
-        const SRMath::mat4 mvp = lightViewProjection * cmd.worldTransform;
+    sr::jobs::ParallelFor(std::size_t{0}, commands.size(), [&](std::size_t firstCmd, std::size_t lastCmd) {
+        ClipPoly polyA, polyB;
 
-        const std::size_t triangleCount = indices.size() / 3;
-        for (std::size_t t = 0; t < triangleCount; ++t)
+        for (std::size_t c = firstCmd; c < lastCmd; ++c)
         {
-            const std::size_t i0 = indices[t * 3];
-            const std::size_t i1 = indices[t * 3 + 1];
-            const std::size_t i2 = indices[t * 3 + 2];
-
-            if (i0 >= vertices.size() || i1 >= vertices.size() || i2 >= vertices.size())
+            const auto &cmd = commands[c];
+            if (cmd.rasterizeMode != ERasterizeMode::Fill || !cmd.sourceMesh || cmd.indicesToDraw.empty())
                 continue;
 
-            const SRMath::vec4 p0 = mvp * SRMath::vec4(vertices[i0].position, 1.0f);
-            const SRMath::vec4 p1 = mvp * SRMath::vec4(vertices[i1].position, 1.0f);
-            const SRMath::vec4 p2 = mvp * SRMath::vec4(vertices[i2].position, 1.0f);
+            const Mesh &mesh = *cmd.sourceMesh;
+            const auto &indices = cmd.indicesToDraw;
+            const auto &vertices = mesh.vertices;
+            const SRMath::mat4 mvp = lightViewProjection * cmd.worldTransform;
+            const std::size_t triangleCount = indices.size() / 3;
 
-            // Trivial rejection if all 3 vertices are outside any one plane
-            if ((p0.x < -p0.w && p1.x < -p1.w && p2.x < -p2.w) ||
-                (p0.x > p0.w && p1.x > p1.w && p2.x > p2.w) ||
-                (p0.y < -p0.w && p1.y < -p1.w && p2.y < -p2.w) ||
-                (p0.y > p0.w && p1.y > p1.w && p2.y > p2.w) ||
-                (p0.z < -p0.w && p1.z < -p1.w && p2.z < -p2.w) ||
-                (p0.z > p0.w && p1.z > p1.w && p2.z > p2.w))
-            {
-                continue;
-            }
-
-            // Sutherland-Hodgman clipping across 6 planes
-            polyA.count = 3;
-            polyA.v[0] = p0;
-            polyA.v[1] = p1;
-            polyA.v[2] = p2;
-
-            clipPolyAgainstPlane(polyB, polyA, 0);
-            clipPolyAgainstPlane(polyA, polyB, 1);
-            clipPolyAgainstPlane(polyB, polyA, 2);
-            clipPolyAgainstPlane(polyA, polyB, 3);
-            clipPolyAgainstPlane(polyB, polyA, 4);
-            clipPolyAgainstPlane(polyA, polyB, 5);
-
-            if (polyA.count < 3)
-                continue;
-
-            for (int k = 1; k < polyA.count - 1; ++k)
-            {
-                const SRMath::vec4 &v0 = polyA.v[0];
-                const SRMath::vec4 &v1 = polyA.v[k];
-                const SRMath::vec4 &v2 = polyA.v[k + 1];
-
+            const auto rasterizeTriangle = [&](const SRMath::vec4 &v0, const SRMath::vec4 &v1, const SRMath::vec4 &v2) {
                 const float invW0 = 1.0f / v0.w;
                 const float invW1 = 1.0f / v1.w;
                 const float invW2 = 1.0f / v2.w;
@@ -144,23 +164,22 @@ void ShadowMap::Render(const RenderQueue &queue, const SRMath::mat4 &lightVP)
                 const float xn1 = v1.x * invW1, yn1 = v1.y * invW1, zn1 = v1.z * invW1;
                 const float xn2 = v2.x * invW2, yn2 = v2.y * invW2, zn2 = v2.z * invW2;
 
-                const float xs0 = (xn0 + 1.0f) * 0.5f * static_cast<float>(width);
-                const float ys0 = (1.0f - yn0) * 0.5f * static_cast<float>(height);
-                const float ds0 = 0.5f * zn0 + 0.5f;
+                float xs0 = (xn0 + 1.0f) * 0.5f * fWidth;
+                float ys0 = (1.0f - yn0) * 0.5f * fHeight;
+                float ds0 = 0.5f * zn0 + 0.5f;
 
-                float xs1 = (xn1 + 1.0f) * 0.5f * static_cast<float>(width);
-                float ys1 = (1.0f - yn1) * 0.5f * static_cast<float>(height);
+                float xs1 = (xn1 + 1.0f) * 0.5f * fWidth;
+                float ys1 = (1.0f - yn1) * 0.5f * fHeight;
                 float ds1 = 0.5f * zn1 + 0.5f;
 
-                float xs2 = (xn2 + 1.0f) * 0.5f * static_cast<float>(width);
-                float ys2 = (1.0f - yn2) * 0.5f * static_cast<float>(height);
+                float xs2 = (xn2 + 1.0f) * 0.5f * fWidth;
+                float ys2 = (1.0f - yn2) * 0.5f * fHeight;
                 float ds2 = 0.5f * zn2 + 0.5f;
 
                 float area = (xs1 - xs0) * (ys2 - ys0) - (xs2 - xs0) * (ys1 - ys0);
                 if (std::abs(area) < 1e-6f)
-                    continue;
+                    return;
 
-                // Two-sided rasterization: orient so area > 0
                 if (area < 0.0f)
                 {
                     std::swap(xs1, xs2);
@@ -170,19 +189,17 @@ void ShadowMap::Render(const RenderQueue &queue, const SRMath::mat4 &lightVP)
                 }
 
                 const float invArea = 1.0f / area;
-
                 const int minX = std::max(0, static_cast<int>(std::floor(std::min({xs0, xs1, xs2}))));
                 const int maxX = std::min(width - 1, static_cast<int>(std::ceil(std::max({xs0, xs1, xs2}))));
                 const int minY = std::max(0, static_cast<int>(std::floor(std::min({ys0, ys1, ys2}))));
                 const int maxY = std::min(height - 1, static_cast<int>(std::ceil(std::max({ys0, ys1, ys2}))));
 
                 if (minX > maxX || minY > maxY)
-                    continue;
+                    return;
 
                 const float dx12 = xs2 - xs1, dy12 = ys2 - ys1;
                 const float dx20 = xs0 - xs2, dy20 = ys0 - ys2;
                 const float dx01 = xs1 - xs0, dy01 = ys1 - ys0;
-
                 const float ddx = ((ds1 - ds0) * (ys2 - ys0) - (ds2 - ds0) * (ys1 - ys0)) * invArea;
 
                 for (int y = minY; y <= maxY; ++y)
@@ -193,29 +210,86 @@ void ShadowMap::Render(const RenderQueue &queue, const SRMath::mat4 &lightVP)
                     float w0 = dx12 * (py - ys1) - dy12 * (px - xs1);
                     float w1 = dx20 * (py - ys2) - dy20 * (px - xs2);
                     float w2 = dx01 * (py - ys0) - dy01 * (px - xs0);
-
                     float d = (w0 * ds0 + w1 * ds1 + w2 * ds2) * invArea;
 
-                    float *depthRow = &depthBuffer[static_cast<std::size_t>(y) * width + minX];
+                    float *rowPtr = &depthBuffer[static_cast<std::size_t>(y) * width + minX];
+
                     for (int x = minX; x <= maxX; ++x)
                     {
                         if (w0 >= 0.0f && w1 >= 0.0f && w2 >= 0.0f)
                         {
                             const float clampedD = std::clamp(d, 0.0f, 1.0f);
-                            if (clampedD < *depthRow)
-                                *depthRow = clampedD;
+                            atomicMinDepth(rowPtr, clampedD);
                         }
 
                         w0 -= dy12;
                         w1 -= dy20;
                         w2 -= dy01;
                         d += ddx;
-                        ++depthRow;
+                        ++rowPtr;
+                    }
+                }
+            };
+
+            for (std::size_t t = 0; t < triangleCount; ++t)
+            {
+                const std::size_t i0 = indices[t * 3];
+                const std::size_t i1 = indices[t * 3 + 1];
+                const std::size_t i2 = indices[t * 3 + 2];
+
+                if (i0 >= vertices.size() || i1 >= vertices.size() || i2 >= vertices.size())
+                    continue;
+
+                const SRMath::vec4 p0 = mvp * SRMath::vec4(vertices[i0].position, 1.0f);
+                const SRMath::vec4 p1 = mvp * SRMath::vec4(vertices[i1].position, 1.0f);
+                const SRMath::vec4 p2 = mvp * SRMath::vec4(vertices[i2].position, 1.0f);
+
+                // Trivial rejection if all 3 vertices are outside any one plane
+                if ((p0.x < -p0.w && p1.x < -p1.w && p2.x < -p2.w) ||
+                    (p0.x >  p0.w && p1.x >  p1.w && p2.x >  p2.w) ||
+                    (p0.y < -p0.w && p1.y < -p1.w && p2.y < -p2.w) ||
+                    (p0.y >  p0.w && p1.y >  p1.w && p2.y >  p2.w) ||
+                    (p0.z < -p0.w && p1.z < -p1.w && p2.z < -p2.w) ||
+                    (p0.z >  p0.w && p1.z >  p1.w && p2.z >  p2.w))
+                {
+                    continue;
+                }
+
+                // Trivial acceptance fast-path: if all 3 vertices are strictly inside the 6-plane frustum
+                const bool allInside =
+                    (p0.x >= -p0.w && p0.x <= p0.w && p0.y >= -p0.w && p0.y <= p0.w && p0.z >= -p0.w && p0.z <= p0.w) &&
+                    (p1.x >= -p1.w && p1.x <= p1.w && p1.y >= -p1.w && p1.y <= p1.w && p1.z >= -p1.w && p1.z <= p1.w) &&
+                    (p2.x >= -p2.w && p2.x <= p2.w && p2.y >= -p2.w && p2.y <= p2.w && p2.z >= -p2.w && p2.z <= p2.w);
+
+                if (allInside)
+                {
+                    rasterizeTriangle(p0, p1, p2);
+                }
+                else
+                {
+                    polyA.count = 3;
+                    polyA.v[0] = p0;
+                    polyA.v[1] = p1;
+                    polyA.v[2] = p2;
+
+                    clipPolyAgainstPlane(polyB, polyA, 0);
+                    clipPolyAgainstPlane(polyA, polyB, 1);
+                    clipPolyAgainstPlane(polyB, polyA, 2);
+                    clipPolyAgainstPlane(polyA, polyB, 3);
+                    clipPolyAgainstPlane(polyB, polyA, 4);
+                    clipPolyAgainstPlane(polyA, polyB, 5);
+
+                    if (polyA.count < 3)
+                        continue;
+
+                    for (int k = 1; k < polyA.count - 1; ++k)
+                    {
+                        rasterizeTriangle(polyA.v[0], polyA.v[k], polyA.v[k + 1]);
                     }
                 }
             }
         }
-    }
+    });
 }
 
 float ShadowMap::SampleVisibility(const SRMath::vec3 &positionWorld,
@@ -269,11 +343,10 @@ float ShadowMap::SampleVisibility(const SRMath::vec3 &positionWorld,
     const float d01 = depthBuffer[static_cast<std::size_t>(j1) * width + i0];
     const float d11 = depthBuffer[static_cast<std::size_t>(j1) * width + i1];
 
-    const float biasedDepth = ds - bias;
-    const float s00 = biasedDepth <= d00 ? 1.0f : 0.0f;
-    const float s10 = biasedDepth <= d10 ? 1.0f : 0.0f;
-    const float s01 = biasedDepth <= d01 ? 1.0f : 0.0f;
-    const float s11 = biasedDepth <= d11 ? 1.0f : 0.0f;
+    const float s00 = (ds - bias <= d00) ? 1.0f : 0.0f;
+    const float s10 = (ds - bias <= d10) ? 1.0f : 0.0f;
+    const float s01 = (ds - bias <= d01) ? 1.0f : 0.0f;
+    const float s11 = (ds - bias <= d11) ? 1.0f : 0.0f;
 
     const float s0 = s00 * (1.0f - fx) + s10 * fx;
     const float s1 = s01 * (1.0f - fx) + s11 * fx;
