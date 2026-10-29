@@ -42,6 +42,7 @@ struct MeshRenderCommand
 
     ERasterizeMode rasterizeMode = ERasterizeMode::Fill; // 래스터화 모드
     const SRMath::mat4 *normalMatrix = nullptr;          // 사전 계산된 법선 행렬 (null이면 inverse_transpose 계산)
+    AABB worldBounds{};                                  // 서브메시/명령 단위 월드 AABB 바운딩 박스 (오클루전 컬링용)
 };
 
 // 법선은 면 깊이를 검사하고, AABB/광원은 설명용 화면 오버레이로 남긴다.

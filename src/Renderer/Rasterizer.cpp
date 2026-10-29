@@ -372,6 +372,8 @@ void Rasterizer::EndTile()
 
 void Rasterizer::RefreshHiZ()
 {
+    if (m_tileFull)
+        return;
     m_tileFull = true;
     m_tileMinimum = std::numeric_limits<float>::infinity();
     for (int by = 0; by < 4; ++by)

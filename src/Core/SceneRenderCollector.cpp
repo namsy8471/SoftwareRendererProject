@@ -102,7 +102,9 @@ void SceneRenderCollector::collectSkinnedMeshes(const sr::anim::SkinnedMesh &ski
                                        .indicesToDraw = primitive.source->indices,
                                        .worldTransform = identity,
                                        .material = &primitive.source->material,
-                                       .rasterizeMode = rasterizeMode});
+                                       .rasterizeMode = rasterizeMode,
+                                       .normalMatrix = nullptr,
+                                       .worldBounds = primitive.worldBounds});
     for (const auto &primitive : primitives)
     {
         if (flags.bShowAABB && primitive.worldBounds.IsValid())
@@ -130,6 +132,10 @@ void SceneRenderCollector::collectMeshCommands(const GameObject &object, const M
     const SRMath::mat4 &normalMatrix = object.GetNormalMatrix();
     const ERasterizeMode rasterizeMode = flags.bShowWireframe ? ERasterizeMode::Wireframe : ERasterizeMode::Fill;
 
+    const AABB meshWorldBounds = mesh.localAABB.IsValid()
+                                     ? mesh.localAABB.Transform(world)
+                                     : (mesh.vertices.empty() ? AABB{} : ComputeLocalAABB(mesh).Transform(world));
+
     // 보이는 삼각형을 이 개수씩 명령 하나로 묶는다. 옥트리 노드(최대 16개)마다 명령을 내면 1080p 데모에서
     // 프레임당 명령이 약 1만 1천 개가 되고, 명령마다 renderer 작업 하나와 변환 캐시 키 비교가 붙는다.
     // 삼각형 순서와 primitive ID는 명령을 어떻게 나누든 같다(ID는 제출 순서의 누적 삼각형 번호).
@@ -145,7 +151,8 @@ void SceneRenderCollector::collectMeshCommands(const GameObject &object, const M
                                   .worldTransform = world,
                                   .material = &mesh.material,
                                   .rasterizeMode = rasterizeMode,
-                                  .normalMatrix = &normalMatrix});
+                                  .normalMatrix = &normalMatrix,
+                                  .worldBounds = meshWorldBounds});
     };
 
     if (mesh.octree && !flags.bShowAABB)
@@ -163,7 +170,8 @@ void SceneRenderCollector::collectMeshCommands(const GameObject &object, const M
                                                                .worldTransform = world,
                                                                .material = &mesh.material,
                                                                .rasterizeMode = rasterizeMode,
-                                                               .normalMatrix = &normalMatrix});
+                                                               .normalMatrix = &normalMatrix,
+                                                               .worldBounds = worldBounds});
                 if (flags.bShowAABB)
                     batch.debugCommands.push_back(sr::debug::MakeAABBGizmo(worldBounds));
             });

@@ -95,6 +95,7 @@ struct Options
     bool json = false;
     bool requireTarget = false;
     bool framesGiven = false;
+    bool optGiven = false;
     double targetFps = 100.0;
     std::optional<std::filesystem::path> outPath;
 };
@@ -173,6 +174,7 @@ Options parseArguments(int argc, char **argv)
         }
         else if (argument == "--opt")
         {
+            options.optGiven = true;
             const auto text = next();
             if (text != "none" && text != "sort" && text != "hiz" && text != "both")
                 usageError("unknown opt: " + std::string(text));
@@ -267,6 +269,8 @@ Options parseArguments(int argc, char **argv)
         if (!options.bakeConfig.outNormal && !options.bakeConfig.outAO)
             usageError("bake needs at least one of --out-normal <png> or --out-ao <png>");
     }
+    if (options.command == "bench" && !options.optGiven)
+        options.config.options.hiZ = true;
     if (options.config.assetDirectory.empty())
         options.config.assetDirectory = defaultAssetDirectory();
     return options;

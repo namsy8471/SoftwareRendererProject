@@ -43,6 +43,7 @@ void Renderer::ensureViewport(int width, int height)
     m_tileChunkCostPrefix.swap(chunkCostPrefix);
     m_width = width;
     m_height = height;
+    m_hiZBuffer.Resize(width, height);
     // 빈 target은 진입 전에 거른다. 덧셈 기반 ceil의 int overflow를 피한다.
     // 와이어 band는 프레임 전에 정해지는 고정 높이다. 64행이면 1080p에서 17개라 IronMan이 걸친
     // 몇 band가 선 패스 시간을 좌우했다. 최소 16행, 최대 64개로 나눠 작업을 잘게 나눈다.
@@ -213,40 +214,143 @@ void Renderer::renderScene(RenderTarget &target, const RenderQueue &queue, const
                              m_options.tonemap,
                              activeIblMap,
                              m_options.shadingModel};
-    prepareFrame();
-    if (m_options.collectStats)
-        m_stats.prepareMs = elapsedMilliseconds(started);
-    auto stage = FrameClock::now();
-    binCommands(queue, frame);
-    if (m_options.collectStats)
-    {
-        m_stats.binMs = elapsedMilliseconds(stage);
-        for (const auto &scratch : m_workerScratch)
-        {
-            m_stats.preparedTriangles += scratch.triangles.size();
-            m_stats.liveTriangleBytes += scratch.triangles.size() * sizeof(TriangleRef);
-            m_stats.retainedTriangleBytes += scratch.triangles.capacity() * sizeof(TriangleRef);
-            // 최종 scatter 복사본과 중복 합산하지 않는 논리적 triangle→tile 수다.
-            m_stats.binReferences += scratch.tileReferences.size();
-        }
-    }
+    const auto &allCommands = queue.GetRenderCommands();
     const bool hasWireframe =
-        std::ranges::any_of(queue.GetRenderCommands(), [](const auto &command)
+        std::ranges::any_of(allCommands, [](const auto &command)
                             { return command.rasterizeMode == ERasterizeMode::Wireframe; });
     const bool needsDepthPrepass = m_options.hiddenWireframe && hasWireframe;
-    stage = FrameClock::now();
-    // 법선 선 band는 자기 행의 타일만 끝나면 그릴 수 있다. 타일 작업이 끝나기를 다 기다리지 않고 같은 작업에서
-    // 이어 그린다. 와이어 band가 먼저 그려야 하는 프레임(와이어 + 법선)은 순서를 지키려고 따로 그린다.
-    m_debugLinesDrawn = false;
-    if (m_debugLinePlan == DebugLinePlan::Parallel)
-        computeDebugLineBands();
-    renderTiles(target, frame, needsDepthPrepass, clearTarget,
-                m_debugLinePlan == DebugLinePlan::Parallel && !hasWireframe);
-    if (m_options.collectStats)
+
+    const bool canDoTwoPass = m_options.hiZ &&
+                              (!m_hiZBuffer.IsValid() || m_hiZBuffer.GetViewProjection() != frame.viewProjection) &&
+                              allCommands.size() >= 16;
+
+    if (canDoTwoPass)
     {
-        m_stats.rasterMs = elapsedMilliseconds(stage);
-        for (const auto &stats : m_tileStats)
-            m_stats.MergeCounters(stats);
+        // 2-Pass Crowd Occlusion Culling:
+        // 첫 프레임이거나 카메라가 이동하여 Coarse Hi-Z가 유효하지 않은 경우,
+        // 전방 유닛(Front-to-back 정렬)을 Pass 1로 먼저 래스터라이즈하여 Hi-Z 버퍼를 구축하고,
+        // 후방 유닛을 Pass 2에서 Hi-Z 테스트하여 가려진 서브메시지를 스킵한다.
+        std::vector<std::size_t> indices(allCommands.size());
+        std::iota(indices.begin(), indices.end(), 0);
+        const SRMath::vec3 camPos = view.position;
+        std::ranges::sort(indices, [&](std::size_t a, std::size_t b) {
+            const auto &cmdA = allCommands[a];
+            const auto &cmdB = allCommands[b];
+            if (cmdA.worldBounds.IsValid() != cmdB.worldBounds.IsValid())
+                return cmdA.worldBounds.IsValid() > cmdB.worldBounds.IsValid();
+            if (!cmdA.worldBounds.IsValid())
+                return a < b;
+            const float distA = SRMath::lengthSquared(cmdA.worldBounds.Center() - camPos);
+            const float distB = SRMath::lengthSquared(cmdB.worldBounds.Center() - camPos);
+            if (distA != distB)
+                return distA < distB;
+            return a < b;
+        });
+
+        const std::size_t splitIndex = allCommands.size() / 2;
+        std::vector<MeshRenderCommand> pass1Commands, pass2Commands;
+        pass1Commands.reserve(splitIndex);
+        pass2Commands.reserve(allCommands.size() - splitIndex);
+        for (std::size_t i = 0; i < splitIndex; ++i)
+            pass1Commands.push_back(allCommands[indices[i]]);
+        for (std::size_t i = splitIndex; i < allCommands.size(); ++i)
+            pass2Commands.push_back(allCommands[indices[i]]);
+
+        // Pass 1: Front Occluders
+        prepareFrame();
+        if (m_options.collectStats)
+            m_stats.prepareMs = elapsedMilliseconds(started);
+        auto stage = FrameClock::now();
+        const auto pass1TriCount = binCommands(pass1Commands, frame, 0);
+        if (m_options.collectStats)
+        {
+            m_stats.binMs += elapsedMilliseconds(stage);
+            for (const auto &scratch : m_workerScratch)
+            {
+                m_stats.preparedTriangles += scratch.triangles.size();
+                m_stats.liveTriangleBytes += scratch.triangles.size() * sizeof(TriangleRef);
+                m_stats.retainedTriangleBytes += scratch.triangles.capacity() * sizeof(TriangleRef);
+                m_stats.binReferences += scratch.tileReferences.size();
+                m_stats.hiZTests += scratch.hiZTests;
+                m_stats.hiZRejected += scratch.hiZRejected;
+            }
+        }
+        stage = FrameClock::now();
+        renderTiles(target, frame, needsDepthPrepass, clearTarget, false);
+        if (m_options.collectStats)
+        {
+            m_stats.rasterMs += elapsedMilliseconds(stage);
+            for (const auto &stats : m_tileStats)
+                m_stats.MergeCounters(stats);
+        }
+        m_hiZBuffer.SetValid(true);
+        m_hiZBuffer.SetViewProjection(frame.viewProjection);
+
+        // Pass 2: Rear Occludees (Culled against Pass 1 Hi-Z Buffer)
+        prepareFrame();
+        stage = FrameClock::now();
+        binCommands(pass2Commands, frame, pass1TriCount);
+        if (m_options.collectStats)
+        {
+            m_stats.binMs += elapsedMilliseconds(stage);
+            for (const auto &scratch : m_workerScratch)
+            {
+                m_stats.preparedTriangles += scratch.triangles.size();
+                m_stats.liveTriangleBytes += scratch.triangles.size() * sizeof(TriangleRef);
+                m_stats.retainedTriangleBytes += scratch.triangles.capacity() * sizeof(TriangleRef);
+                m_stats.binReferences += scratch.tileReferences.size();
+                m_stats.hiZTests += scratch.hiZTests;
+                m_stats.hiZRejected += scratch.hiZRejected;
+            }
+        }
+        stage = FrameClock::now();
+        m_debugLinesDrawn = false;
+        if (m_debugLinePlan == DebugLinePlan::Parallel)
+            computeDebugLineBands();
+        renderTiles(target, frame, needsDepthPrepass, false,
+                    m_debugLinePlan == DebugLinePlan::Parallel && !hasWireframe);
+        if (m_options.collectStats)
+        {
+            m_stats.rasterMs += elapsedMilliseconds(stage);
+            for (const auto &stats : m_tileStats)
+                m_stats.MergeCounters(stats);
+        }
+        m_hiZBuffer.SetValid(true);
+        m_hiZBuffer.SetViewProjection(frame.viewProjection);
+    }
+    else
+    {
+        prepareFrame();
+        if (m_options.collectStats)
+            m_stats.prepareMs = elapsedMilliseconds(started);
+        auto stage = FrameClock::now();
+        binCommands(allCommands, frame, 0);
+        if (m_options.collectStats)
+        {
+            m_stats.binMs = elapsedMilliseconds(stage);
+            for (const auto &scratch : m_workerScratch)
+            {
+                m_stats.preparedTriangles += scratch.triangles.size();
+                m_stats.liveTriangleBytes += scratch.triangles.size() * sizeof(TriangleRef);
+                m_stats.retainedTriangleBytes += scratch.triangles.capacity() * sizeof(TriangleRef);
+                m_stats.binReferences += scratch.tileReferences.size();
+                m_stats.hiZTests += scratch.hiZTests;
+                m_stats.hiZRejected += scratch.hiZRejected;
+            }
+        }
+        stage = FrameClock::now();
+        m_debugLinesDrawn = false;
+        if (m_debugLinePlan == DebugLinePlan::Parallel)
+            computeDebugLineBands();
+        renderTiles(target, frame, needsDepthPrepass, clearTarget,
+                    m_debugLinePlan == DebugLinePlan::Parallel && !hasWireframe);
+        if (m_options.collectStats)
+        {
+            m_stats.rasterMs += elapsedMilliseconds(stage);
+            for (const auto &stats : m_tileStats)
+                m_stats.MergeCounters(stats);
+        }
+    }
         if (target.HasPrimitiveIds())
             for (auto id : target.PrimitiveIds())
                 m_stats.finalFilledPixels += id != RenderTarget::emptyOwner;
@@ -382,6 +486,8 @@ void Renderer::renderTileRange(RenderTarget &target, const FrameContext &frame, 
         {
             if (clearTiles)
                 target.ClearRect(x, y, std::min(x + tileSize, m_width), std::min(y + tileSize, m_height));
+            if (m_options.hiZ && clearTiles)
+                m_hiZBuffer.SetTileDepthByIndex(index, 0.0f);
             continue;
         }
         if (m_options.frontToBack)
@@ -461,6 +567,20 @@ void Renderer::renderTileRange(RenderTarget &target, const FrameContext &frame, 
             for (const auto *triangle : blendTriangles)
                 rasterizer.DrawTriangleAlphaBlend(*triangle);
         }
+        if (m_options.hiZ)
+        {
+            const int width = std::min(x + tileSize, m_width) - x;
+            const int height = std::min(y + tileSize, m_height) - y;
+            if (width == tileSize && height == tileSize)
+            {
+                const float tileMinQ = ComputeTileMinDepth(tileBuffer.depth);
+                m_hiZBuffer.SetTileDepthByIndex(index, tileMinQ);
+            }
+            else
+            {
+                m_hiZBuffer.SetTileDepthByIndex(index, 0.0f);
+            }
+        }
     }
 }
 
@@ -475,6 +595,12 @@ void Renderer::renderTiles(RenderTarget &target, const FrameContext &frame, bool
         std::ranges::fill(m_tileStats, RenderStats{});
         if (clearTiles)
             target.Clear();
+        if (m_options.hiZ && clearTiles)
+        {
+            m_hiZBuffer.Clear();
+            m_hiZBuffer.SetValid(true);
+            m_hiZBuffer.SetViewProjection(frame.viewProjection);
+        }
         return;
     }
     // auto_partitioner는 1080p 8160타일을 스레드 수에 맞춰 크게 나눈 뒤 훔칠 때만 쪼갠다. IronMan이 걸친
@@ -510,6 +636,15 @@ void Renderer::renderTiles(RenderTarget &target, const FrameContext &frame, bool
     if (bands == 0)
     {
         sr::jobs::ParallelForWeighted(m_tileChunkCostPrefix, renderChunks);
+        if (m_options.hiZ)
+        {
+            m_hiZBuffer.SetValid(true);
+            m_hiZBuffer.SetViewProjection(frame.viewProjection);
+        }
+        else
+        {
+            m_hiZBuffer.SetValid(false);
+        }
         return;
     }
 
@@ -611,6 +746,15 @@ void Renderer::renderTiles(RenderTarget &target, const FrameContext &frame, bool
     for (auto head = counters.readyHead.load(); head < bands; ++head)
         drawDebugLineBand(target, frame, ready[static_cast<std::size_t>(head)].load(std::memory_order_acquire));
     m_debugLinesDrawn = true;
+    if (m_options.hiZ)
+    {
+        m_hiZBuffer.SetValid(true);
+        m_hiZBuffer.SetViewProjection(frame.viewProjection);
+    }
+    else
+    {
+        m_hiZBuffer.SetValid(false);
+    }
 }
 
 void Renderer::renderLines(RenderTarget &target, const RenderQueue &queue, const FrameContext &frame)

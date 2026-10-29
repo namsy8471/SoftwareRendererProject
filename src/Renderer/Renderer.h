@@ -12,6 +12,7 @@
 #include "Graphics/ViewParams.h"
 #include "Renderer/RenderCommand.h"
 #include "Renderer/Tile.h"
+#include "Renderer/HiZBuffer.h"
 #include "Renderer/RenderTypes.h"
 #include "Renderer/RenderTarget.h"
 #include "Renderer/Rasterizer.h"
@@ -44,6 +45,7 @@ class Renderer
     EAAAlgorithm m_currentAAAlgorithm = EAAAlgorithm::None;
     RenderOptions m_options;
     RenderStats m_stats;
+    HiZBuffer m_hiZBuffer;
     struct TileReference
     {
         std::size_t tileIndex = 0;
@@ -142,7 +144,7 @@ class Renderer
         std::vector<std::size_t> touchedTileIds;
         ClipBuffer clipInput, clipOutput, clippedVertices;
         // 정점 하나는 평균 여섯 삼각형이 공유한다. 정점 셰이딩과 clip 검사, NDC, 화면 정점(1/w, 원근 보정
-        // 속성)을 꼭짓점마다가 아니라 정점마다 한 번만 계산해 둔다. 같은 함수에 같은 입력이라 값은 같다.
+        // 속성)을 꼭짓점마마다 아니라 정점마다 한 번만 계산해 둔다. 같은 함수에 같은 입력이라 값은 같다.
         struct VertexSetup
         {
             RasterizerVertex raster;
@@ -175,6 +177,11 @@ class Renderer
         bool transformCacheValid = false;
         SRMath::mat4 modelViewProjection = SRMath::mat4::identity();
         SRMath::mat4 normalMatrix = SRMath::mat4::identity();
+
+        // Hi-Z 통계: worker별로 누적 후 프레임 join에서 합산
+        std::uint64_t hiZTests = 0;
+        std::uint64_t hiZRejected = 0;
+
         WorkerScratch();
         void BeginFrame();
         void BeginCommand();
@@ -198,6 +205,7 @@ class Renderer
     std::span<const PreparedPointLight> preparePointLights(std::span<const PointLight>);
     std::span<const PreparedSpotLight> prepareSpotLights(std::span<const SpotLight>);
     void prepareFrame();
+    std::uint64_t binCommands(std::span<const MeshRenderCommand> commands, const FrameContext &, std::uint64_t baseTriangleIndex = 0);
     void binCommands(const RenderQueue &, const FrameContext &);
     void collectActiveTileWorkers();
     void prepareTileReferences();
@@ -261,6 +269,8 @@ class Renderer
     }
     [[nodiscard]] RenderOptions GetOptions() const noexcept { return m_options; }
     [[nodiscard]] const RenderStats &GetStats() const noexcept { return m_stats; }
+    [[nodiscard]] const HiZBuffer &GetHiZBuffer() const noexcept { return m_hiZBuffer; }
+    [[nodiscard]] HiZBuffer &GetHiZBuffer() noexcept { return m_hiZBuffer; }
 
     // target.Clear → RenderScene → presenter.Present. 참조는 동기 호출 동안만 빌린다.
     // 같은 Renderer/target을 동시에 호출하지 않는다. 빈 target은 안전한 no-op이다.

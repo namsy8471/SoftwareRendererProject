@@ -25,6 +25,8 @@ void Renderer::WorkerScratch::BeginFrame()
     // 같은 주소의 정점을 프레임 사이에 수정하거나 자산을 재로드할 수 있다.
     // 주소/행렬이 같아도 이전 프레임의 정점 결과는 절대 재사용하지 않는다.
     transformCacheValid = false;
+    hiZTests = 0;
+    hiZRejected = 0;
     // resize 전의 메타데이터로 사용한 tile만 초기화한다. 참조 배열을 풀보다
     // 먼저 비우므로 예외로 중단된 프레임도 다음 호출에서 안전하게 재사용한다.
     for (const auto tile : touchedTileIds)
@@ -156,13 +158,18 @@ void Renderer::prepareFrame()
 }
 void Renderer::binCommands(const RenderQueue &queue, const FrameContext &frame)
 {
-    const auto commands = queue.GetRenderCommands();
+    binCommands(queue.GetRenderCommands(), frame, 0);
+}
+
+std::uint64_t Renderer::binCommands(std::span<const MeshRenderCommand> commands, const FrameContext &frame,
+                                    std::uint64_t baseTriangleIndex)
+{
     // 안정된 제출 순서의 입력 삼각형마다 fan용 16개 ID를 예약한다.
     // clipping/culling 결과나 worker 실행 순서는 ID에 영향을 주지 않는다.
     // UINT64_MAX는 비어 있는 깊이 소유자 표시로 남겨 둔다.
     constexpr auto maximumTriangleCount = std::numeric_limits<std::uint64_t>::max() / 16;
     m_commandTriangleBases.resize(commands.size());
-    std::uint64_t triangleCount = 0;
+    std::uint64_t triangleCount = baseTriangleIndex;
     for (std::size_t index = 0; index < commands.size(); ++index)
     {
         const auto count = commands[index].indicesToDraw.size() / 3;
@@ -171,9 +178,6 @@ void Renderer::binCommands(const RenderQueue &queue, const FrameContext &frame)
         m_commandTriangleBases[index] = triangleCount;
         triangleCount += static_cast<std::uint64_t>(count);
     }
-    // 깊이 검사 선(법선)의 준비는 타일 결과와 무관하다. 따로 병렬 단계를 열지 않고 명령 뒤에 이어 붙여
-    // 같은 작업에서 돌린다. 분류가 끝나 가며 놀던 스레드가 이 chunk를 가져간다.
-    planDepthTestedLines(queue, frame);
     const auto commandCount = commands.size();
     const auto lineChunkCount = m_debugLinePlan == DebugLinePlan::Parallel ? m_debugLineChunks.size() : 0;
     // 스레드마다 자기 분류가 끝나면(더 가져갈 명령이 없으면) 그 자리에서 자기 참조를 타일별로 정렬한다.
@@ -195,6 +199,7 @@ void Renderer::binCommands(const RenderQueue &queue, const FrameContext &frame)
                     scratch->SortTileReferences();
         });
     collectActiveTileWorkers();
+    return triangleCount;
 }
 
 void Renderer::collectActiveTileWorkers()
@@ -209,8 +214,33 @@ void Renderer::collectActiveTileWorkers()
 void Renderer::processCommand(const MeshRenderCommand &cmd, const FrameContext &frame, WorkerScratch &scratch,
                               std::uint64_t triangleBase)
 {
-    if (!cmd.sourceMesh || cmd.indicesToDraw.size() % 3 != 0)
+    if (!cmd.sourceMesh || cmd.indicesToDraw.size() % 3 != 0 || cmd.indicesToDraw.empty())
         return;
+
+    // Coarse Hi-Z Submesh Occlusion Culling:
+    // 이전 프레임/전방 유닛 래스터 결과로 구축된 Coarse Hi-Z 버퍼를 검사하여
+    // 서브메시의 AABB가 완전히 가려진 경우 정점 변환 및 타일 빈닝을 완전히 생략(Early Out)한다.
+    const auto triangleCount = static_cast<std::uint64_t>(cmd.indicesToDraw.size() / 3);
+    if (m_options.hiZ && m_hiZBuffer.IsValid() && cmd.rasterizeMode == ERasterizeMode::Fill)
+    {
+        const AABB &box = cmd.worldBounds.IsValid()
+                              ? cmd.worldBounds
+                              : (cmd.sourceMesh->localAABB.IsValid()
+                                     ? cmd.sourceMesh->localAABB.Transform(cmd.worldTransform)
+                                     : AABB{});
+        if (box.IsValid())
+        {
+            if (m_options.collectStats)
+                scratch.hiZTests += triangleCount;
+            if (m_hiZBuffer.IsAABBOccluded(box, frame.viewProjection))
+            {
+                if (m_options.collectStats)
+                    scratch.hiZRejected += triangleCount;
+                return;
+            }
+        }
+    }
+
     const Mesh *mesh = cmd.sourceMesh;
     scratch.tileReferencesSorted = false;
     scratch.BeginCachedCommand(cmd, frame.viewProjection);
