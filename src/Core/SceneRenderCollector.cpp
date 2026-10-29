@@ -15,13 +15,23 @@
 void SceneRenderCollector::Collect(std::span<const std::shared_ptr<GameObject>> roots, const Frustum &frustum,
                                    const DebugFlags &flags, RenderQueue &queue)
 {
+    m_visibleMeshTasks.clear();
     for (const auto &root : roots)
         if (root)
-            Collect(*root, frustum, flags, queue);
+            traverseObject(*root, frustum, flags, queue);
+    processVisibleMeshTasks(frustum, flags, queue);
 }
 
 void SceneRenderCollector::Collect(const GameObject &object, const Frustum &frustum, const DebugFlags &flags,
                                    RenderQueue &queue)
+{
+    m_visibleMeshTasks.clear();
+    traverseObject(object, frustum, flags, queue);
+    processVisibleMeshTasks(frustum, flags, queue);
+}
+
+void SceneRenderCollector::traverseObject(const GameObject &object, const Frustum &frustum,
+                                          const DebugFlags &flags, RenderQueue &queue)
 {
     if (const auto *skinned = object.GetSkinnedMesh())
     {
@@ -30,18 +40,25 @@ void SceneRenderCollector::Collect(const GameObject &object, const Frustum &frus
             collectSkinnedMeshes(*skinned, flags, queue);
     }
     else if (object.GetModel() && frustum.IsAABBInFrustum(object.GetWorldAABB()))
-        collectOwnMeshes(object, frustum, flags, queue);
+    {
+        const std::span<const Mesh> meshes = object.GetModel()->GetMeshes();
+        for (const auto &mesh : meshes)
+            m_visibleMeshTasks.push_back(VisibleMeshTask{.object = &object, .mesh = &mesh});
+    }
 
     // 부모 AABB는 자식 전체를 포함하지 않는다. 부모가 보이지 않아도 자식은 검사한다.
     for (const auto &child : object.GetChildren())
-        Collect(*child, frustum, flags, queue);
+        if (child)
+            traverseObject(*child, frustum, flags, queue);
 }
 
-void SceneRenderCollector::collectOwnMeshes(const GameObject &object, const Frustum &frustum,
+void SceneRenderCollector::processVisibleMeshTasks(const Frustum &frustum,
                                             const DebugFlags &flags, RenderQueue &queue)
 {
-    const std::span<const Mesh> meshes = object.GetModel()->GetMeshes();
-    const std::size_t meshCount = meshes.size();
+    const std::size_t taskCount = m_visibleMeshTasks.size();
+    if (taskCount == 0)
+        return;
+    const std::size_t meshCount = taskCount;
 
     // resize/clear는 병렬 작업 전에만 수행한다. 서로 다른 메시의 batch를
     // 각 작업이 독점하므로 worker 배치가 달라도 최종 제출 순서는 같다.
@@ -60,7 +77,10 @@ void SceneRenderCollector::collectOwnMeshes(const GameObject &object, const Frus
                           [&](std::size_t first, std::size_t last)
                           {
                               for (std::size_t i = first; i != last; ++i)
-                                  collectMeshCommands(object, meshes[i], frustum, flags, m_batches[i]);
+                              {
+                                  const auto &task = m_visibleMeshTasks[i];
+                                  collectMeshCommands(*task.object, *task.mesh, frustum, flags, m_batches[i]);
+                              }
                           });
 
     for (std::size_t i = 0; i < meshCount; ++i)

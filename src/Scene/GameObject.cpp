@@ -5,7 +5,7 @@
 #include <utility>
 
 GameObject::GameObject(const SRMath::vec3 &position, const SRMath::vec3 &rotation, const SRMath::vec3 &scale,
-                       std::unique_ptr<Model> model)
+                       std::shared_ptr<const Model> model)
     : m_position(position), m_rotation(rotation), m_scale(scale), m_model(std::move(model))
 {
     UpdateTransform(0.f, false);
@@ -32,6 +32,11 @@ void GameObject::UpdateTransform(float deltaTime, bool isRotate)
 {
     // 열벡터 규약: local = T * R * S, world = parentWorld * local.
     if (isRotate && !m_useOrientation)
+        m_isTransformDirty = true;
+    if (!m_isTransformDirty)
+        return;
+
+    if (isRotate && !m_useOrientation)
         m_rotation += SRMath::vec3(0.0f, 0.4f * deltaTime, 0.0f); // 초당 0.4 rad 회전
 
     const SRMath::mat4 scaleMatrix = SRMath::scale(m_scale);
@@ -51,6 +56,7 @@ void GameObject::UpdateTransform(float deltaTime, bool isRotate)
 
     // 모델 없는 노드(그룹·광원 자리)는 빈 AABB라 컬링·카메라 맞춤에서 빠진다.
     m_worldAABB = m_model ? m_model->GetLocalAABB().Transform(m_worldMatrix) : AABB{};
+    m_isTransformDirty = false;
 }
 
 void GameObject::SetSkinnedMesh(std::unique_ptr<sr::anim::SkinnedMesh> skinnedMesh) noexcept
@@ -68,6 +74,15 @@ bool GameObject::AddChild(std::shared_ptr<GameObject> child)
             return false;
     m_children.push_back(child);
     child->m_parent = self;
+    child->MarkTransformDirty();
     child->Update(0.f, false);
     return true;
+}
+
+void GameObject::MarkTransformDirty() noexcept
+{
+    m_isTransformDirty = true;
+    for (const auto &child : m_children)
+        if (child)
+            child->MarkTransformDirty();
 }
