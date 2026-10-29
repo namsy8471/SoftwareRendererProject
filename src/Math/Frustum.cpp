@@ -1,4 +1,4 @@
-﻿#include "Frustum.h"
+#include "Frustum.h"
 
 #include <cmath>
 
@@ -55,21 +55,21 @@ void Frustum::Update(const SRMath::mat4 &vpMatrix) noexcept
 bool Frustum::IsAABBInFrustum(const AABB &aabb) const noexcept
 {
     const auto zero = _mm_setzero_ps();
+    const auto aabbMin = aabb.min.m128;
+    const auto aabbMax = aabb.max.m128;
+
     for (const auto &plane : planes)
     {
-        // 법선의 각 성분이 0 이상이면 max, 아니면 min인 P-vertex를 선택한다.
-        // 성분별 분기/스택 수정 대신 레지스터 안에서 선택한다. ordered 비교라
-        // NaN은 min, +0/-0은 max를 택해 기존 scalar if와 같은 규칙이다.
         // vec3의 미사용 네 번째 lane은 비교에서도 제외한다. 그 lane에 NaN이
-        // 있어도 기존 xyz 검사에는 없던 부동소수점 예외 상태를 만들지 않는다.
+        // 있어도 기존 xyz 검사에는 없던 부동소수점 예외 상태(MXCSR invalid flag)를 만들지 않는다.
         const auto normalXYZ = _mm_blend_ps(plane.normal.m128, zero, 0b1000);
         const auto useMaximum = _mm_cmpge_ps(normalXYZ, zero);
-        SRMath::vec3 positiveVertex;
-        positiveVertex.m128 = _mm_blendv_ps(aabb.min.m128, aabb.max.m128, useMaximum);
+        const auto positiveVertex = _mm_blendv_ps(aabbMin, aabbMax, useMaximum);
 
-        // dot<3>는 xyz만 사용한다. 거리의 합산 순서와 평면별 조기 반환은
-        // 바꾸지 않아 경계/비유한 값의 보수적인 통과 동작을 유지한다.
-        if (plane.SignedDistanceTo(positiveVertex) < 0)
+        // dot<3>와 거리를 SSE 레지스터 내에서 직접 가산 및 비교하여 스택 round-trip 제거
+        const auto dot = _mm_dp_ps(normalXYZ, positiveVertex, 0x71);
+        const auto dist = _mm_add_ss(dot, _mm_set_ss(plane.distance));
+        if (_mm_comilt_ss(dist, zero))
         {
             return false;
         }
@@ -86,30 +86,36 @@ FrustumTest Frustum::ClassifyAABB(const AABB &aabb) const noexcept
     constexpr float insideMargin = 1e-4f;
     const auto zero = _mm_setzero_ps();
     const auto signMask = _mm_set1_ps(-0.0f);
-    const auto absMin = _mm_andnot_ps(signMask, aabb.min.m128);
-    const auto absMax = _mm_andnot_ps(signMask, aabb.max.m128);
-    SRMath::vec3 largest;
-    largest.m128 = _mm_max_ps(absMin, absMax);
+    const auto marginVec = _mm_set_ss(insideMargin);
+
+    const auto aabbMin = aabb.min.m128;
+    const auto aabbMax = aabb.max.m128;
+    const auto absMin = _mm_andnot_ps(signMask, aabbMin);
+    const auto absMax = _mm_andnot_ps(signMask, aabbMax);
+    const auto largest = _mm_max_ps(absMin, absMax);
+
     bool inside = true;
     for (const auto &plane : planes)
     {
-        // IsAABBInFrustum과 같은 P-vertex 선택과 같은 거리 계산이다.
         const auto normalXYZ = _mm_blend_ps(plane.normal.m128, zero, 0b1000);
         const auto useMaximum = _mm_cmpge_ps(normalXYZ, zero);
-        SRMath::vec3 positiveVertex;
-        positiveVertex.m128 = _mm_blendv_ps(aabb.min.m128, aabb.max.m128, useMaximum);
-        if (plane.SignedDistanceTo(positiveVertex) < 0)
+        const auto positiveVertex = _mm_blendv_ps(aabbMin, aabbMax, useMaximum);
+
+        const auto posDist = _mm_add_ss(_mm_dp_ps(normalXYZ, positiveVertex, 0x71), _mm_set_ss(plane.distance));
+        if (_mm_comilt_ss(posDist, zero))
+        {
             return FrustumTest::Outside;
-        // N-vertex(평면 쪽으로 가장 나온 꼭짓점)까지 안쪽이면 상자 전체가 안쪽이다. 앞 평면에서 이미
-        // Inside가 아니어도 분기하지 않고 계산한다(blend 1번, dot 2번). 분기를 두면 GCC가 6개 평면을
-        // 풀면서 경우마다 코드를 복제해 분기가 12개가 됐다.
-        SRMath::vec3 negativeVertex;
-        negativeVertex.m128 = _mm_blendv_ps(aabb.max.m128, aabb.min.m128, useMaximum);
-        SRMath::vec3 absNormal;
-        absNormal.m128 = _mm_andnot_ps(signMask, normalXYZ);
-        const float scale = SRMath::dot(absNormal, largest) + std::abs(plane.distance);
-        // NaN이면 비교가 false라 Intersects로 남아 노드별 검사로 내려간다.
-        inside &= plane.SignedDistanceTo(negativeVertex) >= scale * insideMargin;
+        }
+
+        // N-vertex(평면 쪽으로 가장 나온 꼭짓점)까지 안쪽이면 상자 전체가 안쪽이다.
+        const auto negativeVertex = _mm_blendv_ps(aabbMax, aabbMin, useMaximum);
+        const auto absNormal = _mm_andnot_ps(signMask, normalXYZ);
+        const auto absDist = _mm_andnot_ps(signMask, _mm_set_ss(plane.distance));
+        const auto scale = _mm_add_ss(_mm_dp_ps(absNormal, largest, 0x71), absDist);
+        const auto negDist = _mm_add_ss(_mm_dp_ps(normalXYZ, negativeVertex, 0x71), _mm_set_ss(plane.distance));
+
+        // _mm_comige_ss는 a >= b 이고 둘 다 NaN이 아닐 때만 1을 반환함
+        inside &= (_mm_comige_ss(negDist, _mm_mul_ss(scale, marginVec)) != 0);
     }
     return inside ? FrustumTest::Inside : FrustumTest::Intersects;
 }
