@@ -89,25 +89,7 @@ enum class ClipPlane : std::uint8_t
 };
 
 // 절두체 평면에 대한 아웃코드 계산 함수
-[[nodiscard]] std::uint8_t Renderer::computeOutcode(const SRMath::vec4 &posClip) noexcept
-{
-    std::uint8_t outcode = 0;
-
-    if (posClip.x < -posClip.w)
-        outcode |= std::to_underlying(ClipPlane::left);
-    if (posClip.x > posClip.w)
-        outcode |= std::to_underlying(ClipPlane::right);
-    if (posClip.y < -posClip.w)
-        outcode |= std::to_underlying(ClipPlane::bottom);
-    if (posClip.y > posClip.w)
-        outcode |= std::to_underlying(ClipPlane::top);
-    if (posClip.z < -posClip.w)
-        outcode |= std::to_underlying(ClipPlane::nearPlane);
-    if (posClip.z > posClip.w)
-        outcode |= std::to_underlying(ClipPlane::farPlane);
-
-    return outcode;
-}
+// computeOutcode is inlined in Renderer.h
 
 // 삼각형을 6개의 절두체 평면으로 클리핑하는 메인 함수
 void Renderer::clipTriangle(ClipBuffer &outVertices, const ShadedVertex &v0, const ShadedVertex &v1,

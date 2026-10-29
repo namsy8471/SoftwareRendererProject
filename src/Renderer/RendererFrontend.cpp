@@ -13,10 +13,10 @@
 Renderer::WorkerScratch::WorkerScratch()
 {
     // 준비 구조가 커졌으므로 작은 초기 용량으로 시작하고 실제 high-water를 재사용한다.
-    triangles.reserve(4096);
-    tileReferences.reserve(16384);
-    sortedTileReferences.reserve(16384);
-    touchedTileIds.reserve(2048);
+    triangles.reserve(131072);
+    tileReferences.reserve(131072);
+    sortedTileReferences.reserve(131072);
+    touchedTileIds.reserve(8192);
     vertexCache.resize(vertexCacheSize);
     vertexTags.resize(vertexCacheSize);
 }
@@ -110,7 +110,8 @@ void Renderer::fillVertex(std::uint32_t index, const MeshRenderCommand &command,
                           WorkerScratch &scratch, int width, int height)
 {
     const auto slot = index & (WorkerScratch::vertexCacheSize - 1);
-    auto &vertex = scratch.vertexCache[slot].shaded;
+    auto &cached = scratch.vertexCache[slot];
+    auto &vertex = cached.shaded;
     if (command.rasterizeMode == ERasterizeMode::Wireframe)
     {
         // X-ray/숨은 선 모두 clip 좌표와 1/w만 사용한다. 법선 디버그는
@@ -123,13 +124,26 @@ void Renderer::fillVertex(std::uint32_t index, const MeshRenderCommand &command,
     else
         vertex = shadeVertex(command.sourceMesh->vertices[index], command.worldTransform, modelViewProjection,
                              normalMatrix);
-    // processCommand와 Rasterizer::Prepare가 꼭짓점마다 하던 계산을 같은 식 그대로 옮겼다.
-    auto &setup = scratch.vertexCache[slot].setup;
-    setup.finiteClip = std::isfinite(vertex.posClip.x) && std::isfinite(vertex.posClip.y) &&
-                       std::isfinite(vertex.posClip.z) && std::isfinite(vertex.posClip.w);
+
+    auto &setup = cached.setup;
+    const __m128 p = _mm_loadu_ps(&vertex.posClip.x);
+    const __m128 diff = _mm_sub_ps(p, p);
+    const int finiteMask = _mm_movemask_ps(_mm_cmpeq_ps(diff, diff));
+    setup.finiteClip = (finiteMask == 0xF);
     setup.outcode = computeOutcode(vertex.posClip);
-    setup.ndc = SRMath::vec3(vertex.posClip) / vertex.posClip.w;
-    setup.raster = Rasterizer::ToRasterizerVertex(vertex, width, height);
+
+    const float oneOverW = 1.0f / vertex.posClip.w;
+    const auto ndc = SRMath::vec3(vertex.posClip) * oneOverW;
+    setup.ndc = ndc;
+
+    auto &r = setup.raster;
+    r.screenPos.x = (ndc.x + 1.f) * 0.5f * static_cast<float>(width);
+    r.screenPos.y = (1.f - ndc.y) * 0.5f * static_cast<float>(height);
+    r.oneOverW = oneOverW;
+    r.normalWorldOverW = vertex.normalWorld * oneOverW;
+    r.texcoordOverW = vertex.texcoord * oneOverW;
+    r.worldPosOverW = vertex.posWorld * oneOverW;
+
     scratch.vertexTags[slot] = {scratch.commandStamp, index};
 }
 void Renderer::prepareFrame()
@@ -204,26 +218,27 @@ void Renderer::processCommand(const MeshRenderCommand &cmd, const FrameContext &
         scratch.tileScatter.resize(m_tileStats.size());
     const auto &mvp = scratch.modelViewProjection;
     const auto &inverseTransposeWorld = scratch.normalMatrix;
-    const auto indices = cmd.indicesToDraw;
+    const auto *const indicesData = cmd.indicesToDraw.data();
+    const auto indexCount = cmd.indicesToDraw.size();
     std::array<WorkerScratch::CachedVertex, 3> conflict;
     const Vertex *const meshVertices = mesh->vertices.data();
     const std::size_t meshVertexCount = mesh->vertices.size();
-    for (size_t i = 0; i < indices.size(); i += 3)
+    for (std::size_t i = 0; i < indexCount; i += 3)
     {
         // 정점 번호는 메시 전체에 흩어져 있어 miss 때 읽는 메시 정점이 L2 밖에 있기 쉽다.
         // 8삼각형 앞의 정점을 미리 당겨 둔다. 캐시 검사 뒤에만 당기면 그 분기가 더 비쌌다(채움 +2.9%).
         // prefetch는 값에 영향이 없다.
         constexpr std::size_t prefetchAhead = 3 * 8;
-        if (i + prefetchAhead < indices.size())
+        if (i + prefetchAhead < indexCount)
             for (std::size_t corner = 0; corner < 3; ++corner)
             {
-                const auto ahead = indices[i + prefetchAhead + corner];
+                const auto ahead = indicesData[i + prefetchAhead + corner];
                 if (ahead < meshVertexCount)
                     _mm_prefetch(reinterpret_cast<const char *>(meshVertices + ahead), _MM_HINT_T0);
             }
-        uint32_t i0 = indices[i];
-        uint32_t i1 = indices[i + 1];
-        uint32_t i2 = indices[i + 2];
+        const uint32_t i0 = indicesData[i];
+        const uint32_t i1 = indicesData[i + 1];
+        const uint32_t i2 = indicesData[i + 2];
 
         // fillVertex 호출 뒤에는 컴파일러가 메시가 그대로라고 보지 못해 size()(48B 나눗셈)를 매번 다시
         // 계산했다. 이 명령 동안 메시 정점 배열은 바뀌지 않으므로 위에서 읽어 둔 값과 같다.
@@ -249,74 +264,77 @@ void Renderer::processCommand(const MeshRenderCommand &cmd, const FrameContext &
             c1 = &conflict[1];
             c2 = &conflict[2];
         }
-        const auto &sv0 = c0->shaded;
-        const auto &sv1 = c1->shaded;
-        const auto &sv2 = c2->shaded;
         const auto &setup0 = c0->setup;
         const auto &setup1 = c1->setup;
         const auto &setup2 = c2->setup;
 
-        const auto finiteClip = [](const SRMath::vec4 &clip)
-        {
-            return std::isfinite(clip.x) && std::isfinite(clip.y) && std::isfinite(clip.z) &&
-                   std::isfinite(clip.w);
-        };
-        if (!setup0.finiteClip || !setup1.finiteClip || !setup2.finiteClip)
+        if (!(setup0.finiteClip & setup1.finiteClip & setup2.finiteClip)) [[unlikely]]
             continue;
 
-        const auto outcode0 = setup0.outcode;
-        const auto outcode1 = setup1.outcode;
-        const auto outcode2 = setup2.outcode;
-
-        // 같은 clip 평면 밖에 있는 삼각형은 교차 계산 없이 기각할 수 있다.
-        if ((outcode0 & outcode1 & outcode2) != 0)
+        const auto orOutcode = setup0.outcode | setup1.outcode | setup2.outcode;
+        if (orOutcode == 0) [[likely]]
         {
-            continue;
+            const auto &sv0 = c0->shaded;
+            const auto &sv1 = c1->shaded;
+            const auto &sv2 = c2->shaded;
+
+            if (sv0.posClip.w <= 0.f || sv1.posClip.w <= 0.f || sv2.posClip.w <= 0.f) [[unlikely]]
+                continue;
+
+            const float area = (setup1.ndc.x - setup0.ndc.x) * (setup2.ndc.y - setup0.ndc.y) -
+                               (setup1.ndc.y - setup0.ndc.y) * (setup2.ndc.x - setup0.ndc.x);
+            if (!std::isfinite(area) || area >= 0.f)
+                continue;
+
+            const auto primitiveId = (triangleBase + static_cast<std::uint64_t>(i / 3)) * 16;
+            if (Rasterizer::PrepareRasterInto(scratch.triangles.Slot(), setup0.raster, setup1.raster,
+                                              setup2.raster, m_width, m_height, primitiveId, &cmd))
+            {
+                binPrepared(cmd, scratch.triangles.Commit(), frame, scratch);
+            }
         }
-
-        const bool triviallyAccepted = (outcode0 | outcode1 | outcode2) == 0;
-        if (!triviallyAccepted)
+        else
         {
-            // 동차 좌표에서 자른 뒤에만 viewport로 변환한다.
+            if ((setup0.outcode & setup1.outcode & setup2.outcode) != 0)
+                continue;
+
+            const auto &sv0 = c0->shaded;
+            const auto &sv1 = c1->shaded;
+            const auto &sv2 = c2->shaded;
+
+            const auto finiteClip = [](const SRMath::vec4 &clip)
+            {
+                return std::isfinite(clip.x) && std::isfinite(clip.y) && std::isfinite(clip.z) &&
+                       std::isfinite(clip.w);
+            };
+
             scratch.clippedVertices.clear();
             clipTriangle(scratch.clippedVertices, sv0, sv1, sv2, scratch.clipInput, scratch.clipOutput);
             if (scratch.clippedVertices.size() < 3)
                 continue;
-        }
 
-        // 이미 내부인 삼각형은 큰 셰이딩 정점 3개를 clip 버퍼에 복사하지 않는다.
-        // 검증된 캐시를 직접 참조하며, 실제 clipping 결과만 기존 fan 순서로 읽는다.
-        const std::size_t fanCount = triviallyAccepted ? 1 : scratch.clippedVertices.size() - 2;
-        for (std::size_t fan = 0; fan < fanCount; ++fan)
-        {
-            const auto &a = triviallyAccepted ? sv0 : scratch.clippedVertices[0];
-            const auto &b = triviallyAccepted ? sv1 : scratch.clippedVertices[fan + 1];
-            const auto &c = triviallyAccepted ? sv2 : scratch.clippedVertices[fan + 2];
-            // near 평면을 가로지르는 원본 정점에는 음수/0 w가 있을 수 있다.
-            // 동차 clipping 뒤의 양수 w fan에서만 원근 나눗셈과 뒷면 판정을 한다.
-            if ((!triviallyAccepted &&
-                 (!finiteClip(a.posClip) || !finiteClip(b.posClip) || !finiteClip(c.posClip))) ||
-                a.posClip.w <= 0.f || b.posClip.w <= 0.f || c.posClip.w <= 0.f)
-                continue;
-            const auto aNdc = triviallyAccepted ? setup0.ndc : SRMath::vec3(a.posClip) / a.posClip.w;
-            const auto bNdc = triviallyAccepted ? setup1.ndc : SRMath::vec3(b.posClip) / b.posClip.w;
-            const auto cNdc = triviallyAccepted ? setup2.ndc : SRMath::vec3(c.posClip) / c.posClip.w;
-            const float area = (bNdc.x - aNdc.x) * (cNdc.y - aNdc.y) - (bNdc.y - aNdc.y) * (cNdc.x - aNdc.x);
-            // 기존 좌표계에서 앞면은 NDC의 CW(음수 면적)다.
-            if (!std::isfinite(area) || area >= 0.f)
-                continue;
-            const auto primitiveId =
-                (triangleBase + static_cast<std::uint64_t>(i / 3)) * 16 + static_cast<std::uint64_t>(fan);
-            if (triviallyAccepted)
+            const std::size_t fanCount = scratch.clippedVertices.size() - 2;
+            for (std::size_t fan = 0; fan < fanCount; ++fan)
             {
-                // 세 정점은 위에서 유한하고 w > 0임을 확인했다(Prepare의 첫 검사와 같다).
-                // 풀의 다음 자리에 바로 준비하고, 성공했을 때만 확정한다(복사 없음).
-                if (Rasterizer::PrepareRasterInto(scratch.triangles.Slot(), setup0.raster, setup1.raster,
-                                                  setup2.raster, m_width, m_height, primitiveId, &cmd))
-                    binPrepared(cmd, scratch.triangles.Commit(), frame, scratch);
-            }
-            else
+                const auto &a = scratch.clippedVertices[0];
+                const auto &b = scratch.clippedVertices[fan + 1];
+                const auto &c = scratch.clippedVertices[fan + 2];
+
+                if (!finiteClip(a.posClip) || !finiteClip(b.posClip) || !finiteClip(c.posClip) ||
+                    a.posClip.w <= 0.f || b.posClip.w <= 0.f || c.posClip.w <= 0.f)
+                    continue;
+
+                const auto aNdc = SRMath::vec3(a.posClip) / a.posClip.w;
+                const auto bNdc = SRMath::vec3(b.posClip) / b.posClip.w;
+                const auto cNdc = SRMath::vec3(c.posClip) / c.posClip.w;
+                const float area = (bNdc.x - aNdc.x) * (cNdc.y - aNdc.y) - (bNdc.y - aNdc.y) * (cNdc.x - aNdc.x);
+                if (!std::isfinite(area) || area >= 0.f)
+                    continue;
+
+                const auto primitiveId =
+                    (triangleBase + static_cast<std::uint64_t>(i / 3)) * 16 + static_cast<std::uint64_t>(fan);
                 binTriangle(cmd, a, b, c, frame, scratch, primitiveId);
+            }
         }
     }
 }
@@ -324,6 +342,8 @@ void Renderer::binTriangle(const MeshRenderCommand &cmd, const ShadedVertex &v0,
                            const ShadedVertex &v2, const FrameContext &frame, WorkerScratch &scratch,
                            std::uint64_t primitiveId)
 {
+    if (scratch.tileScatter.size() != m_tileStats.size()) [[unlikely]]
+        scratch.tileScatter.resize(m_tileStats.size());
     const auto prepared = Rasterizer::Prepare(v0, v1, v2, m_width, m_height, primitiveId, &cmd);
     if (prepared)
         binPrepared(cmd, &scratch.triangles.emplace_back(*prepared), frame, scratch);
@@ -331,55 +351,37 @@ void Renderer::binTriangle(const MeshRenderCommand &cmd, const ShadedVertex &v0,
 void Renderer::binPrepared(const MeshRenderCommand &cmd, TriangleRef *finalTri, const FrameContext &frame,
                            WorkerScratch &scratch)
 {
-    // 숨은 선 모드에서는 같은 준비 결과를 depth-only 면 패스에도 전달한다.
-    // finalTri는 worker 풀에 확정된 자리라 프레임 끝까지 주소가 유효하다.
     if (cmd.rasterizeMode == ERasterizeMode::Wireframe) [[unlikely]]
     {
-        // 행 worker가 매번 전체 삼각형 풀을 훑지 않도록 겹치는 band만 기록한다.
-        // ensureViewport에서 band 수/높이를 확정하며 이 벡터는 현재 worker만 쓴다.
         int firstBand = 0, lastBand = m_lineBandCount - 1;
         if (m_width <= 524288 && m_height <= 524288)
         {
             firstBand = std::clamp(finalTri->minY / m_lineBandHeight, 0, lastBand);
             lastBand = std::clamp(finalTri->maxY / m_lineBandHeight, firstBand, lastBand);
         }
-        // 과대한 viewport에서는 DDA의 긴 누적 오차를 bbox로 단정하지 않고
-        // 모든 band에 보수적으로 등록한다. 실제 쓰기 범위는 선 패스가 제한한다.
         for (int band = firstBand; band <= lastBand; ++band)
             scratch.wireBins[band].push_back(finalTri);
 
-        // X-ray 와이어는 행별 선 패스만 실행한다. 풀은 유지하되 타일 분배와
-        // 면 깊이 계산은 생략한다. 혼합 장면의 Fill 명령은 정상적으로 bin에 남는다.
         if (!m_options.hiddenWireframe)
             return;
     }
 
-    // 픽셀 AABB를 다시 투영하지 않고 래스터라이저와 같은 inclusive 경계를 쓴다.
     const int minPixelX = std::max(0, finalTri->minX);
     const int maxPixelX = std::min(m_width - 1, finalTri->maxX);
     const int minPixelY = std::max(0, finalTri->minY);
     const int maxPixelY = std::min(m_height - 1, finalTri->maxY);
     if (minPixelX > maxPixelX || minPixelY > maxPixelY) [[unlikely]]
         return;
-    // 이전 프레임의 touched count는 BeginFrame에서 비워졌다. viewport 크기가
-    // 바뀐 worker만 메타데이터 크기를 맞추고 단일 참조 배열의 용량은 재사용한다.
-    if (scratch.tileScatter.size() != m_tileStats.size()) [[unlikely]]
-        scratch.tileScatter.resize(m_tileStats.size());
 
     // Fast path 1: Single tile (조밀한 메시의 60~70% 이상이 단일 16x16 타일에 속함)
-    // (A ^ B) <= 15는 0 <= A <= B일 때 A >> 4 == B >> 4와 수학적으로 동치이므로
-    // X와 Y를 동시에 1번의 OR 비교로 단일 타일 여부를 초고속 판별한다.
     if (((minPixelX ^ maxPixelX) | (minPixelY ^ maxPixelY)) <= 15) [[likely]]
     {
         const auto tile = static_cast<std::size_t>(minPixelY >> 4) * frame.tilesX +
                           static_cast<std::size_t>(minPixelX >> 4);
         auto &state = scratch.tileScatter[tile];
-        if (state.count == std::numeric_limits<std::size_t>::max()) [[unlikely]]
-            throw std::length_error("Worker tile reference count exceeded");
-        if (state.count == 0)
+        if (state.count++ == 0) [[unlikely]]
             scratch.touchedTileIds.push_back(tile);
-        scratch.tileReferences.push_back({tile, finalTri});
-        ++state.count;
+        scratch.tileReferences.emplace_back(tile, finalTri);
         return;
     }
 
@@ -391,12 +393,9 @@ void Renderer::binPrepared(const MeshRenderCommand &cmd, TriangleRef *finalTri, 
     const auto addTileRef = [&](std::size_t tile) SR_FORCEINLINE_LAMBDA
     {
         auto &state = scratch.tileScatter[tile];
-        if (state.count == std::numeric_limits<std::size_t>::max()) [[unlikely]]
-            throw std::length_error("Worker tile reference count exceeded");
-        if (state.count == 0)
+        if (state.count++ == 0) [[unlikely]]
             scratch.touchedTileIds.push_back(tile);
-        scratch.tileReferences.push_back({tile, finalTri});
-        ++state.count;
+        scratch.tileReferences.emplace_back(tile, finalTri);
     };
 
     const auto baseIdx = static_cast<std::size_t>(minTileY) * frame.tilesX;
@@ -420,8 +419,6 @@ void Renderer::binPrepared(const MeshRenderCommand &cmd, TriangleRef *finalTri, 
     }
 
     // Multi-tile triangle: SIMD conservative tile edge rejection
-    // 타일의 4개 코너 중 각 에지 함수의 최댓값을 취하는 코너를 검사하여
-    // 3개 에지 중 하나라도 코너 최댓값이 음수이면 타일 전체가 삼각형 외부에 위치하므로 기각.
     const float ox0 = finalTri->dy12 >= 0.f ? 15.5f : 0.5f;
     const float oy0 = -finalTri->dx12 >= 0.f ? 15.5f : 0.5f;
     const float ox1 = finalTri->dy20 >= 0.f ? 15.5f : 0.5f;
