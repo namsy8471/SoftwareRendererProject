@@ -12,7 +12,10 @@
 Renderer::WorkerScratch::WorkerScratch()
 {
     // 준비 구조가 커졌으므로 작은 초기 용량으로 시작하고 실제 high-water를 재사용한다.
-    triangles.reserve(512);
+    triangles.reserve(4096);
+    tileReferences.reserve(16384);
+    sortedTileReferences.reserve(16384);
+    touchedTileIds.reserve(2048);
     vertexCache.resize(vertexCacheSize);
     vertexTags.resize(vertexCacheSize);
 }
@@ -190,6 +193,8 @@ void Renderer::processCommand(const MeshRenderCommand &cmd, const FrameContext &
     const Mesh *mesh = cmd.sourceMesh;
     scratch.tileReferencesSorted = false;
     scratch.BeginCachedCommand(cmd, frame.viewProjection);
+    if (scratch.tileScatter.size() != m_tileStats.size()) [[unlikely]]
+        scratch.tileScatter.resize(m_tileStats.size());
     const auto &mvp = scratch.modelViewProjection;
     const auto &inverseTransposeWorld = scratch.normalMatrix;
     const auto indices = cmd.indicesToDraw;
@@ -321,7 +326,7 @@ void Renderer::binPrepared(const MeshRenderCommand &cmd, TriangleRef *finalTri, 
 {
     // 숨은 선 모드에서는 같은 준비 결과를 depth-only 면 패스에도 전달한다.
     // finalTri는 worker 풀에 확정된 자리라 프레임 끝까지 주소가 유효하다.
-    if (cmd.rasterizeMode == ERasterizeMode::Wireframe)
+    if (cmd.rasterizeMode == ERasterizeMode::Wireframe) [[unlikely]]
     {
         // 행 worker가 매번 전체 삼각형 풀을 훑지 않도록 겹치는 band만 기록한다.
         // ensureViewport에서 band 수/높이를 확정하며 이 벡터는 현재 worker만 쓴다.
@@ -335,46 +340,128 @@ void Renderer::binPrepared(const MeshRenderCommand &cmd, TriangleRef *finalTri, 
         // 모든 band에 보수적으로 등록한다. 실제 쓰기 범위는 선 패스가 제한한다.
         for (int band = firstBand; band <= lastBand; ++band)
             scratch.wireBins[band].push_back(finalTri);
-    }
 
-    // X-ray 와이어는 행별 선 패스만 실행한다. 풀은 유지하되 타일 분배와
-    // 면 깊이 계산은 생략한다. 혼합 장면의 Fill 명령은 정상적으로 bin에 남는다.
-    if (cmd.rasterizeMode == ERasterizeMode::Wireframe && !m_options.hiddenWireframe)
-        return;
+        // X-ray 와이어는 행별 선 패스만 실행한다. 풀은 유지하되 타일 분배와
+        // 면 깊이 계산은 생략한다. 혼합 장면의 Fill 명령은 정상적으로 bin에 남는다.
+        if (!m_options.hiddenWireframe)
+            return;
+    }
 
     // 픽셀 AABB를 다시 투영하지 않고 래스터라이저와 같은 inclusive 경계를 쓴다.
     const int minPixelX = std::max(0, finalTri->minX);
     const int maxPixelX = std::min(m_width - 1, finalTri->maxX);
     const int minPixelY = std::max(0, finalTri->minY);
     const int maxPixelY = std::min(m_height - 1, finalTri->maxY);
-    if (minPixelX > maxPixelX || minPixelY > maxPixelY)
+    if (minPixelX > maxPixelX || minPixelY > maxPixelY) [[unlikely]]
         return;
-    const int minTileX = minPixelX / tileSize;
-    const int maxTileX = maxPixelX / tileSize;
-    const int minTileY = minPixelY / tileSize;
-    const int maxTileY = maxPixelY / tileSize;
-
     // 이전 프레임의 touched count는 BeginFrame에서 비워졌다. viewport 크기가
     // 바뀐 worker만 메타데이터 크기를 맞추고 단일 참조 배열의 용량은 재사용한다.
-    // X-ray 조기 반환보다 뒤에 있어 순수 wire 프레임에는 새 메타데이터도 만들지 않는다.
-    if (scratch.tileScatter.size() != m_tileStats.size())
+    if (scratch.tileScatter.size() != m_tileStats.size()) [[unlikely]]
         scratch.tileScatter.resize(m_tileStats.size());
+
+    // Fast path 1: Single tile (조밀한 메시의 60~70% 이상이 단일 16x16 타일에 속함)
+    // (A ^ B) <= 15는 0 <= A <= B일 때 A >> 4 == B >> 4와 수학적으로 동치이므로
+    // X와 Y를 동시에 1번의 OR 비교로 단일 타일 여부를 초고속 판별한다.
+    if (((minPixelX ^ maxPixelX) | (minPixelY ^ maxPixelY)) <= 15) [[likely]]
+    {
+        const auto tile = static_cast<std::size_t>(minPixelY >> 4) * frame.tilesX +
+                          static_cast<std::size_t>(minPixelX >> 4);
+        auto &state = scratch.tileScatter[tile];
+        if (state.count == std::numeric_limits<std::size_t>::max()) [[unlikely]]
+            throw std::length_error("Worker tile reference count exceeded");
+        if (state.count == 0)
+            scratch.touchedTileIds.push_back(tile);
+        scratch.tileReferences.push_back({tile, finalTri});
+        ++state.count;
+        return;
+    }
+
+    const int minTileX = minPixelX >> 4;
+    const int maxTileX = maxPixelX >> 4;
+    const int minTileY = minPixelY >> 4;
+    const int maxTileY = maxPixelY >> 4;
+
+    const auto addTileRef = [&](std::size_t tile) SR_FORCEINLINE_LAMBDA
+    {
+        auto &state = scratch.tileScatter[tile];
+        if (state.count == std::numeric_limits<std::size_t>::max()) [[unlikely]]
+            throw std::length_error("Worker tile reference count exceeded");
+        if (state.count == 0)
+            scratch.touchedTileIds.push_back(tile);
+        scratch.tileReferences.push_back({tile, finalTri});
+        ++state.count;
+    };
+
+    const auto baseIdx = static_cast<std::size_t>(minTileY) * frame.tilesX;
+
+    // Fast path 2: 2-tile horizontal span (가로 2개 타일 보수적 보장)
+    if (minTileY == maxTileY && minTileX + 1 == maxTileX)
+    {
+        const auto t0 = baseIdx + static_cast<std::size_t>(minTileX);
+        addTileRef(t0);
+        addTileRef(t0 + 1);
+        return;
+    }
+
+    // Fast path 3: 2-tile vertical span (세로 2개 타일 보수적 보장)
+    if (minTileX == maxTileX && minTileY + 1 == maxTileY)
+    {
+        const auto t0 = baseIdx + static_cast<std::size_t>(minTileX);
+        addTileRef(t0);
+        addTileRef(t0 + frame.tilesX);
+        return;
+    }
+
+    // Multi-tile triangle: SIMD conservative tile edge rejection
+    // 타일의 4개 코너 중 각 에지 함수의 최댓값을 취하는 코너를 검사하여
+    // 3개 에지 중 하나라도 코너 최댓값이 음수이면 타일 전체가 삼각형 외부에 위치하므로 기각.
+    const float ox0 = finalTri->dy12 >= 0.f ? 15.5f : 0.5f;
+    const float oy0 = -finalTri->dx12 >= 0.f ? 15.5f : 0.5f;
+    const float ox1 = finalTri->dy20 >= 0.f ? 15.5f : 0.5f;
+    const float oy1 = -finalTri->dx20 >= 0.f ? 15.5f : 0.5f;
+    const float ox2 = finalTri->dy01 >= 0.f ? 15.5f : 0.5f;
+    const float oy2 = -finalTri->dx01 >= 0.f ? 15.5f : 0.5f;
+
+    const float p1x = finalTri->rv1.screenPos.x;
+    const float p1y = finalTri->rv1.screenPos.y;
+    const float p2x = finalTri->rv2.screenPos.x;
+    const float p2y = finalTri->rv2.screenPos.y;
+    const float p0x = finalTri->rv0.screenPos.x;
+    const float p0y = finalTri->rv0.screenPos.y;
+
+    const float startX = static_cast<float>(minTileX << 4);
+    const float startY = static_cast<float>(minTileY << 4);
+
+    const __m128 eps = _mm_set1_ps(-0.001f);
+    const __m128 ox = _mm_set_ps(0.f, ox2, ox1, ox0);
+    const __m128 oy = _mm_set_ps(0.f, oy2, oy1, oy0);
+    const __m128 px = _mm_set_ps(0.f, p0x, p2x, p1x);
+    const __m128 py = _mm_set_ps(0.f, p0y, p2y, p1y);
+    const __m128 dy = _mm_set_ps(0.f, finalTri->dy01, finalTri->dy20, finalTri->dy12);
+    const __m128 dx = _mm_set_ps(0.f, finalTri->dx01, finalTri->dx20, finalTri->dx12);
+
+    const __m128 startX_v = _mm_set1_ps(startX);
+    const __m128 startY_v = _mm_set1_ps(startY);
+
+    __m128 c_row = _mm_sub_ps(_mm_mul_ps(dy, _mm_sub_ps(_mm_add_ps(startX_v, ox), px)),
+                               _mm_mul_ps(dx, _mm_sub_ps(_mm_add_ps(startY_v, oy), py)));
+
+    const __m128 stepX = _mm_mul_ps(dy, _mm_set1_ps(16.f));
+    const __m128 stepY = _mm_mul_ps(_mm_sub_ps(_mm_setzero_ps(), dx), _mm_set1_ps(16.f));
 
     for (int ty = minTileY; ty <= maxTileY; ++ty)
     {
-        const auto baseIdx = static_cast<std::size_t>(ty) * frame.tilesX;
+        const auto rowBase = static_cast<std::size_t>(ty) * frame.tilesX;
+        __m128 c = c_row;
         for (int tx = minTileX; tx <= maxTileX; ++tx)
         {
-            const auto tile = baseIdx + static_cast<std::size_t>(tx);
-            auto &state = scratch.tileScatter[tile];
-            if (state.count == std::numeric_limits<std::size_t>::max())
-                throw std::length_error("Worker tile reference count exceeded");
-            // touched 등록 후 참조 삽입이 성공한 경우에만 count를 늘린다.
-            // 어느 할당에서 실패해도 다음 BeginFrame이 남은 상태를 모두 지운다.
-            if (state.count == 0)
-                scratch.touchedTileIds.push_back(tile);
-            scratch.tileReferences.push_back({tile, finalTri});
-            ++state.count;
+            const int mask = _mm_movemask_ps(_mm_cmplt_ps(c, eps));
+            if ((mask & 7) == 0)
+            {
+                addTileRef(rowBase + static_cast<std::size_t>(tx));
+            }
+            c = _mm_add_ps(c, stepX);
         }
+        c_row = _mm_add_ps(c_row, stepY);
     }
 }

@@ -295,7 +295,6 @@ void Renderer::prepareTileReferences()
 void Renderer::WorkerScratch::SortTileReferences()
 {
     // 타일 구간은 touched 순서로 배정한다. 타일 작업은 (시작, 개수)만 읽으므로 타일 번호 순일 필요가 없다.
-    sortedTileReferences.clear();
     std::size_t total = 0;
     for (const auto tile : touchedTileIds)
     {
@@ -306,11 +305,45 @@ void Renderer::WorkerScratch::SortTileReferences()
         total += state.count;
     }
     // 실패하면 이번 프레임은 래스터를 시작하지 않고 다음 BeginFrame이 count를 초기화한다.
+    // clear()를 제거하고 resize()만 수행하여 이전 프레임의 버퍼와 용량을 재사용하며 memset 비용을 제거한다.
     sortedTileReferences.resize(total);
-    // frontend가 push 성공 뒤에만 count를 늘렸으므로 모든 슬롯이 정확히 한 번 채워진다.
-    // 끝나면 cursor는 구간의 끝이고 시작은 cursor - count다.
-    for (const auto &reference : tileReferences)
-        sortedTileReferences[tileScatter[reference.tileIndex].cursor++] = reference.triangle;
+
+    const auto *const ref = tileReferences.data();
+    const auto count = tileReferences.size();
+    auto *const sorted = sortedTileReferences.data();
+    auto *const scatter = tileScatter.data();
+
+    // 4路 루프 언롤링 및 L1/L2 프리패치로 메모리 파이프라인 지연 은폐
+    std::size_t i = 0;
+    constexpr std::size_t prefetchDist = 16;
+    for (; i + 4 <= count; i += 4)
+    {
+        if (i + prefetchDist < count)
+        {
+            _mm_prefetch(reinterpret_cast<const char *>(ref + i + prefetchDist), _MM_HINT_T0);
+            _mm_prefetch(reinterpret_cast<const char *>(&scatter[ref[i + 8].tileIndex]), _MM_HINT_T0);
+            _mm_prefetch(reinterpret_cast<const char *>(&scatter[ref[i + 9].tileIndex]), _MM_HINT_T0);
+        }
+
+        const auto idx0 = ref[i + 0].tileIndex;
+        auto *tri0 = ref[i + 0].triangle;
+        sorted[scatter[idx0].cursor++] = tri0;
+
+        const auto idx1 = ref[i + 1].tileIndex;
+        auto *tri1 = ref[i + 1].triangle;
+        sorted[scatter[idx1].cursor++] = tri1;
+
+        const auto idx2 = ref[i + 2].tileIndex;
+        auto *tri2 = ref[i + 2].triangle;
+        sorted[scatter[idx2].cursor++] = tri2;
+
+        const auto idx3 = ref[i + 3].tileIndex;
+        auto *tri3 = ref[i + 3].triangle;
+        sorted[scatter[idx3].cursor++] = tri3;
+    }
+    for (; i < count; ++i)
+        sorted[scatter[ref[i].tileIndex].cursor++] = ref[i].triangle;
+
     tileReferencesSorted = true;
 }
 
