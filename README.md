@@ -32,9 +32,9 @@ DirectX 11을 사용하며 부족하다고 느꼈던 렌더링 파이프라인�
 | 개발 형태 | 개발 기간 | 기술 환경 | 화면 출력 |
 |:---:|:---:|:---:|:---:|
 | **1인 개인 프로젝트** | 2025.07.07–2025.08.27 | C++26 Preview · MSVC v145 · Windows | WinAPI DIB · GDI |
-| **AI 기반 코딩 (Claude · Gemini 3.8/Argon)** | 2026.10.20– | C++26 Preview · MSVC v145 · Windows / GCC (CI) | WinAPI DIB · GDI |
+| **AI 기반 코딩 (Claude 5.5 Opus · Gemini 3.8/Argon)** | 2026.10.20– | C++26 Preview · MSVC v145 · Windows / GCC (CI) | WinAPI DIB · GDI |
 
-2026.10.20부터는 AI(Claude, Gemini 3.8/Argon)가 코드를 작성하고 최적화합니다. 변경은 측정된 fps/ms와 어셈블리 검토로 판단하고, 테스트·골든 이미지·CI로 검증합니다.
+2026.10.20부터는 AI(Claude 5.5 Opus, Gemini 3.8/Argon)가 코드를 작성하고 최적화합니다. 변경은 측정된 fps/ms와 어셈블리 검토로 판단하고, 테스트·골든 이미지·CI로 검증합니다.
 
 ## AI 작업 성과 요약 (2026.10.20–10.22)
 
@@ -96,7 +96,7 @@ PR마다 같은 PC에서 변경 전(base)과 후(head)를 번갈아 재고, 통�
 
 | 항목 | 역할 |
 |---|---|
-| [AGENTS.md](AGENTS.md) | AI 공통 규칙: 100fps 기준(p95 ≤ 9ms), 명령, 작업 순서, 판정 규칙. Claude Code와 Gemini CLI(Gemini 3.8/Argon)가 공통으로 따르는 작업 명세 |
+| [AGENTS.md](AGENTS.md) | AI 공통 규칙: 100fps 기준(p95 ≤ 9ms), 명령, 작업 순서, 판정 규칙. Claude Code(Claude 5.5 Opus)와 Gemini CLI(Gemini 3.8/Argon)가 공통으로 따르는 작업 명세 |
 | 어셈블리 기준 최적화 규칙 (CLAUDE.md, PR #19) | 소스 추측이 아니라 생성된 어셈블리(`/FAs`, `dumpbin /disasm`)를 보고 최적화하고, 전후를 기록. 매 프레임 코드와 로딩 코드에 적용 |
 | 프로파일링 필수 규칙 (CLAUDE.md, PR #22) | 모든 최적화는 PC에서 VTune과 VS CPU Usage 둘 다로 전후 측정하고 핫스팟 점유율을 기록 |
 | [CODEMAP.md](CODEMAP.md) | 소스 파일마다 역할 한 줄. CI(`tools/ci/check_codemap.py`)가 빠진 파일을 잡음 |
@@ -529,7 +529,7 @@ SoftwareRendererProject/
 
 본 프로젝트는 2026년 10월 20일부터 고도화된 자율형 AI 에이전트 페어 프로그래밍을 통해 아키텍처 재설계 및 극한의 최적화를 수행했습니다.
 
-- **Claude 3.5 Sonnet**: 초기 최적화 스프린트(PR #1~#40), 자체 잡 시스템(`sr::jobs`), 타일 래스터라이저 기반 구축, glTF 2.0 로더 및 스켈레탈 애니메이션, 1080p 100 FPS 베이스라인 달성.
+- **Claude 5.5 Opus**: 초기 최적화 스프린트(PR #1~#40), 자체 잡 시스템(`sr::jobs`), 타일 래스터라이저 기반 구축, glTF 2.0 로더 및 스켈레탈 애니메이션, 1080p 100 FPS 베이스라인 달성.
 - **Gemini 3.8 / Argon**: 실시간 조명 및 PBR 파이프라인(PR #41~#47: IBL, ACES 톤매핑, Cook-Torrance PBR, 3분할 CSM 부드러운 그림자, 6.1배 병렬 섀도우 맵 래스터화, Cloud Baker 텍스처 베이킹), 1.88M 삼각형(22개 오브젝트, 2,660개 서브메시) 30 FPS 스트레스 벤치마크 구축(#49), 계층적 타일 비닝 패스트패스 및 SIMD 4픽셀 병렬 래스터라이저 통합(#50)으로 33+ FPS 돌파.
 
 ## 외부 라이브러리

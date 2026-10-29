@@ -32,9 +32,9 @@ This CPU-based software renderer began as a way to verify the rendering-pipeline
 | Development | Period | Environment | Presentation |
 |:---:|:---:|:---:|:---:|
 | **Solo project** | 2025-07-07–2025-08-27 | C++26 Preview · MSVC v145 · Windows | WinAPI DIB · GDI |
-| **AI-driven coding (Claude · Gemini 3.8/Argon)** | 2026-10-20– | C++26 Preview · MSVC v145 · Windows / GCC (CI) | WinAPI DIB · GDI |
+| **AI-driven coding (Claude 5.5 Opus · Gemini 3.8/Argon)** | 2026-10-20– | C++26 Preview · MSVC v145 · Windows / GCC (CI) | WinAPI DIB · GDI |
 
-Since 2026-10-20, AI (Claude, Gemini 3.8/Argon) writes and optimizes the code. Changes are judged by measured fps/ms and assembly review, and verified by tests, golden images, and CI.
+Since 2026-10-20, AI (Claude 5.5 Opus, Gemini 3.8/Argon) writes and optimizes the code. Changes are judged by measured fps/ms and assembly review, and verified by tests, golden images, and CI.
 
 ## AI work summary (2026-10-20 to 10-22)
 
@@ -96,7 +96,7 @@ Changes that were not at least 2% faster, or were slower, were dropped and the r
 
 | Item | Role |
 |---|---|
-| [AGENTS.md](AGENTS.md) | Shared rules for AI tools: the 100 fps bar (p95 ≤ 9 ms), commands, workflow, and verdict rules followed by Claude Code and Gemini CLI (Gemini 3.8/Argon) |
+| [AGENTS.md](AGENTS.md) | Shared rules for AI tools: the 100 fps bar (p95 ≤ 9 ms), commands, workflow, and verdict rules followed by Claude Code (Claude 5.5 Opus) and Gemini CLI (Gemini 3.8/Argon) |
 | Assembly-level optimization rule (CLAUDE.md, PR #19) | Optimize from the generated assembly (`/FAs`, `dumpbin /disasm`), not source-level guesses, and record before/after. Covers per-frame and load-time code |
 | Mandatory profiling rule (CLAUDE.md, PR #22) | Every optimization is profiled on the PC with both VTune and VS CPU Usage, before and after, with hotspot shares recorded |
 | [CODEMAP.md](CODEMAP.md) | One line per source file; CI (`tools/ci/check_codemap.py`) catches missing files |
@@ -529,7 +529,7 @@ SoftwareRendererProject/
 
 Since October 20, 2026, this project has undergone architectural overhaul and extreme low-level optimization through pair programming with advanced autonomous AI agents.
 
-- **Claude 3.5 Sonnet**: Initial optimization sprints (PR #1–#40), custom lock-free job system (`sr::jobs`), tile-based rasterizer foundation, glTF 2.0 loader and skeletal animation system, achieving the initial 1080p 100 FPS baseline.
+- **Claude 5.5 Opus**: Initial optimization sprints (PR #1–#40), custom lock-free job system (`sr::jobs`), tile-based rasterizer foundation, glTF 2.0 loader and skeletal animation system, achieving the initial 1080p 100 FPS baseline.
 - **Gemini 3.8 / Argon**: Real-time lighting and PBR pipeline (PR #41–#47: IBL, ACES Filmic Tone Mapping, Cook-Torrance PBR, 3-split CSM soft shadows, 6.1x parallelized shadow map rasterization, Cloud Baker CPU texture baking engine), 1.88M triangle (22 objects, 2,660 meshes) 30 FPS stress benchmark suite (#49), hierarchical tile binning fast path, and SIMD 4-pixel parallel rasterizer edge traversal integration (#50) breaking 33+ FPS.
 
 ## Third-party libraries
