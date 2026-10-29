@@ -206,7 +206,7 @@ class Renderer
     void binTriangle(const MeshRenderCommand &, const ShadedVertex &, const ShadedVertex &,
                      const ShadedVertex &, const FrameContext &, WorkerScratch &,
                      std::uint64_t primitiveId = 0);
-    void binPrepared(const MeshRenderCommand &, TriangleRef *, const FrameContext &, WorkerScratch &);
+    SR_FORCEINLINE void binPrepared(const MeshRenderCommand &, TriangleRef *, const FrameContext &, WorkerScratch &);
     static ShadedVertex shadeVertex(const Vertex &, const SRMath::mat4 &, const SRMath::mat4 &,
                                     const SRMath::mat4 &);
     // 정점의 약 80%는 이미 이 명령에서 계산됐다. hit는 tag 비교 하나로 끝내도록 인라인하고,
