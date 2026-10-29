@@ -429,6 +429,7 @@ AABB buildSpatialData(std::span<Mesh> meshes)
                                   localBounds.Local().Encapsulate(mesh.localAABB);
                                   mesh.octree = std::make_unique<Octree>();
                                   mesh.octree->Build(mesh);
+                                  mesh.BuildLODs();
                               }
                           });
     AABB bounds;

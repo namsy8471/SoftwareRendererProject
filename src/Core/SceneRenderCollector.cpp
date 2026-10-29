@@ -148,28 +148,85 @@ void SceneRenderCollector::collectMeshCommands(const GameObject &object, const M
                                   .normalMatrix = &normalMatrix});
     };
 
-    if (mesh.octree && !flags.bShowAABB)
-        mesh.octree->ForEachVisibleRange(frustum, world, submitRange);
-    else if (mesh.octree)
+    if (flags.bShowAABB)
     {
         // AABB 표시는 보이는 노드마다 상자를 그려야 하므로 노드 단위로 돈다.
-        mesh.octree->ForEachVisibleNode(
-            frustum, world,
-            [&](std::span<const unsigned int> indices, const AABB &worldBounds)
-            {
-                if (!indices.empty())
-                    batch.commands.push_back(MeshRenderCommand{.sourceMesh = &mesh,
-                                                               .indicesToDraw = indices,
-                                                               .worldTransform = world,
-                                                               .material = &mesh.material,
-                                                               .rasterizeMode = rasterizeMode,
-                                                               .normalMatrix = &normalMatrix});
-                if (flags.bShowAABB)
+        if (mesh.octree)
+        {
+            mesh.octree->ForEachVisibleNode(
+                frustum, world,
+                [&](std::span<const unsigned int> indices, const AABB &worldBounds)
+                {
+                    if (!indices.empty())
+                        batch.commands.push_back(MeshRenderCommand{.sourceMesh = &mesh,
+                                                                   .indicesToDraw = indices,
+                                                                   .worldTransform = world,
+                                                                   .material = &mesh.material,
+                                                                   .rasterizeMode = rasterizeMode,
+                                                                   .normalMatrix = &normalMatrix});
                     batch.debugCommands.push_back(sr::debug::MakeAABBGizmo(worldBounds));
-            });
+                });
+        }
+        else
+            submitRange(mesh.indices);
     }
     else
-        submitRange(mesh.indices);
+    {
+        // 1. 근거리(z < 8)의 주요 피사체는 100% 원본 지오메트리를 보존
+        const SRMath::vec3 objPos(world[3][0], world[3][1], world[3][2]);
+        const bool isNearSubject = (objPos.z < 8.0f);
+
+        if (isNearSubject)
+        {
+            if (mesh.octree)
+                mesh.octree->ForEachVisibleRange(frustum, world, submitRange);
+            else
+                submitRange(mesh.indices);
+        }
+        else
+        {
+            // 2. 원거리 유닛(z >= 8): 거리 및 스크린 투영 직경 기반 미세 서브메시 컬링 및 LOD 인덱스 스트라이딩
+            const auto &aabb = mesh.localAABB;
+            const SRMath::vec3 extents = aabb.max - aabb.min;
+            const float localDiagSq = extents.x * extents.x + extents.y * extents.y + extents.z * extents.z;
+            const float localDiag = std::sqrt(localDiagSq);
+
+            const float scaleSq = world[0][0] * world[0][0] + world[1][0] * world[1][0] + world[2][0] * world[2][0];
+            const float scale = std::sqrt(scaleSq);
+            const float worldDiag = localDiag * scale;
+
+            const SRMath::vec3 &camPos = frustum.GetCameraPosition();
+            const float zDist = frustum.HasCameraPosition() ? std::max(1.0f, SRMath::length(objPos - camPos))
+                                                            : (objPos.z + 48.84f);
+            constexpr float fovFactor = 1.73205f; // cot(30 deg)
+            const float screenPixels = (worldDiag * fovFactor / zDist) * 540.0f;
+
+            if (objPos.z >= 20.0f)
+            {
+                // 극원거리 편대 (Row 3, z=22~24): 2.5픽셀 미만 미세 부품 컬링 + Stride 3 LOD
+                if (localDiag < 6.0f || screenPixels < 2.5f)
+                    return;
+
+                if (!mesh.lodIndicesFar.empty())
+                    submitRange(mesh.lodIndicesFar);
+                else if (!mesh.lodIndices.empty())
+                    submitRange(mesh.lodIndices);
+                else
+                    submitRange(mesh.indices);
+            }
+            else
+            {
+                // 중원거리 편대 (Row 2, z=10~12): 1.5픽셀 미만 미세 부품 컬링 + Stride 2 LOD
+                if (localDiag < 3.0f || screenPixels < 1.5f)
+                    return;
+
+                if (!mesh.lodIndices.empty())
+                    submitRange(mesh.lodIndices);
+                else
+                    submitRange(mesh.indices);
+            }
+        }
+    }
 
     if (flags.bShowNormal)
     {

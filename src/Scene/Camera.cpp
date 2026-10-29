@@ -26,6 +26,7 @@ void Camera::Update(float deltaTime, std::span<const bool, keyCount> keyInput, f
 
     SRMath::mat4 viewProjectionMatrix = m_projectionMatrix * m_viewMatrix;
     m_frustum.Update(viewProjectionMatrix);
+    m_frustum.SetCameraPosition(m_cameraPos);
 }
 
 void Camera::Move(float deltaTime, std::span<const bool, keyCount> keyInput) noexcept

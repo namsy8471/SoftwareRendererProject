@@ -21,6 +21,8 @@ struct Mesh
 {
     std::vector<Vertex> vertices;      // 이 메시에 속한 고유 정점 데이터 (VBO용)
     std::vector<unsigned int> indices; // 정점을 연결해 삼각형을 만드는 방법 (IBO용)
+    std::vector<unsigned int> lodIndices;    // LOD 1: 원거리용 인덱스 (stride 2, 50% 감축)
+    std::vector<unsigned int> lodIndicesFar; // LOD 2: 극원거리용 인덱스 (stride 3, ~67% 감축)
     Material material;                 // 이 메시에 적용할 재질
     AABB localAABB;                    // 이 메시에 적용할 로컬 AABB
     std::unique_ptr<Octree> octree;
@@ -34,6 +36,7 @@ struct Mesh
     [[nodiscard]] std::span<const SRMath::vec4> GetTangents() const noexcept { return m_tangents; }
     void SetTangents(std::vector<SRMath::vec4> tangents) noexcept { m_tangents = std::move(tangents); }
     void ComputeTangents();
+    void BuildLODs();
 
   private:
     // xyz = 정규화 탄젠트, w = handedness(±1). 노멀 맵이 있는 메시에서만 채워 Vertex 크기를 보존한다.

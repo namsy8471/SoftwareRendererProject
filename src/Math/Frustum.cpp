@@ -50,6 +50,22 @@ void Frustum::Update(const SRMath::mat4 &vpMatrix) noexcept
         plane.normal = plane.normal / length;
         plane.distance /= length;
     }
+
+    const SRMath::vec3 &n0 = planes[0].normal;
+    const SRMath::vec3 &n1 = planes[1].normal;
+    const SRMath::vec3 &n3 = planes[3].normal;
+    const float d0 = planes[0].distance;
+    const float d1 = planes[1].distance;
+    const float d3 = planes[3].distance;
+    const SRMath::vec3 cross01 = SRMath::cross(n0, n1);
+    const float denom = SRMath::dot(n3, cross01);
+    if (std::abs(denom) > 1e-6f)
+    {
+        const SRMath::vec3 cross13 = SRMath::cross(n1, n3);
+        const SRMath::vec3 cross30 = SRMath::cross(n3, n0);
+        cameraPosition = (cross13 * -d0 + cross30 * -d1 + cross01 * -d3) / denom;
+        hasCameraPosition = true;
+    }
 }
 
 bool Frustum::IsAABBInFrustum(const AABB &aabb) const noexcept

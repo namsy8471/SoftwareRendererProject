@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include <array>
 #include "Math/SRMath.h"
 #include "Math/AABB.h"
@@ -27,6 +27,16 @@ class Frustum
   public:
     // C 배열보다 std::array가 범위 알고리즘과 크기 안전성을 제공한다.
     std::array<Plane, 6> planes{}; // Left, Right, Bottom, Top, Near, Far
+    SRMath::vec3 cameraPosition{0.f, 0.f, 0.f};
+    bool hasCameraPosition = false;
+
+    void SetCameraPosition(const SRMath::vec3 &pos) noexcept
+    {
+        cameraPosition = pos;
+        hasCameraPosition = true;
+    }
+    [[nodiscard]] const SRMath::vec3 &GetCameraPosition() const noexcept { return cameraPosition; }
+    [[nodiscard]] bool HasCameraPosition() const noexcept { return hasCameraPosition; }
 
     void Update(const SRMath::mat4 &viewProjectionMatrix) noexcept;
     [[nodiscard]] bool IsAABBInFrustum(const AABB &aabb) const noexcept;
