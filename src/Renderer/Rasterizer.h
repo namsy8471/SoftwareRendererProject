@@ -74,6 +74,9 @@ class Rasterizer
     static bool PrepareRasterInto(PreparedTriangle &out, const RasterizerVertex &, const RasterizerVertex &,
                                   const RasterizerVertex &, int width, int height, std::uint64_t primitiveId,
                                   const MeshRenderCommand *command);
+    // 한 타일 안의 4x4 픽셀 이하 삼각형이 어떤 픽셀도 칠하지 않는지 DrawTriangle*Impl과 같은 연산으로 판정한다.
+    // true면 모든 채움 패스가 이 삼각형에서 아무것도 쓰지 않으므로 빈닝 전에 버려도 결과가 같다.
+    static bool CoversNoPixel(const PreparedTriangle &t);
     static std::optional<PreparedTriangle> PrepareRaster(const RasterizerVertex &, const RasterizerVertex &,
                                                          const RasterizerVertex &, int width, int height,
                                                          std::uint64_t primitiveId,

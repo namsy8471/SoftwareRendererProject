@@ -266,6 +266,58 @@ bool Rasterizer::PrepareRasterInto(PreparedTriangle &t, const RasterizerVertex &
     return true;
 }
 
+bool Rasterizer::CoversNoPixel(const PreparedTriangle &t)
+{
+    // 타일 원점이 x0/y0를 바꾸면 시작 edge 절삭값도 바뀐다. 한 타일 안이면 모든 패스의 시작이 (minX, minY)다.
+    // minX..maxX는 PrepareRasterInto가 [0, width-1]로 잘랐으므로 타일 오른쪽 끝(maxX - 1)보다 크지 않다.
+    if (((t.minX ^ t.maxX) | (t.minY ^ t.maxY)) > 15 || t.maxX - t.minX > 3 || t.maxY - t.minY > 3)
+        return false;
+    const int x0 = t.minX, y0 = t.minY;
+    const auto &p0 = t.rv0.screenPos;
+    const auto &p1 = t.rv1.screenPos;
+    const auto &p2 = t.rv2.screenPos;
+    std::int64_t r0, r1, r2;
+    // DrawTriangleImpl과 같은 식, 같은 순서다. 실패하면 그 함수도 아무것도 그리지 않고 돌아간다.
+    if (!toFixed(t.dy12 * (x0 + 0.5f - p1.x) - t.dx12 * (y0 + 0.5f - p1.y), r0) ||
+        !toFixed(t.dy20 * (x0 + 0.5f - p2.x) - t.dx20 * (y0 + 0.5f - p2.y), r1) ||
+        !toFixed(t.dy01 * (x0 + 0.5f - p0.x) - t.dx01 * (y0 + 0.5f - p0.y), r2))
+        return true;
+    // bbox가 4x4 이하라 smallEdges의 크기 조건만 남는다. 넘으면 safeEdge로 같은 판정을 한다.
+    const auto magnitude = [](std::int64_t v) { return static_cast<std::uint64_t>(v < 0 ? -v : v); };
+    if ((magnitude(r0) | magnitude(r1) | magnitude(r2) | magnitude(t.dx12Fixed) | magnitude(t.dy12Fixed) |
+         magnitude(t.dx20Fixed) | magnitude(t.dy20Fixed) | magnitude(t.dx01Fixed) | magnitude(t.dy01Fixed)) >=
+        (std::uint64_t{1} << 56))
+    {
+        const double rows = t.maxY - y0 + 1., cols = t.maxX - x0 + 1.;
+        const auto safeEdge = [&](std::int64_t r, std::int64_t dx, std::int64_t dy)
+        {
+            return std::abs(static_cast<double>(r)) + std::abs(static_cast<double>(dx)) * rows +
+                       std::abs(static_cast<double>(dy)) * cols <
+                   0x1p62;
+        };
+        if (!safeEdge(r0, t.dx12Fixed, t.dy12Fixed) || !safeEdge(r1, t.dx20Fixed, t.dy20Fixed) ||
+            !safeEdge(r2, t.dx01Fixed, t.dy01Fixed))
+            return true;
+    }
+    // 래스터 루프는 세 edge가 모두 0 이상인 픽셀만 칠한다. 그런 픽셀이 하나도 없으면 칠할 것이 없다.
+    for (int y = y0; y <= t.maxY; ++y)
+    {
+        auto w0 = r0, w1 = r1, w2 = r2;
+        for (int x = x0; x <= t.maxX; ++x)
+        {
+            if ((w0 | w1 | w2) >= 0)
+                return false;
+            w0 += t.dy12Fixed;
+            w1 += t.dy20Fixed;
+            w2 += t.dy01Fixed;
+        }
+        r0 -= t.dx12Fixed;
+        r1 -= t.dx20Fixed;
+        r2 -= t.dx01Fixed;
+    }
+    return true;
+}
+
 std::optional<PreparedTriangle> Rasterizer::PrepareRaster(const RasterizerVertex &a,
                                                           const RasterizerVertex &b,
                                                           const RasterizerVertex &c, int width, int height,

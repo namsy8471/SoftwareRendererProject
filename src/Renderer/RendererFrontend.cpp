@@ -286,37 +286,14 @@ void Renderer::processCommand(const MeshRenderCommand &cmd, const FrameContext &
             if (!std::isfinite(area) || area >= 0.f)
                 continue;
 
-            // Early sub-pixel and zero-coverage culling:
-            // Surface rasterization samples strictly at pixel centers (px + 0.5, py + 0.5).
-            // If the integer pixel bounding box contains zero pixel centers within the viewport,
-            // the triangle has zero coverage; skip immediately before allocating TriangleRef,
-            // binning into tiles, and sorting references.
-            if (cmd.rasterizeMode != ERasterizeMode::Wireframe)
-            {
-                const __m128 p0 = setup0.raster.screenPos.m128;
-                const __m128 p1 = setup1.raster.screenPos.m128;
-                const __m128 p2 = setup2.raster.screenPos.m128;
-
-                const __m128 minXY = _mm_min_ps(_mm_min_ps(p0, p1), p2);
-                const __m128 maxXY = _mm_max_ps(_mm_max_ps(p0, p1), p2);
-
-                const __m128 half = _mm_set1_ps(0.5f);
-                const __m128 minPixelF = _mm_ceil_ps(_mm_sub_ps(minXY, half));
-                const __m128 maxPixelF = _mm_floor_ps(_mm_sub_ps(maxXY, half));
-
-                const __m128i minInt = _mm_max_epi32(_mm_cvttps_epi32(minPixelF), _mm_setzero_si128());
-                const __m128i maxLimit = _mm_set_epi32(0, 0, m_height - 1, m_width - 1);
-                const __m128i maxInt = _mm_min_epi32(_mm_cvttps_epi32(maxPixelF), maxLimit);
-
-                const __m128i cmpGt = _mm_cmpgt_epi32(minInt, maxInt);
-                if ((_mm_movemask_ps(_mm_castsi128_ps(cmpGt)) & 3) != 0)
-                    continue;
-            }
-
             const auto primitiveId = (triangleBase + static_cast<std::uint64_t>(i / 3)) * 16;
             if (Rasterizer::PrepareRasterInto(scratch.triangles.Slot(), setup0.raster, setup1.raster,
                                               setup2.raster, m_width, m_height, primitiveId, &cmd))
             {
+                // 픽셀 중심을 하나도 덮지 않는 작은 삼각형은 칠할 것이 없다. 슬롯을 Commit하지 않으면
+                // 타일 참조·정렬·래스터 호출이 모두 사라진다. primitiveId는 인덱스로 정해져 다른 삼각형은 그대로다.
+                if (cmd.rasterizeMode == ERasterizeMode::Fill && Rasterizer::CoversNoPixel(scratch.triangles.Slot()))
+                    continue;
                 binPrepared(cmd, scratch.triangles.Commit(), frame, scratch);
             }
         }
