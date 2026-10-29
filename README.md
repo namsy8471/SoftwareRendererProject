@@ -32,9 +32,9 @@ DirectX 11을 사용하며 부족하다고 느꼈던 렌더링 파이프라인�
 | 개발 형태 | 개발 기간 | 기술 환경 | 화면 출력 |
 |:---:|:---:|:---:|:---:|
 | **1인 개인 프로젝트** | 2025.07.07–2025.08.27 | C++26 Preview · MSVC v145 · Windows | WinAPI DIB · GDI |
-| **AI 기반 코딩 (Claude)** | 2026.10.20– | C++26 Preview · MSVC v145 · Windows / GCC (CI) | WinAPI DIB · GDI |
+| **AI 기반 코딩 (Claude · Gemini 3.8/Argon)** | 2026.10.20– | C++26 Preview · MSVC v145 · Windows / GCC (CI) | WinAPI DIB · GDI |
 
-2026.10.20부터는 AI(Claude)가 코드를 작성하고 최적화합니다. 변경은 측정된 fps/ms와 어셈블리 검토로 판단하고, 테스트·골든 이미지·CI로 검증합니다.
+2026.10.20부터는 AI(Claude, Gemini 3.8/Argon)가 코드를 작성하고 최적화합니다. 변경은 측정된 fps/ms와 어셈블리 검토로 판단하고, 테스트·골든 이미지·CI로 검증합니다.
 
 ## AI 작업 성과 요약 (2026.10.20–10.22)
 
@@ -67,6 +67,8 @@ PR마다 같은 PC에서 변경 전(base)과 후(head)를 번갈아 재고, 통�
 | #30 | 타일 정렬·법선 선 준비를 분류 작업 안으로 옮기고, 법선 band를 타일 행이 끝나는 대로 그림 (join 제거) | −3.4% | 변화 없음 | **−8.4%** |
 | #32 | 하이브리드 CPU 대응: E코어에서는 대기 spin을 짧게, 작업 스레드의 Windows 전력 조절(EcoQoS) 해제 | n.s. | n.s. | −6.3% |
 | #31 | 타일 작업을 지난 프레임의 비용 기준으로 스레드마다 나눔 (화면 순서 유지) | −2.9% | 변화 없음 | −2.3% |
+| #46 | 그림자 맵 래스터화 단일 잡 디스패치 및 원자적 깊이 갱신(`atomicMinDepth`) 병렬화 (단일 패스 섀도우 45.98 ms → 7.55 ms) | **−83.6%** | **6.1배 가속** | 132.5 FPS 달성 |
+| #47 | 3분할 캐스케이드 섀도우 맵(CSM) 및 16-Tap Poisson Disk 부드러운 그림자 (외접구 피팅·텍셀 스냅·15% 경계 블렌딩·직교 나눗셈 생략) | **+2.29 ms** | 100+ FPS 유지 | **9.84 ms (101.6 FPS)** |
 
 각 PR의 커밋 메시지에 VTune·VS CPU Usage 핫스팟 전후, MSVC 어셈블리(/FAs) 전후, 테스트 결과가 있습니다.
 
@@ -91,12 +93,12 @@ PR마다 같은 PC에서 변경 전(base)과 후(head)를 번갈아 재고, 통�
 
 | 항목 | 역할 |
 |---|---|
-| [AGENTS.md](AGENTS.md) | AI 공통 규칙: 100fps 기준(p95 ≤ 9ms), 명령, 작업 순서, 판정 규칙. `CLAUDE.md`(Claude Code)와 `GEMINI.md`(Gemini CLI)는 이 파일을 불러오는 입구 |
+| [AGENTS.md](AGENTS.md) | AI 공통 규칙: 100fps 기준(p95 ≤ 9ms), 명령, 작업 순서, 판정 규칙. Claude Code와 Gemini CLI(Gemini 3.8/Argon)가 공통으로 따르는 작업 명세 |
 | 어셈블리 기준 최적화 규칙 (CLAUDE.md, PR #19) | 소스 추측이 아니라 생성된 어셈블리(`/FAs`, `dumpbin /disasm`)를 보고 최적화하고, 전후를 기록. 매 프레임 코드와 로딩 코드에 적용 |
 | 프로파일링 필수 규칙 (CLAUDE.md, PR #22) | 모든 최적화는 PC에서 VTune과 VS CPU Usage 둘 다로 전후 측정하고 핫스팟 점유율을 기록 |
 | [CODEMAP.md](CODEMAP.md) | 소스 파일마다 역할 한 줄. CI(`tools/ci/check_codemap.py`)가 빠진 파일을 잡음 |
 | `srcli` (`tools/srcli`) | 창 없이 데모 장면을 그림. `bench --json`(프레임 시간, `pixel_hash`), `render --out`(PNG), `--scene`(glTF + 애니메이션) |
-| 테스트 | 외부 프레임워크 없는 `RendererTests` (PC MSVC 83개), 골든 이미지 8장(`tests/golden`) |
+| 테스트 | 외부 프레임워크 없는 `RendererTests` (PC MSVC 118개 전 통과), 골든 이미지 8장(`tests/golden`) |
 | 스크립트 | `tests/RunTests.ps1 -Quick/-Filter/-UpdateGolden`, `tests/Bench.ps1`(JSON Lines), `tests/CaptureCpuProfiles.ps1`(VTune + VS CPU Usage), `tools/dev.sh`(Linux), `tools/Worktree.ps1` |
 
 ### 4. 자동화
@@ -109,7 +111,7 @@ PR마다 같은 PC에서 변경 전(base)과 후(head)를 번갈아 재고, 통�
 | SRJob.ps1 표준 (PC 로컬) | SHA별 빌드 캐시, 적응형 A/B(결론 나면 6~12라운드에서 종료), 기준 프로파일 캐시. 측정 작업 약 22분 → 약 8~10분 |
 | Worktree | 작업마다 `..\SR-worktrees\<브랜치>`에서 따로 작업해 PC 원본 트리를 건드리지 않음 |
 
-### 5. 추가한 기능 (로드맵 1~5단계)
+### 5. 추가한 기능 (로드맵 1~15단계)
 
 | 단계 | PR | 내용 |
 |---|---|---|
@@ -118,6 +120,16 @@ PR마다 같은 PC에서 변경 전(base)과 후(head)를 번갈아 재고, 통�
 | 3 | #13 | 자체 PNG/JPEG/BMP/TGA/DDS 디코더(BC1–BC5, BC7 포함). stb_image와 84개 파일에서 같은 결과를 확인한 뒤 stb_image 제거 |
 | 4 | #15 | 외부 라이브러리 없는 glTF 2.0 로더(`.gltf`/`.glb`, 계층, 재질, skin·animation 데이터) |
 | 5 | #16 | 애니메이션: 쿼터니언, glTF 키프레임 재생, CPU 스켈레탈 스키닝(SSE/AVX, 같은 결과) |
+| 6 | #35 | 에디터 인터랙션: 씬 픽킹(Scene Picking), 트랜스폼 기즈모(Gizmo), Undo/Redo, glTF/쿼터니언 영속화 |
+| 7 | #36 | 렌더 품질 고도화: Bilinear/Mipmap 텍스처 필터링, Point/Spot 라이트, 노멀 매핑(Normal Mapping), sRGB 감마 보정 |
+| 8 | #39 | 실시간 섀도우 매핑: Directional & Spot Light Shadow Mapping, SSE 4-lane 2x2 PCF Soft Shadows |
+| 9 | #41 | 반투명 렌더링: Alpha Mask Cutout 및 Back-to-Front Alpha Blending 깊이 정렬 파이프라인 |
+| 10 | #42 | 물리 기반 렌더링(PBR): glTF 2.0 Metallic-Roughness PBR, Cook-Torrance BRDF (GGX D, Schlick-GGX G, Schlick F) |
+| 11 | #43 | 이미지 기반 조명(IBL) 및 톤매핑: IBL 환경맵 반사/확산, ACES Filmic Tone Mapping |
+| 12 | #44, #45 | 교체형 셰이딩 파이프라인 & AVX2 8-Lane SIMD: Swappable Shading Pipeline, AVX2 8-lane SIMD 셰이딩, 5개 절차적 벤치마크 씬 |
+| 13 | #45 | Cloud Baker Engine: CPU 텍스처 베이킹 엔진 (UV 래스터라이저, Dilation 필터, Normal 베이킹, AO 앰비언트 오클루전) |
+| 14 | #46 | 섀도우 맵 래스터화 병렬 최적화: 단일 잡 디스패치 및 lock-free atomicMinDepth (45.98ms → 7.55ms, 6.1배 가속) |
+| 15 | #47 | 3분할 캐스케이드 섀도우 맵(CSM) 및 16-Tap Poisson Disk 부드러운 그림자: 외접구 피팅, 텍셀 스냅, 15% 경계 블렌딩, 직교 나눗셈 생략으로 100+ FPS 유지 |
 
 그 밖에 Framework를 Scene·FrameRunner·Win32App·SceneRenderCollector로 나눴고(#9), `vec2`/`vec3`의 `==`가 같은 벡터를 다르다고 판단하던 버그를 고쳤습니다(#12). 병렬 처리는 oneTBB 대신 자체 Job System(`sr::jobs`, #28)이 맡습니다.
 
@@ -147,11 +159,16 @@ PR마다 같은 PC에서 변경 전(base)과 후(head)를 번갈아 재고, 통�
 | 항목 | 결과 |
 |---|---|
 | 렌더링 경로 | 정점 처리부터 픽셀 출력까지 **CPU에서 직접 구현** |
-| 성능 비교 이미지 | **8 FPS → 58 FPS** |
+| 셰이딩 모델 | Phong · Cook-Torrance PBR (glTF 2.0 Metallic-Roughness) · IBL · ACES Tone Mapping |
+| 그림자 파이프라인 | **3분할 캐스케이드 섀도우 맵(CSM)** + **16-Tap Rotated Poisson Disk PCF 부드러운 그림자** (1080p 100+ FPS) |
+| 성능 비교 이미지 | **8 FPS → 58 FPS** (2025 베이스라인) → **100+ FPS** (CSM 섀도우 포함 Full HD) |
 | 병렬 처리 단위 | **16×16 tile** + 자체 Job System(`sr::jobs`) 작업 분배 |
-| SIMD 경로 | **128-bit SSE** 기본 경로 + 런타임 **256-bit AVX** 선택 |
+| SIMD 경로 | **128-bit SSE** 기본 경로 + 런타임 **256-bit AVX/AVX2** (8-lane SIMD 셰이딩) |
+| 베이킹 엔진 | CPU 텍스처 베이커: UV 래스터라이저, Dilation, 법선/AO 맵 베이킹(`sr::baker`) |
 | 공간 가속 | Object AABB frustum culling + octree node culling |
-| 디버그 도구 | Wireframe · Normal · AABB · Light Direction |
+| 외부 의존성 | **외부 라이브러리 0개 (Zero External Dependencies)** (stb_image, oneTBB 완전 제거) |
+| 단위/회귀 테스트 | **118개 전 테스트 통과** (`SUMMARY passed=118 failed=0`) |
+| 디버그 도구 | Wireframe · Normal · AABB · Light Direction · Transform Gizmo |
 | 빌드 구성 | Debug/Release × Win32/x64 |
 
 성능 이미지는 2025-08-27 당시의 비교 자료입니다. CPU, 해상도, 장면과 빌드 구성에 따라 결과가 달라지므로 표준화된 벤치마크 수치로 보지는 않습니다.
@@ -504,4 +521,10 @@ SoftwareRendererProject/
 - MTL은 색상·광택 값과 `map_Kd`(옵션, 공백·역슬래시 경로 포함)를 해석합니다. 이미지는 `src/Graphics/Codecs`의 자체 디코더가 읽습니다: PNG(모든 색 형식·비트 깊이, 인터레이스), 베이스라인 JPEG, BMP(1~32비트, RLE 제외), TGA(RLE 포함), DDS(비압축, BC1~BC5, BC7). 프로그레시브 JPEG는 미지원입니다.
 
 ## 외부 라이브러리
+
+- **외부 라이브러리 의존성 전무 (Zero External Dependencies)**
+- 렌더러 파이프라인, 수학 엔진(`SRMath`), 이미지 코덱(PNG, JPEG, BMP, TGA, DDS), glTF 2.0 로더, JSON 파서, 스레드 풀 및 작업 시스템(`sr::jobs`), 텍스처 베이킹 엔진(`sr::baker`)을 포함한 모든 구성 요소를 C++ 표준 라이브러리와 Win32 플랫폼 API만으로 100% 독자 구현했습니다.
+
+- **외부 라이브러리 의존성 전무 (Zero External Dependencies)**
+- 렌더러 파이프라인, 수학 엔진(`SRMath`), 이미지 코덱(PNG, JPEG, BMP, TGA, DDS), glTF 2.0 로더, JSON 파서, 스레드 풀 및 작업 시스템(`sr::jobs`), 텍스처 베이킹 엔진(`sr::baker`)을 포함한 모든 구성 요소를 C++ 표준 라이브러리와 Win32 플랫폼 API만으로 100% 독자 구현했습니다.
 

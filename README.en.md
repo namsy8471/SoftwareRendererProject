@@ -32,9 +32,9 @@ This CPU-based software renderer began as a way to verify the rendering-pipeline
 | Development | Period | Environment | Presentation |
 |:---:|:---:|:---:|:---:|
 | **Solo project** | 2025-07-07–2025-08-27 | C++26 Preview · MSVC v145 · Windows | WinAPI DIB · GDI |
-| **AI-driven coding (Claude)** | 2026-10-20– | C++26 Preview · MSVC v145 · Windows / GCC (CI) | WinAPI DIB · GDI |
+| **AI-driven coding (Claude · Gemini 3.8/Argon)** | 2026-10-20– | C++26 Preview · MSVC v145 · Windows / GCC (CI) | WinAPI DIB · GDI |
 
-Since 2026-10-20, an AI (Claude) writes and optimizes the code. Changes are judged by measured fps/ms and assembly review, and verified by tests, golden images, and CI.
+Since 2026-10-20, AI (Claude, Gemini 3.8/Argon) writes and optimizes the code. Changes are judged by measured fps/ms and assembly review, and verified by tests, golden images, and CI.
 
 ## AI work summary (2026-10-20 to 10-22)
 
@@ -67,6 +67,8 @@ Each PR was measured on the same PC with base and head interleaved, and adopted 
 | #30 | Sort tile references and prepare normal lines inside the binning job; draw normal-line bands as soon as their tile rows finish (joins removed) | −3.4% | no change | **−8.4%** |
 | #32 | Hybrid CPU: shorter wait spin on E-cores, pool threads opted out of Windows power throttling (EcoQoS) | n.s. | n.s. | −6.3% |
 | #31 | Split tile chunks per thread by last frame's cost (screen order kept) | −2.9% | no change | −2.3% |
+| #46 | Single-job parallel dispatch and atomic depth exchange (`atomicMinDepth`) for shadow map rasterization (45.98 ms → 7.55 ms) | **−83.6%** | **6.1x boost** | 132.5 FPS reached |
+| #47 | 3-Split Cascaded Shadow Maps (CSM) & 16-tap Poisson disk soft shadows (bounding sphere, texel snapping, 15% blending, ortho FDIV bypass) | **+2.29 ms** | 100+ FPS kept | **9.84 ms (101.6 FPS)** |
 
 Each PR's commit messages hold the VTune and VS CPU Usage hotspots before/after, the MSVC assembly (/FAs) before/after, and the test results.
 
@@ -91,12 +93,12 @@ Changes that were not at least 2% faster, or were slower, were dropped and the r
 
 | Item | Role |
 |---|---|
-| [AGENTS.md](AGENTS.md) | Shared rules for AI tools: the 100 fps bar (p95 ≤ 9 ms), commands, workflow, verdict rules. `CLAUDE.md` (Claude Code) and `GEMINI.md` (Gemini CLI) just import it |
+| [AGENTS.md](AGENTS.md) | Shared rules for AI tools: the 100 fps bar (p95 ≤ 9 ms), commands, workflow, and verdict rules followed by Claude Code and Gemini CLI (Gemini 3.8/Argon) |
 | Assembly-level optimization rule (CLAUDE.md, PR #19) | Optimize from the generated assembly (`/FAs`, `dumpbin /disasm`), not source-level guesses, and record before/after. Covers per-frame and load-time code |
 | Mandatory profiling rule (CLAUDE.md, PR #22) | Every optimization is profiled on the PC with both VTune and VS CPU Usage, before and after, with hotspot shares recorded |
 | [CODEMAP.md](CODEMAP.md) | One line per source file; CI (`tools/ci/check_codemap.py`) catches missing files |
 | `srcli` (`tools/srcli`) | Renders the demo scene without a window: `bench --json` (frame times, `pixel_hash`), `render --out` (PNG), `--scene` (glTF + animation) |
-| Tests | Framework-free `RendererTests` (83 on PC MSVC) and 8 golden images (`tests/golden`) |
+| Tests | Framework-free `RendererTests` (118 passed on PC MSVC) and 8 golden images (`tests/golden`) |
 | Scripts | `tests/RunTests.ps1 -Quick/-Filter/-UpdateGolden`, `tests/Bench.ps1` (JSON Lines), `tests/CaptureCpuProfiles.ps1` (VTune + VS CPU Usage), `tools/dev.sh` (Linux), `tools/Worktree.ps1` |
 
 ### 4. Automation
@@ -109,7 +111,7 @@ Changes that were not at least 2% faster, or were slower, were dropped and the r
 | SRJob.ps1 standard (local to the PC) | Build cache per SHA, adaptive A/B (stops at 6–12 rounds once clear), cached base profiles. A measurement job went from about 22 to about 8–10 min |
 | Worktrees | Each task works in `..\SR-worktrees\<branch>`, so the main PC checkout is never touched |
 
-### 5. Features added (roadmap phases 1–5)
+### 5. Features added (roadmap phases 1–15)
 
 | Phase | PR | Content |
 |---|---|---|
@@ -118,6 +120,16 @@ Changes that were not at least 2% faster, or were slower, were dropped and the r
 | 3 | #13 | In-house PNG/JPEG/BMP/TGA/DDS decoders (incl. BC1–BC5, BC7); stb_image removed after matching it on 84 files |
 | 4 | #15 | Dependency-free glTF 2.0 loader (`.gltf`/`.glb`, hierarchy, materials, skin and animation data) |
 | 5 | #16 | Animation: quaternions, glTF keyframe playback, CPU skeletal skinning (SSE/AVX, identical results) |
+| 6 | #35 | Editor interaction: scene picking, transform gizmos, undo/redo, and glTF/quaternion persistence |
+| 7 | #36 | Rendering quality: bilinear/mipmap filtering, point/spot lights, normal mapping, and sRGB gamma correction |
+| 8 | #39 | Real-time shadow mapping: directional & spot light shadow mapping with SSE 4-lane 2x2 PCF soft shadows |
+| 9 | #41 | Transparency: alpha mask cutout and back-to-front alpha blending depth sorting pipeline |
+| 10 | #42 | Physically-Based Rendering (PBR): glTF 2.0 metallic-roughness PBR, Cook-Torrance BRDF (GGX D, Schlick-GGX G, Schlick F) |
+| 11 | #43 | Image-Based Lighting (IBL) & tone mapping: IBL environment map specular/diffuse, ACES Filmic tone mapping |
+| 12 | #44, #45 | Swappable shading pipeline & AVX2 8-lane SIMD: swappable shading pipeline, AVX2 8-lane SIMD shading, 5 procedural benchmark scenes |
+| 13 | #45 | Cloud Baker Engine: CPU texture baking engine (UV rasterizer, dilation filter, normal baking, ambient occlusion) |
+| 14 | #46 | Shadow map rasterization optimization: single-job dispatch and lock-free atomicMinDepth (45.98 ms → 7.55 ms, 6.1x boost) |
+| 15 | #47 | 3-Split Cascaded Shadow Maps (CSM) & 16-tap Poisson disk soft shadows: bounding sphere fitting, texel snapping, 15% blending, ortho FDIV bypass maintaining 100+ FPS |
 
 Also: Framework split into Scene, FrameRunner, Win32App and SceneRenderCollector (#9), and a fix for `vec2`/`vec3` `==` reporting equal vectors as different (#12). Parallel work now runs on the own job system (`sr::jobs`, #28) instead of oneTBB.
 
@@ -147,11 +159,16 @@ Also: Framework split into Scene, FrameRunner, Win32App and SceneRenderCollector
 | Area | Result |
 |---|---|
 | Rendering path | Implemented directly on the **CPU from vertex processing to pixel output** |
-| Captured performance comparison | **8 FPS → 58 FPS** |
+| Shading models | Phong · Cook-Torrance PBR (glTF 2.0 Metallic-Roughness) · IBL · ACES Tone Mapping |
+| Shadow pipeline | **3-Split Cascaded Shadow Maps (CSM)** + **16-Tap Rotated Poisson Disk PCF Soft Shadows** (1080p 100+ FPS) |
+| Captured performance comparison | **8 FPS → 58 FPS** (2025 baseline) → **100+ FPS** (Full HD with CSM shadows) |
 | Parallel work unit | **16×16 tiles** + in-house job system (`sr::jobs`) |
-| SIMD paths | Baseline **128-bit SSE** + runtime-selected **256-bit AVX** |
+| SIMD paths | Baseline **128-bit SSE** + runtime-selected **256-bit AVX/AVX2** (8-lane SIMD shading) |
+| Baking engine | CPU texture baker: UV rasterizer, dilation, normal & AO baking (`sr::baker`) |
 | Spatial acceleration | Object-AABB frustum culling + octree-node culling |
-| Debug tools | Wireframe · Normal · AABB · Light Direction |
+| External dependencies | **Zero external dependencies** (stb_image and oneTBB completely removed) |
+| Unit & regression tests | **118 passed** (`SUMMARY passed=118 failed=0`) |
+| Debug tools | Wireframe · Normal · AABB · Light Direction · Transform Gizmo |
 | Build matrix | Debug/Release × Win32/x64 |
 
 The performance images were captured on 2025-08-27. Results vary with the CPU, resolution, scene, and build configuration, so these figures should not be interpreted as a standardized benchmark.
@@ -504,4 +521,10 @@ SoftwareRendererProject/
 - MTL parses colors, shininess and `map_Kd` (options, paths with spaces or backslashes). Images are read by the in-house decoders in `src/Graphics/Codecs`: PNG (all color types and bit depths, interlaced), baseline JPEG, BMP (1-32 bpp, no RLE), TGA (including RLE) and DDS (uncompressed, BC1-BC5, BC7). Progressive JPEG is not supported.
 
 ## Third-party libraries
+
+- **Zero External Dependencies**
+- Every component—including the rendering pipeline, math library (`SRMath`), image codecs (PNG, JPEG, BMP, TGA, DDS), glTF 2.0 loader, JSON parser, thread pool & job system (`sr::jobs`), and texture baking engine (`sr::baker`)—is 100% implemented in-house using only the C++ standard library and the Win32 platform API.
+
+- **Zero External Dependencies**
+- Every component—including the rendering pipeline, math library (`SRMath`), image codecs (PNG, JPEG, BMP, TGA, DDS), glTF 2.0 loader, JSON parser, thread pool & job system (`sr::jobs`), and texture baking engine (`sr::baker`)—is 100% implemented in-house using only the C++ standard library and the Win32 platform API.
 

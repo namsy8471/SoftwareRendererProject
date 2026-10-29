@@ -32,9 +32,9 @@ DirectX 11を使用する中で抽象的に感じていたレンダリングパ�
 | 開発形態 | 開発期間 | 技術環境 | 画面出力 |
 |:---:|:---:|:---:|:---:|
 | **個人開発** | 2025.07.07–2025.08.27 | C++26 Preview · MSVC v145 · Windows | WinAPI DIB · GDI |
-| **AIベースのコーディング (Claude)** | 2026.10.20– | C++26 Preview · MSVC v145 · Windows / GCC (CI) | WinAPI DIB · GDI |
+| **AIベースのコーディング (Claude · Gemini 3.8/Argon)** | 2026.10.20– | C++26 Preview · MSVC v145 · Windows / GCC (CI) | WinAPI DIB · GDI |
 
-2026.10.20からはAI(Claude)がコードを書き、最適化しています。変更は計測したfps/msとアセンブリの確認で判断し、テスト・ゴールデン画像・CIで検証します。
+2026.10.20からはAI(Claude、Gemini 3.8/Argon)がコードを書き、最適化しています。変更は計測したfps/msとアセンブリの確認で判断し、テスト・ゴールデン画像・CIで検証します。
 
 ## AIによる作業の成果まとめ (2026.10.20–10.22)
 
@@ -67,6 +67,8 @@ PRごとに同じPCで変更前(base)と変更後(head)を交互に測り、統�
 | #30 | タイル参照のソートと法線ラインの準備を分類処理の中へ移し、法線bandをタイル行が終わり次第描画 (join削除) | −3.4% | 変化なし | **−8.4%** |
 | #32 | ハイブリッドCPU対応: Eコアでは待機spinを短く、ワーカースレッドのWindows電力調整(EcoQoS)を解除 | n.s. | n.s. | −6.3% |
 | #31 | タイル処理を前フレームのコスト基準でスレッドごとに分割 (画面順は維持) | −2.9% | 変化なし | −2.3% |
+| #46 | シャドウマップラスタライズの単一ジョブ並列化およびアトミック深度更新(`atomicMinDepth`) (45.98ms → 7.55ms) | **−83.6%** | **6.1倍高速化** | 132.5 FPS達成 |
+| #47 | 3分割カスケードシャドウマップ(CSM)および16タップPoisson Diskソフトシャドウ (外接球フィッティング・テクセルスナップ・15%ブレンディング・正射影FDIV省略) | **+2.29 ms** | 100+ FPS維持 | **9.84 ms (101.6 FPS)** |
 
 各PRのコミットメッセージに、VTune・VS CPU Usageのホットスポット前後、MSVCアセンブリ(/FAs)の前後、テスト結果があります。
 
@@ -91,12 +93,12 @@ PRごとに同じPCで変更前(base)と変更後(head)を交互に測り、統�
 
 | 項目 | 役割 |
 |---|---|
-| [AGENTS.md](AGENTS.md) | AI共通ルール: 100fps基準(p95 ≤ 9ms)、コマンド、作業手順、判定ルール。`CLAUDE.md`(Claude Code)と`GEMINI.md`(Gemini CLI)はこれを読み込む入口 |
+| [AGENTS.md](AGENTS.md) | AI共通ルール: 100fps基準(p95 ≤ 9ms)、コマンド、作業手順、判定ルール。Claude CodeとGemini CLI(Gemini 3.8/Argon)が共通して従う作業仕様 |
 | アセンブリ基準の最適化ルール (CLAUDE.md、PR #19) | ソースからの推測ではなく生成されたアセンブリ(`/FAs`、`dumpbin /disasm`)を見て最適化し、前後を記録。毎フレームのコードとロード時のコードに適用 |
 | プロファイリング必須ルール (CLAUDE.md、PR #22) | すべての最適化をPCでVTuneとVS CPU Usageの両方で前後計測し、ホットスポットの占有率を記録 |
 | [CODEMAP.md](CODEMAP.md) | ソースファイルごとの役割を1行で。CI(`tools/ci/check_codemap.py`)が漏れを検出 |
 | `srcli` (`tools/srcli`) | ウィンドウなしでデモシーンを描画。`bench --json`(フレーム時間、`pixel_hash`)、`render --out`(PNG)、`--scene`(glTF + アニメーション) |
-| テスト | 外部フレームワークなしの`RendererTests` (PCのMSVCで83個)、ゴールデン画像8枚(`tests/golden`) |
+| テスト | 外部フレームワークなしの`RendererTests` (PC MSVCで118個すべて通過)、ゴールデン画像8枚(`tests/golden`) |
 | スクリプト | `tests/RunTests.ps1 -Quick/-Filter/-UpdateGolden`、`tests/Bench.ps1`(JSON Lines)、`tests/CaptureCpuProfiles.ps1`(VTune + VS CPU Usage)、`tools/dev.sh`(Linux)、`tools/Worktree.ps1` |
 
 ### 4. 自動化
@@ -109,7 +111,7 @@ PRごとに同じPCで変更前(base)と変更後(head)を交互に測り、統�
 | SRJob.ps1標準 (PCローカル) | SHAごとのビルドキャッシュ、適応型A/B(結論が出たら6~12ラウンドで終了)、基準プロファイルのキャッシュ。計測ジョブ 約22分 → 約8~10分 |
 | Worktree | 作業ごとに`..\SR-worktrees\<ブランチ>`で別に作業し、PCの元のツリーには触れない |
 
-### 5. 追加した機能 (ロードマップ1~5段階)
+### 5. 追加した機能 (ロードマップ1~15段階)
 
 | 段階 | PR | 内容 |
 |---|---|---|
@@ -118,6 +120,16 @@ PRごとに同じPCで変更前(base)と変更後(head)を交互に測り、統�
 | 3 | #13 | 自前のPNG/JPEG/BMP/TGA/DDSデコーダー(BC1–BC5、BC7を含む)。84ファイルでstb_imageと同じ結果を確認した後、stb_imageを削除 |
 | 4 | #15 | 外部ライブラリなしのglTF 2.0ローダー(`.gltf`/`.glb`、階層、マテリアル、skin・animationデータ) |
 | 5 | #16 | アニメーション: クォータニオン、glTFキーフレーム再生、CPUスケルタルスキニング(SSE/AVX、同一結果) |
+| 6 | #35 | エディタ操作: シーンピッキング(Scene Picking)、トランスフォームギズモ(Gizmo)、Undo/Redo、glTF/クォータニオン永続化 |
+| 7 | #36 | レンダリング品質向上: バイリニア/ミップマップテクスチャフィルタリング、Point/Spotライト、法線マッピング(Normal Mapping)、sRGBガンマ補正 |
+| 8 | #39 | リアルタイムシャドウマッピング: Directional & Spot Light Shadow Mapping、SSE 4レーン 2x2 PCF ソフトシャドウ |
+| 9 | #41 | 半透明レンダリング: Alpha Mask CutoutおよびBack-to-Front Alpha Blending深度ソートパイプライン |
+| 10 | #42 | 物理ベースレンダリング(PBR): glTF 2.0 Metallic-Roughness PBR、Cook-Torrance BRDF (GGX D、Schlick-GGX G、Schlick F) |
+| 11 | #43 | イメージベースドライティング(IBL)・トーンマッピング: IBL環境マップ反射/拡散、ACES Filmic Tone Mapping |
+| 12 | #44, #45 | 差し替え可能なシェーディングパイプライン & AVX2 8レーンSIMD: Swappable Shading Pipeline、AVX2 8レーンSIMDシェーディング、5つのプロシージャルベンチマークシーン |
+| 13 | #45 | Cloud Baker Engine: CPUテクスチャベーキングエンジン (UVラスタライザー、Dilationフィルター、法線ベイク、AOアンビエントオクルージョン) |
+| 14 | #46 | シャドウマップラスタライズ並列最適化: 単一ジョブディスパッチおよびlock-free atomicMinDepth (45.98ms → 7.55ms、6.1倍高速化) |
+| 15 | #47 | 3分割カスケードシャドウマップ(CSM) & 16タップPoisson Diskソフトシャドウ: 外接球フィッティング、テクセルスナップ、15%カスケードブレンディング、正射影除算省略による100+ FPS維持 |
 
 そのほか、FrameworkをScene・FrameRunner・Win32App・SceneRenderCollectorに分割し(#9)、`vec2`/`vec3`の`==`が同じベクトルを異なると判定していたバグを修正しました(#12)。並列処理はoneTBBの代わりに自前のJob System(`sr::jobs`、#28)が担当します。
 
@@ -147,11 +159,16 @@ PRごとに同じPCで変更前(base)と変更後(head)を交互に測り、統�
 | 項目 | 結果 |
 |---|---|
 | レンダリング経路 | 頂点処理からピクセル出力までを**CPU上で直接実装** |
-| 比較画像上の性能 | **8 FPS → 58 FPS** |
+| シェーディングモデル | Phong · Cook-Torrance PBR (glTF 2.0 Metallic-Roughness) · IBL · ACES Tone Mapping |
+| シャドウパイプライン | **3分割カスケードシャドウマップ(CSM)** + **16タップRotated Poisson Disk PCFソフトシャドウ** (1080p 100+ FPS) |
+| 比較画像上の性能 | **8 FPS → 58 FPS** (2025初期) → **100+ FPS** (CSMシャドウ込みFull HD) |
 | 並列処理単位 | **16×16タイル** + 自前のJob System（`sr::jobs`） |
-| SIMD経路 | **128-bit SSE**を基本経路とし、実行時に**256-bit AVX**を選択 |
+| SIMD経路 | **128-bit SSE**を基本経路とし、実行時に**256-bit AVX/AVX2**を選択 (8レーンSIMDシェーディング) |
+| ベイキングエンジン | CPUテクスチャベーカー: UVラスタライザー、Dilation、法線/AOベイク(`sr::baker`) |
 | 空間高速化 | オブジェクトAABBのfrustum culling + octree node culling |
-| デバッグ機能 | Wireframe · Normal · AABB · Light Direction |
+| 外部依存性 | **外部ライブラリ0個 (Zero External Dependencies)** (stb_image、oneTBB完全削除) |
+| 単体/回帰テスト | **118テスト全通過** (`SUMMARY passed=118 failed=0`) |
+| デバッグ機能 | Wireframe · Normal · AABB · Light Direction · Transform Gizmo |
 | ビルド構成 | Debug/Release × Win32/x64 |
 
 性能画像は2025-08-27時点の比較資料です。CPU、解像度、シーン、ビルド構成によって結果は変わるため、標準化されたベンチマーク値ではありません。
@@ -504,4 +521,7 @@ SoftwareRendererProject/
 - MTLは色・光沢と`map_Kd`（オプション、空白・バックスラッシュを含むパス）を解析します。画像は`src/Graphics/Codecs`の自前デコーダが読みます: PNG（全カラー形式・ビット深度、インターレース）、ベースラインJPEG、BMP（1〜32ビット、RLE除く）、TGA（RLE含む）、DDS（非圧縮、BC1〜BC5、BC7）。プログレッシブJPEGは未対応です。
 
 ## 外部ライブラリ
+
+- **外部ライブラリ依存ゼロ (Zero External Dependencies)**
+- レンダラーパイプライン、数学エンジン(`SRMath`)、画像コーデック(PNG, JPEG, BMP, TGA, DDS)、glTF 2.0ローダー、JSONパーサー、スレッドプールおよびジョブシステム(`sr::jobs`)、テクスチャベーキングエンジン(`sr::baker`)を含むすべての構成要素を、C++標準ライブラリとWin32プラットフォームAPIのみを用いて100%独自実装しています。
 
