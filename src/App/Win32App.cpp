@@ -781,14 +781,19 @@ LRESULT Win32App::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
 
     // Keyboard Input
     case WM_KEYDOWN:
-    case WM_SYSKEYDOWN:
         handleKeyDown(wParam, (lParam & (1LL << 30)) != 0);
         break;
+    case WM_SYSKEYDOWN:
+        handleKeyDown(wParam, (lParam & (1LL << 30)) != 0);
+        return DefWindowProc(hWnd, message, wParam, lParam);
     case WM_KEYUP:
-    case WM_SYSKEYUP:
         if (wParam < m_keys.size())
             m_keys[wParam] = false;
         break;
+    case WM_SYSKEYUP:
+        if (wParam < m_keys.size())
+            m_keys[wParam] = false;
+        return DefWindowProc(hWnd, message, wParam, lParam);
 
     // Mouse Input
     case WM_LBUTTONDOWN:

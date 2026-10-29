@@ -70,6 +70,10 @@ struct Win32AppTestAccess
         check(app.m_runner.GetScene().IsRotateMode() != initialRotation, "autorepeat does not toggle");
         app.HandleMessage(app.m_hWnd, WM_KEYUP, VK_SPACE, 0);
         app.HandleMessage(app.m_hWnd, WM_KEYUP, 'W', 0);
+        app.HandleMessage(app.m_hWnd, WM_SYSKEYDOWN, VK_MENU, 0);
+        check(app.m_keys[VK_MENU], "Alt key recorded on WM_SYSKEYDOWN");
+        app.HandleMessage(app.m_hWnd, WM_SYSKEYUP, VK_MENU, 0);
+        check(!app.m_keys[VK_MENU], "Alt key cleared on WM_SYSKEYUP");
         app.HandleMessage(app.m_hWnd, WM_KEYDOWN, VK_F2, 0);
         check((GetMenuState(GetMenu(app.m_hWnd), ID_ANTIALIASING_FXAA, MF_BYCOMMAND) & MF_CHECKED) != 0,
               "FXAA menu state");
