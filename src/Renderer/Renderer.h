@@ -120,10 +120,11 @@ class Renderer
         const Mesh *mesh = nullptr;
         const Vertex *vertices = nullptr;
         std::size_t vertexCount = 0;
-        // 행렬 객체의 padding이 아니라 16개 float 각각의 비트를 비교한다.
-        std::array<std::uint32_t, 16> worldBits{}, viewProjectionBits{};
-        ERasterizeMode rasterizeMode{};
-        bool operator==(const CommandCacheKey &) const = default;
+        ERasterizeMode rasterizeMode = ERasterizeMode::Fill;
+        SRMath::mat4 worldTransform{};
+        SRMath::mat4 viewProjection{};
+
+        [[nodiscard]] bool Matches(const MeshRenderCommand &command, const SRMath::mat4 &vp) const noexcept;
     };
     struct WorkerScratch
     {

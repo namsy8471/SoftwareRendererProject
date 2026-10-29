@@ -127,13 +127,14 @@ void SceneRenderCollector::collectMeshCommands(const GameObject &object, const M
                                                MeshCommandBatch &batch)
 {
     const SRMath::mat4 &world = object.GetWorldMatrix();
+    const SRMath::mat4 &normalMatrix = object.GetNormalMatrix();
     const ERasterizeMode rasterizeMode = flags.bShowWireframe ? ERasterizeMode::Wireframe : ERasterizeMode::Fill;
 
     // 보이는 삼각형을 이 개수씩 명령 하나로 묶는다. 옥트리 노드(최대 16개)마다 명령을 내면 1080p 데모에서
     // 프레임당 명령이 약 1만 1천 개가 되고, 명령마다 renderer 작업 하나와 변환 캐시 키 비교가 붙는다.
     // 삼각형 순서와 primitive ID는 명령을 어떻게 나누든 같다(ID는 제출 순서의 누적 삼각형 번호).
     // 너무 크면 큰 메시 하나가 한 worker를 오래 잡아 분류 단계 부하가 한쪽으로 쏠린다.
-    constexpr std::size_t commandTriangleBudget = 256;
+    constexpr std::size_t commandTriangleBudget = 1024;
     const auto submitRange = [&](std::span<const unsigned int> indices)
     {
         constexpr std::size_t chunk = commandTriangleBudget * 3;
@@ -143,7 +144,8 @@ void SceneRenderCollector::collectMeshCommands(const GameObject &object, const M
                                   .indicesToDraw = indices.subspan(first, std::min(chunk, indices.size() - first)),
                                   .worldTransform = world,
                                   .material = &mesh.material,
-                                  .rasterizeMode = rasterizeMode});
+                                  .rasterizeMode = rasterizeMode,
+                                  .normalMatrix = &normalMatrix});
     };
 
     if (mesh.octree && !flags.bShowAABB)
@@ -160,7 +162,8 @@ void SceneRenderCollector::collectMeshCommands(const GameObject &object, const M
                                                                .indicesToDraw = indices,
                                                                .worldTransform = world,
                                                                .material = &mesh.material,
-                                                               .rasterizeMode = rasterizeMode});
+                                                               .rasterizeMode = rasterizeMode,
+                                                               .normalMatrix = &normalMatrix});
                 if (flags.bShowAABB)
                     batch.debugCommands.push_back(sr::debug::MakeAABBGizmo(worldBounds));
             });
@@ -173,7 +176,7 @@ void SceneRenderCollector::collectMeshCommands(const GameObject &object, const M
         auto &normalLines = batch.normalLines;
         normalLines.clear();
         normalLines.reserve(mesh.vertices.size() * 2); // 각 정점마다 시작점과 끝점이 있으므로 2배 크기
-        sr::debug::AppendNormalLines(normalLines, mesh.vertices, world, object.GetNormalMatrix());
+        sr::debug::AppendNormalLines(normalLines, mesh.vertices, world, normalMatrix);
 
         if (!normalLines.empty())
         {

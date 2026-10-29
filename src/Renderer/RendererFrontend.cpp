@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <bit>
 #include <cmath>
+#include <cstring>
 #include <limits>
 #include <stdexcept>
 #include <xmmintrin.h>
@@ -49,6 +50,17 @@ void Renderer::WorkerScratch::BeginCommand()
         commandStamp = 1;
     }
 }
+bool Renderer::CommandCacheKey::Matches(const MeshRenderCommand &command,
+                                        const SRMath::mat4 &vp) const noexcept
+{
+    return mesh == command.sourceMesh &&
+           rasterizeMode == command.rasterizeMode &&
+           vertexCount == command.sourceMesh->vertices.size() &&
+           vertices == command.sourceMesh->vertices.data() &&
+           std::memcmp(&worldTransform, &command.worldTransform, sizeof(SRMath::mat4)) == 0 &&
+           std::memcmp(&viewProjection, &vp, sizeof(SRMath::mat4)) == 0;
+}
+
 bool Renderer::WorkerScratch::BeginCachedCommand(const MeshRenderCommand &command,
                                                  const SRMath::mat4 &viewProjection)
 {
@@ -57,19 +69,8 @@ bool Renderer::WorkerScratch::BeginCachedCommand(const MeshRenderCommand &comman
         transformCacheValid = false;
         throw std::invalid_argument("Vertex cache requires a source mesh");
     }
-    CommandCacheKey key;
-    key.mesh = command.sourceMesh;
-    key.vertices = command.sourceMesh->vertices.data();
-    key.vertexCount = command.sourceMesh->vertices.size();
-    key.rasterizeMode = command.rasterizeMode;
-    for (std::size_t column = 0; column < 4; ++column)
-        for (std::size_t row = 0; row < 4; ++row)
-        {
-            const auto index = column * 4 + row;
-            key.worldBits[index] = std::bit_cast<std::uint32_t>(command.worldTransform.cols[column][row]);
-            key.viewProjectionBits[index] = std::bit_cast<std::uint32_t>(viewProjection.cols[column][row]);
-        }
-    if (transformCacheValid && transformCacheKey == key)
+
+    if (transformCacheValid && transformCacheKey.Matches(command, viewProjection))
         return true;
 
     // Octree의 index 부분집합과 material은 정점 변환에 영향을 주지 않는다.
@@ -78,13 +79,19 @@ bool Renderer::WorkerScratch::BeginCachedCommand(const MeshRenderCommand &comman
     const SRMath::mat4 mvp = viewProjection * command.worldTransform;
     const auto inverseTransposeWorld =
         command.rasterizeMode == ERasterizeMode::Fill
-            ? SRMath::inverse_transpose(command.worldTransform).value_or(SRMath::mat4::identity())
+            ? (command.normalMatrix ? *command.normalMatrix
+                                    : SRMath::inverse_transpose(command.worldTransform).value_or(SRMath::mat4::identity()))
             : SRMath::mat4::identity();
     modelViewProjection = mvp;
     normalMatrix = inverseTransposeWorld;
     // 저장소 확보와 계산이 모두 성공한 뒤에만 키를 공개한다. 예외가 나면
     // BeginCommand에서 무효화한 상태이므로 다음 호출은 독립 resize부터 복구한다.
-    transformCacheKey = key;
+    transformCacheKey.mesh = command.sourceMesh;
+    transformCacheKey.vertices = command.sourceMesh->vertices.data();
+    transformCacheKey.vertexCount = command.sourceMesh->vertices.size();
+    transformCacheKey.rasterizeMode = command.rasterizeMode;
+    transformCacheKey.worldTransform = command.worldTransform;
+    transformCacheKey.viewProjection = viewProjection;
     transformCacheValid = true;
     return false;
 }
