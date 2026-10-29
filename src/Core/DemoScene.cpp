@@ -348,33 +348,34 @@ std::expected<Scene, AssetLoadError> LoadScene(const std::filesystem::path &asse
     for (const auto &object : sceneObjects)
     {
         const std::string modelKey(object.modelName);
-        std::unique_ptr<Model> model;
+        std::shared_ptr<const Model> model;
         auto it = modelCache.find(modelKey);
         if (it != modelCache.end())
         {
-            const auto meshes = it->second->GetMeshes();
-            std::vector<Mesh> clonedMeshes;
-            clonedMeshes.reserve(meshes.size());
-            for (const auto &m : meshes)
-                clonedMeshes.push_back(CloneMesh(m));
-            model = ModelLoader::FromMeshes(std::move(clonedMeshes));
+            model = it->second;
+
+
+
+
+
         }
         else
         {
             auto loaded = ModelLoader::LoadOBJ(assetDirectory / std::filesystem::path(object.modelName));
             if (!loaded)
                 return std::unexpected(std::move(loaded.error()));
-            const auto meshes = (*loaded)->GetMeshes();
-            std::vector<Mesh> clonedMeshes;
-            clonedMeshes.reserve(meshes.size());
-            for (const auto &m : meshes)
-                clonedMeshes.push_back(CloneMesh(m));
-            modelCache[modelKey] = std::shared_ptr<const Model>(std::move(*loaded));
-            model = ModelLoader::FromMeshes(std::move(clonedMeshes));
+
+
+
+
+
+            model = std::shared_ptr<const Model>(std::move(*loaded));
+            modelCache[modelKey] = model;
+
         }
         [[maybe_unused]] const bool added = scene.AddObject(std::make_shared<GameObject>(
             object.position, SRMath::vec3(0.f, 0.f, 0.f),
-            SRMath::vec3(sceneObjectScale, sceneObjectScale, sceneObjectScale), std::move(model)));
+            SRMath::vec3(sceneObjectScale, sceneObjectScale, sceneObjectScale), model));
     }
     scene.SetCamera(Camera(SRMath::vec3(0.f, 0.f, -5.f)));
     scene.AddLight(DirectionalLight());

@@ -31,6 +31,12 @@ class SceneRenderCollector
     void Collect(const GameObject &object, const Frustum &frustum, const DebugFlags &flags, RenderQueue &queue);
 
   private:
+    struct VisibleMeshTask
+    {
+        const GameObject *object = nullptr;
+        const Mesh *mesh = nullptr;
+    };
+    std::vector<VisibleMeshTask> m_visibleMeshTasks;
     // 각 병렬 작업은 자기 메시의 batch만 쓴다. 프레임과 객체 사이에 용량을 재사용하려고
     // 크기를 줄이지 않고 앞쪽 meshCount개만 쓴다.
     struct MeshCommandBatch
@@ -41,7 +47,9 @@ class SceneRenderCollector
     };
     std::vector<MeshCommandBatch> m_batches;
 
-    void collectOwnMeshes(const GameObject &object, const Frustum &frustum, const DebugFlags &flags,
+    void traverseObject(const GameObject &object, const Frustum &frustum, const DebugFlags &flags,
+                        RenderQueue &queue);
+    void processVisibleMeshTasks(const Frustum &frustum, const DebugFlags &flags,
                           RenderQueue &queue);
     static void collectSkinnedMeshes(const sr::anim::SkinnedMesh &skinned, const DebugFlags &flags,
                                      RenderQueue &queue);
