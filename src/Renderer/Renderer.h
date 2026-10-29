@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <span>
 #include <optional>
+#include <xmmintrin.h>
 #include "Math/SRMath.h"
 #include "Graphics/Mesh.h"
 #include "Graphics/ViewParams.h"
@@ -45,8 +46,8 @@ class Renderer
     RenderStats m_stats;
     struct TileReference
     {
-        std::size_t tileIndex;
-        TriangleRef *triangle;
+        std::size_t tileIndex = 0;
+        TriangleRef *triangle = nullptr;
     };
     struct TileScatterState
     {
@@ -120,10 +121,11 @@ class Renderer
         const Mesh *mesh = nullptr;
         const Vertex *vertices = nullptr;
         std::size_t vertexCount = 0;
-        // 행렬 객체의 padding이 아니라 16개 float 각각의 비트를 비교한다.
-        std::array<std::uint32_t, 16> worldBits{}, viewProjectionBits{};
-        ERasterizeMode rasterizeMode{};
-        bool operator==(const CommandCacheKey &) const = default;
+        ERasterizeMode rasterizeMode = ERasterizeMode::Fill;
+        SRMath::mat4 worldTransform{};
+        SRMath::mat4 viewProjection{};
+
+        [[nodiscard]] bool Matches(const MeshRenderCommand &command, const SRMath::mat4 &vp) const noexcept;
     };
     struct WorkerScratch
     {
@@ -216,13 +218,15 @@ class Renderer
         std::uint32_t index, const MeshRenderCommand &command, const SRMath::mat4 &modelViewProjection,
         const SRMath::mat4 &normalMatrix, WorkerScratch &scratch, int width, int height)
     {
-        if (!scratch.IsCached(index))
+        const auto slot = index & (WorkerScratch::vertexCacheSize - 1);
+        const auto &tag = scratch.vertexTags[slot];
+        if (tag.stamp != scratch.commandStamp || tag.index != index) [[unlikely]]
             fillVertex(index, command, modelViewProjection, normalMatrix, scratch, width, height);
-        return scratch.vertexCache[index & (WorkerScratch::vertexCacheSize - 1)];
+        return scratch.vertexCache[slot];
     }
     static void fillVertex(std::uint32_t, const MeshRenderCommand &, const SRMath::mat4 &,
                            const SRMath::mat4 &, WorkerScratch &, int width, int height);
-    static std::uint8_t computeOutcode(const SRMath::vec4 &) noexcept;
+    [[nodiscard]] static SR_FORCEINLINE std::uint8_t computeOutcode(const SRMath::vec4 &posClip) noexcept { const __m128 p = _mm_loadu_ps(&posClip.x); const __m128 w = _mm_shuffle_ps(p, p, _MM_SHUFFLE(3, 3, 3, 3)); const __m128 negW = _mm_sub_ps(_mm_setzero_ps(), w); const int maskLt = _mm_movemask_ps(_mm_cmplt_ps(p, negW)) & 7; const int maskGt = _mm_movemask_ps(_mm_cmpgt_ps(p, w)) & 7; static constexpr std::uint8_t lut[8] = {0, 1, 4, 5, 16, 17, 20, 21}; return static_cast<std::uint8_t>(lut[maskLt] | (lut[maskGt] << 1)); }
     static ShadedVertex interpolate(const ShadedVertex &, const ShadedVertex &, float);
     static void clipPolygonAgainstPlane(ClipBuffer &, const ClipBuffer &, const __m128 &);
     static void clipTriangle(ClipBuffer &, const ShadedVertex &, const ShadedVertex &, const ShadedVertex &,

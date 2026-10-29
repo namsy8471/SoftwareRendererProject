@@ -41,6 +41,7 @@ struct MeshRenderCommand
     const Material *material = nullptr;          // 메시의 재질
 
     ERasterizeMode rasterizeMode = ERasterizeMode::Fill; // 래스터화 모드
+    const SRMath::mat4 *normalMatrix = nullptr;          // 사전 계산된 법선 행렬 (null이면 inverse_transpose 계산)
 };
 
 // 법선은 면 깊이를 검사하고, AABB/광원은 설명용 화면 오버레이로 남긴다.

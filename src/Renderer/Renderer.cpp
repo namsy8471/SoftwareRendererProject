@@ -323,6 +323,8 @@ void Renderer::WorkerScratch::SortTileReferences()
             _mm_prefetch(reinterpret_cast<const char *>(ref + i + prefetchDist), _MM_HINT_T0);
             _mm_prefetch(reinterpret_cast<const char *>(&scatter[ref[i + 8].tileIndex]), _MM_HINT_T0);
             _mm_prefetch(reinterpret_cast<const char *>(&scatter[ref[i + 9].tileIndex]), _MM_HINT_T0);
+            _mm_prefetch(reinterpret_cast<const char *>(&scatter[ref[i + 10].tileIndex]), _MM_HINT_T0);
+            _mm_prefetch(reinterpret_cast<const char *>(&scatter[ref[i + 11].tileIndex]), _MM_HINT_T0);
         }
 
         const auto idx0 = ref[i + 0].tileIndex;
@@ -353,8 +355,11 @@ void Renderer::gatherTileReferences(std::size_t tile, std::vector<TriangleRef *>
     for (const auto *worker : m_activeTileWorkers)
     {
         const auto &state = worker->tileScatter[tile];
-        const auto *end = worker->sortedTileReferences.data() + state.cursor;
-        bin.insert(bin.end(), end - state.count, end);
+        if (state.count != 0)
+        {
+            const auto *end = worker->sortedTileReferences.data() + state.cursor;
+            bin.insert(bin.end(), end - state.count, end);
+        }
     }
 }
 

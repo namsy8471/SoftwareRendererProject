@@ -1,4 +1,4 @@
-﻿#include "AABB.h"
+#include "AABB.h"
 #include "Frustum.h"
 #include "Math/SIMD.h"
 
@@ -68,31 +68,6 @@ bool AABB::Contains(const AABB &other) const noexcept
     // 다른 AABB가 현재 AABB에 완전히 포함되는지 확인합니다.
     return (min.x <= other.min.x && max.x >= other.max.x) && (min.y <= other.min.y && max.y >= other.max.y) &&
            (min.z <= other.min.z && max.z >= other.max.z);
-}
-
-AABB AABB::Transform(const SRMath::mat4 &transform) const noexcept
-{
-    AABB newAABB;
-
-    // C 배열 대신 크기가 타입에 포함되는 std::array를 사용한다. 두 꼭짓점씩
-    // 묶으면 AVX의 8개 float lane을 정확히 채울 수 있다.
-    const auto corners = std::array{SRMath::vec3{this->min.x, this->min.y, this->min.z},
-                                    SRMath::vec3{this->max.x, this->min.y, this->min.z},
-                                    SRMath::vec3{this->min.x, this->max.y, this->min.z},
-                                    SRMath::vec3{this->max.x, this->max.y, this->min.z},
-                                    SRMath::vec3{this->min.x, this->min.y, this->max.z},
-                                    SRMath::vec3{this->max.x, this->min.y, this->max.z},
-                                    SRMath::vec3{this->min.x, this->max.y, this->max.z},
-                                    SRMath::vec3{this->max.x, this->max.y, this->max.z}};
-    for (std::size_t index = 0; index < corners.size(); index += 2)
-    {
-        const SRMath::SIMD::TransformPair transformed = SRMath::SIMD::transform_pair(
-            transform, SRMath::vec4(corners[index], 1.0f), SRMath::vec4(corners[index + 1], 1.0f));
-        newAABB.Encapsulate(SRMath::vec3(transformed.first));
-        newAABB.Encapsulate(SRMath::vec3(transformed.second));
-    }
-
-    return newAABB;
 }
 
 SRMath::vec3 AABB::Center() const noexcept

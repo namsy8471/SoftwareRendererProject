@@ -46,10 +46,11 @@ class Octree
         // 읽고 나눗셈(곱셈)으로 계산한다. 지역 span으로 받아 시작 주소와 개수를 레지스터에 둔다.
         const std::span<const FlatNode> nodes{m_nodes};
         const std::span<const unsigned int> allIndices{m_indices};
+        const AABBTransformer transformer(worldTransform);
         for (std::size_t index = 0; index < nodes.size();)
         {
             const FlatNode &node = nodes[index];
-            const AABB worldBounds = node.bounds.Transform(worldTransform);
+            const AABB worldBounds = transformer.Transform(node.bounds);
             if (!frustum.IsAABBInFrustum(worldBounds))
             {
                 index = node.subtreeEnd;
@@ -68,6 +69,7 @@ class Octree
     {
         const std::span<const FlatNode> nodes{m_nodes};
         const std::span<const unsigned int> allIndices{m_indices};
+        const AABBTransformer transformer(worldTransform);
         std::uint32_t pendingBegin = 0, pendingEnd = 0;
         const auto emit = [&](std::uint32_t begin, std::uint32_t end)
         {
@@ -86,7 +88,7 @@ class Octree
         for (std::size_t index = 0; index < nodes.size();)
         {
             const FlatNode &node = nodes[index];
-            switch (frustum.ClassifyAABB(node.bounds.Transform(worldTransform)))
+            switch (frustum.ClassifyAABB(transformer.Transform(node.bounds)))
             {
             case FrustumTest::Outside:
                 index = node.subtreeEnd;
