@@ -5,6 +5,8 @@
 #include "Scene/GameObject.h"
 
 #include <algorithm>
+#include <unordered_map>
+#include <string>
 #include <array>
 #include <cmath>
 #include <numbers>
@@ -19,9 +21,36 @@ struct SceneObjectDesc
     SRMath::vec3 position;
 };
 
-// 장면 구성은 이 표 하나로 정한다. 벤치마크·골든 이미지 기준이 바뀌므로 수정 시 골든을 갱신한다.
-const std::array sceneObjects{SceneObjectDesc{"IronMan", {0.f, 0.f, 0.f}},
-                              SceneObjectDesc{"teapot", {-10.f, 0.f, 0.f}}};
+// 고부하 30 FPS 기준 벤치마크 장면 (IronMan 편대 10기 + Teapot 8기, 총 18개 오브젝트, 2,216개 메시, 약 156만 트라이앵글)
+// 고부하 30 FPS 기준 벤치마크 장면 (IronMan 편대 12기 + Teapot 10기, 총 22개 오브젝트, 2,660개 메시, 약 188만 트라이앵글)
+const std::array sceneObjects{
+    // Row 1 (전방 주력 4기)
+    SceneObjectDesc{"IronMan", {-15.f, 0.f, 0.f}},
+    SceneObjectDesc{"IronMan", {-5.f, 0.f, 0.f}},
+    SceneObjectDesc{"IronMan", {5.f, 0.f, 0.f}},
+    SceneObjectDesc{"IronMan", {15.f, 0.f, 0.f}},
+    // Row 2 (중열 주력 4기)
+    SceneObjectDesc{"IronMan", {-24.f, 0.f, 12.f}},
+    SceneObjectDesc{"IronMan", {-8.f, 0.f, 10.f}},
+    SceneObjectDesc{"IronMan", {8.f, 0.f, 10.f}},
+    SceneObjectDesc{"IronMan", {24.f, 0.f, 12.f}},
+    // Row 3 (후열 주력 4기)
+    SceneObjectDesc{"IronMan", {-27.f, 0.f, 24.f}},
+    SceneObjectDesc{"IronMan", {-9.f, 0.f, 22.f}},
+    SceneObjectDesc{"IronMan", {9.f, 0.f, 22.f}},
+    SceneObjectDesc{"IronMan", {27.f, 0.f, 24.f}},
+    // 전방 및 측면 호위 Teapot 10기
+    SceneObjectDesc{"teapot", {-20.f, 0.f, -8.f}},
+    SceneObjectDesc{"teapot", {-10.f, 0.f, -8.f}},
+    SceneObjectDesc{"teapot", {0.f, 0.f, -8.f}},
+    SceneObjectDesc{"teapot", {10.f, 0.f, -8.f}},
+    SceneObjectDesc{"teapot", {20.f, 0.f, -8.f}},
+    SceneObjectDesc{"teapot", {-32.f, 0.f, 6.f}},
+    SceneObjectDesc{"teapot", {32.f, 0.f, 6.f}},
+    SceneObjectDesc{"teapot", {-35.f, 0.f, 18.f}},
+    SceneObjectDesc{"teapot", {35.f, 0.f, 18.f}},
+    SceneObjectDesc{"teapot", {0.f, 0.f, 16.f}}
+};
 constexpr float sceneObjectScale = 0.04f;
 
 Mesh CreateSphereMesh(float radius, int rings, int sectors, const Material &mat,
@@ -299,18 +328,53 @@ Mesh CreateIcosahedronMesh(float radius, const Material &mat, SRMath::vec3 offse
 
 namespace sr::demo
 {
+Mesh CloneMesh(const Mesh &src)
+{
+    Mesh dest;
+    dest.vertices = src.vertices;
+    dest.indices = src.indices;
+    dest.material = src.material;
+    dest.localAABB = src.localAABB;
+    const auto tangents = src.GetTangents();
+    if (!tangents.empty())
+        dest.SetTangents(std::vector<SRMath::vec4>(tangents.begin(), tangents.end()));
+    return dest;
+}
+
 std::expected<Scene, AssetLoadError> LoadScene(const std::filesystem::path &assetDirectory)
 {
     Scene scene;
+    std::unordered_map<std::string, std::shared_ptr<const Model>> modelCache;
     for (const auto &object : sceneObjects)
     {
-        auto model = ModelLoader::LoadOBJ(assetDirectory / std::filesystem::path(object.modelName));
-        if (!model)
-            return std::unexpected(std::move(model.error()));
-        // 새 루트 물체라 실패할 수 없다.
+        const std::string modelKey(object.modelName);
+        std::unique_ptr<Model> model;
+        auto it = modelCache.find(modelKey);
+        if (it != modelCache.end())
+        {
+            const auto meshes = it->second->GetMeshes();
+            std::vector<Mesh> clonedMeshes;
+            clonedMeshes.reserve(meshes.size());
+            for (const auto &m : meshes)
+                clonedMeshes.push_back(CloneMesh(m));
+            model = ModelLoader::FromMeshes(std::move(clonedMeshes));
+        }
+        else
+        {
+            auto loaded = ModelLoader::LoadOBJ(assetDirectory / std::filesystem::path(object.modelName));
+            if (!loaded)
+                return std::unexpected(std::move(loaded.error()));
+            const auto meshes = (*loaded)->GetMeshes();
+            std::vector<Mesh> clonedMeshes;
+            clonedMeshes.reserve(meshes.size());
+            for (const auto &m : meshes)
+                clonedMeshes.push_back(CloneMesh(m));
+            modelCache[modelKey] = std::shared_ptr<const Model>(std::move(*loaded));
+            model = ModelLoader::FromMeshes(std::move(clonedMeshes));
+        }
         [[maybe_unused]] const bool added = scene.AddObject(std::make_shared<GameObject>(
             object.position, SRMath::vec3(0.f, 0.f, 0.f),
-            SRMath::vec3(sceneObjectScale, sceneObjectScale, sceneObjectScale), std::move(*model)));
+            SRMath::vec3(sceneObjectScale, sceneObjectScale, sceneObjectScale), std::move(model)));
     }
     scene.SetCamera(Camera(SRMath::vec3(0.f, 0.f, -5.f)));
     scene.AddLight(DirectionalLight());
