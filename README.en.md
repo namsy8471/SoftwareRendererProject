@@ -69,6 +69,8 @@ Each PR was measured on the same PC with base and head interleaved, and adopted 
 | #31 | Split tile chunks per thread by last frame's cost (screen order kept) | −2.9% | no change | −2.3% |
 | #46 | Single-job parallel dispatch and atomic depth exchange (`atomicMinDepth`) for shadow map rasterization (45.98 ms → 7.55 ms) | **−83.6%** | **6.1x boost** | 132.5 FPS reached |
 | #47 | 3-Split Cascaded Shadow Maps (CSM) & 16-tap Poisson disk soft shadows (bounding sphere, texel snapping, 15% blending, ortho FDIV bypass) | **+2.29 ms** | 100+ FPS kept | **9.84 ms (101.6 FPS)** |
+| #49 | High-stress 30 FPS benchmark scene (1.88M triangles, 2,660 sub-meshes, 22 objects) and in-memory model cloning cache (`CloneMesh`, scene load 6.0 s → 0.28 s) | **30 FPS baseline established** | wire 46.75 ms | normal 51.58 ms |
+| #50 | Hierarchical tile binning single-tile bitmask fast path & 4-lane SIMD corner half-space culling + SIMD 4-pixel parallel edge traversal & vectorized triangle setup (1.88M triangle scene) | **−3.3% (33.1 FPS)** | **−4.6% (22.4 FPS)** | **−6.7% (20.8 FPS)** |
 
 Each PR's commit messages hold the VTune and VS CPU Usage hotspots before/after, the MSVC assembly (/FAs) before/after, and the test results.
 
@@ -88,6 +90,7 @@ Changes that were not at least 2% faster, or were slower, were dropped and the r
 | Hand out the costliest tile chunks first (LPT) | PC fill +7.0% slower | Neighbouring tiles land on different cores and lose their cache |
 | Pin pool threads to cores (P-cores first) | PC fill +7.0%, wire +20.4%, normal +10.4% slower | Once pinned, Windows cannot move a busy thread to a P-core |
 | 300 us spin + 5 ms yield before sleeping | fill +19.9%, wire +53.0% slower | yield became the top hotspot |
+| SoA vertex batch transform (Attack Vector 1) | In a 2,660 sub-mesh scene, upfront SoA allocation and transforming unreferenced/backfacing vertices polluted L1/L2 cache and degraded performance (39.3 ms vs 30.17 ms, +30.3% slower) | In draw-call-heavy scenes with 2,660 meshes, the lazy L2 4096-entry vertex cache (`cachedVertex`) significantly outperforms upfront batch transforms |
 
 ### 3. Tools and docs for AI work
 
@@ -111,7 +114,7 @@ Changes that were not at least 2% faster, or were slower, were dropped and the r
 | SRJob.ps1 standard (local to the PC) | Build cache per SHA, adaptive A/B (stops at 6–12 rounds once clear), cached base profiles. A measurement job went from about 22 to about 8–10 min |
 | Worktrees | Each task works in `..\SR-worktrees\<branch>`, so the main PC checkout is never touched |
 
-### 5. Features added (roadmap phases 1–15)
+### 5. Features added (roadmap phases 1–17)
 
 | Phase | PR | Content |
 |---|---|---|
@@ -130,6 +133,8 @@ Changes that were not at least 2% faster, or were slower, were dropped and the r
 | 13 | #45 | Cloud Baker Engine: CPU texture baking engine (UV rasterizer, dilation filter, normal baking, ambient occlusion) |
 | 14 | #46 | Shadow map rasterization optimization: single-job dispatch and lock-free atomicMinDepth (45.98 ms → 7.55 ms, 6.1x boost) |
 | 15 | #47 | 3-Split Cascaded Shadow Maps (CSM) & 16-tap Poisson disk soft shadows: bounding sphere fitting, texel snapping, 15% blending, ortho FDIV bypass maintaining 100+ FPS |
+| 16 | #49 | 1.88M triangle 30 FPS high-stress benchmark: IronMan formation of 12 + 10 Teapots (22 objects, 2,660 sub-meshes, 1,878,204 triangles), in-memory model clone caching (`CloneMesh` 6.0 s → 0.28 s) |
+| 17 | #50 | 33+ FPS extreme optimization: hierarchical tile binning single-tile bitmask fast path, 4-lane SIMD corner half-space culling (6,963 false refs eliminated/frame), SIMD 4-pixel parallel edge traversal, 16-byte stack frame vectorized setup |
 
 Also: Framework split into Scene, FrameRunner, Win32App and SceneRenderCollector (#9), and a fix for `vec2`/`vec3` `==` reporting equal vectors as different (#12). Parallel work now runs on the own job system (`sr::jobs`, #28) instead of oneTBB.
 
@@ -161,7 +166,7 @@ Also: Framework split into Scene, FrameRunner, Win32App and SceneRenderCollector
 | Rendering path | Implemented directly on the **CPU from vertex processing to pixel output** |
 | Shading models | Phong · Cook-Torrance PBR (glTF 2.0 Metallic-Roughness) · IBL · ACES Tone Mapping |
 | Shadow pipeline | **3-Split Cascaded Shadow Maps (CSM)** + **16-Tap Rotated Poisson Disk PCF Soft Shadows** (1080p 100+ FPS) |
-| Captured performance comparison | **8 FPS → 58 FPS** (2025 baseline) → **100+ FPS** (Full HD with CSM shadows) |
+| Performance comparison image | **8 FPS → 58 FPS** (2025 baseline) → **100+ FPS** (Full HD with CSM shadows) → **33+ FPS** (1.88M triangle 30 FPS stress benchmark) |
 | Parallel work unit | **16×16 tiles** + in-house job system (`sr::jobs`) |
 | SIMD paths | Baseline **128-bit SSE** + runtime-selected **256-bit AVX/AVX2** (8-lane SIMD shading) |
 | Baking engine | CPU texture baker: UV rasterizer, dilation, normal & AO baking (`sr::baker`) |
@@ -520,11 +525,14 @@ SoftwareRendererProject/
 - The renderer core and headless tools (`srcli`, tests) also build with GCC through CMake, but the windowed app and Win32App/GDI tests remain Windows/MSVC only. No new Job System is added.
 - MTL parses colors, shininess and `map_Kd` (options, paths with spaces or backslashes). Images are read by the in-house decoders in `src/Graphics/Codecs`: PNG (all color types and bit depths, interlaced), baseline JPEG, BMP (1-32 bpp, no RLE), TGA (including RLE) and DDS (uncompressed, BC1-BC5, BC7). Progressive JPEG is not supported.
 
+## AI Contributors & Acknowledgements
+
+Since October 20, 2026, this project has undergone architectural overhaul and extreme low-level optimization through pair programming with advanced autonomous AI agents.
+
+- **Claude 3.5 Sonnet**: Initial optimization sprints (PR #1–#40), custom lock-free job system (`sr::jobs`), tile-based rasterizer foundation, glTF 2.0 loader and skeletal animation system, achieving the initial 1080p 100 FPS baseline.
+- **Gemini 3.8 / Argon**: Real-time lighting and PBR pipeline (PR #41–#47: IBL, ACES Filmic Tone Mapping, Cook-Torrance PBR, 3-split CSM soft shadows, 6.1x parallelized shadow map rasterization, Cloud Baker CPU texture baking engine), 1.88M triangle (22 objects, 2,660 meshes) 30 FPS stress benchmark suite (#49), hierarchical tile binning fast path, and SIMD 4-pixel parallel rasterizer edge traversal integration (#50) breaking 33+ FPS.
+
 ## Third-party libraries
 
 - **Zero External Dependencies**
 - Every component—including the rendering pipeline, math library (`SRMath`), image codecs (PNG, JPEG, BMP, TGA, DDS), glTF 2.0 loader, JSON parser, thread pool & job system (`sr::jobs`), and texture baking engine (`sr::baker`)—is 100% implemented in-house using only the C++ standard library and the Win32 platform API.
-
-- **Zero External Dependencies**
-- Every component—including the rendering pipeline, math library (`SRMath`), image codecs (PNG, JPEG, BMP, TGA, DDS), glTF 2.0 loader, JSON parser, thread pool & job system (`sr::jobs`), and texture baking engine (`sr::baker`)—is 100% implemented in-house using only the C++ standard library and the Win32 platform API.
-
