@@ -32,9 +32,9 @@ DirectX 11を使用する中で抽象的に感じていたレンダリングパ�
 | 開発形態 | 開発期間 | 技術環境 | 画面出力 |
 |:---:|:---:|:---:|:---:|
 | **個人開発** | 2025.07.07–2025.08.27 | C++26 Preview · MSVC v145 · Windows | WinAPI DIB · GDI |
-| **AIベースのコーディング (Claude · Gemini 3.8/Argon)** | 2026.10.20– | C++26 Preview · MSVC v145 · Windows / GCC (CI) | WinAPI DIB · GDI |
+| **AIベースのコーディング (Claude 5.5 Opus · Gemini 3.8/Argon)** | 2026.10.20– | C++26 Preview · MSVC v145 · Windows / GCC (CI) | WinAPI DIB · GDI |
 
-2026.10.20からはAI(Claude、Gemini 3.8/Argon)がコードを書き、最適化しています。変更は計測したfps/msとアセンブリの確認で判断し、テスト・ゴールデン画像・CIで検証します。
+2026.10.20からはAI(Claude 5.5 Opus、Gemini 3.8/Argon)がコードを書き、最適化しています。変更は計測したfps/msとアセンブリの確認で判断し、テスト・ゴールデン画像・CIで検証します。
 
 ## AIによる作業の成果まとめ (2026.10.20–10.22)
 
@@ -96,7 +96,7 @@ PRごとに同じPCで変更前(base)と変更後(head)を交互に測り、統�
 
 | 項目 | 役割 |
 |---|---|
-| [AGENTS.md](AGENTS.md) | AI共通ルール: 100fps基準(p95 ≤ 9ms)、コマンド、作業手順、判定ルール。Claude CodeとGemini CLI(Gemini 3.8/Argon)が共通して従う作業仕様 |
+| [AGENTS.md](AGENTS.md) | AI共通ルール: 100fps基準(p95 ≤ 9ms)、コマンド、作業手順、判定ルール。Claude Code(Claude 5.5 Opus)とGemini CLI(Gemini 3.8/Argon)が共通して従う作業仕様 |
 | アセンブリ基準の最適化ルール (CLAUDE.md、PR #19) | ソースからの推測ではなく生成されたアセンブリ(`/FAs`、`dumpbin /disasm`)を見て最適化し、前後を記録。毎フレームのコードとロード時のコードに適用 |
 | プロファイリング必須ルール (CLAUDE.md、PR #22) | すべての最適化をPCでVTuneとVS CPU Usageの両方で前後計測し、ホットスポットの占有率を記録 |
 | [CODEMAP.md](CODEMAP.md) | ソースファイルごとの役割を1行で。CI(`tools/ci/check_codemap.py`)が漏れを検出 |
@@ -529,7 +529,7 @@ SoftwareRendererProject/
 
 当プロジェクトは2026年10月20日より、高度な自律型AIエージェントとのペアプログラミングを通じてアーキテクチャの再設計および極限の低レベル最適化を実施しました。
 
-- **Claude 3.5 Sonnet**: 初期最適化スプリント(PR #1~#40), 独自ジョブシステム(`sr::jobs`), タイルベースラスタライザーの基盤構築, glTF 2.0ローダーおよびスケルタルアニメーション, 1080p 100 FPSベースラインの達成。
+- **Claude 5.5 Opus**: 初期最適化スプリント(PR #1~#40), 独自ジョブシステム(`sr::jobs`), タイルベースラスタライザーの基盤構築, glTF 2.0ローダーおよびスケルタルアニメーション, 1080p 100 FPSベースラインの達成。
 - **Gemini 3.8 / Argon**: リアルタイムライティングおよびPBRパイプライン(PR #41~#47: IBL, ACESトーンマッピング, Cook-Torrance PBR, 3分割CSMソフトシャドウ, 6.1倍並列シャドウマップラスタライズ, Cloud Bakerテクスチャベイクエンジン), 1.88Mポリゴン(22オブジェクト, 2,660メッシュ)の30 FPSストレステストベンチマーク構築(#49), 階層型タイルビニングの高速パスおよびSIMD 4ピクセル並列ラスタライザー統合(#50)による33+ FPS突破。
 
 ## 外部ライブラリ
