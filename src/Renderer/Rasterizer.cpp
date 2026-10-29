@@ -794,21 +794,20 @@ template <bool Instrumented, RasterPass Pass> void Rasterizer::DrawTriangleImpl(
                         !safeEdge(r2, t.dx01Fixed, t.dy01Fixed)))
         return;
     const bool hasMaterial = (t.sourceCommand != nullptr && t.sourceCommand->material != nullptr);
-    const std::ptrdiff_t firstRowOffset =
-        static_cast<std::ptrdiff_t>(y0 - m_originY) * static_cast<std::ptrdiff_t>(m_depthStride) - m_originX;
-    float *depthRow = m_depthBase + firstRowOffset;
-    std::uint64_t *idRow = m_idBase + firstRowOffset;
+    const int originX = m_originX;
+    const std::ptrdiff_t depthStride = static_cast<std::ptrdiff_t>(m_depthStride);
+    const std::ptrdiff_t colorStride = static_cast<std::ptrdiff_t>(m_colorStride);
+    float *depthRow = m_depthBase + static_cast<std::ptrdiff_t>(y0 - m_originY) * depthStride;
+    std::uint64_t *idRow = m_idBase + static_cast<std::ptrdiff_t>(y0 - m_originY) * depthStride;
     [[maybe_unused]] unsigned int *colorRow = nullptr;
     if constexpr (Pass != RasterPass::DepthOnly && Pass != RasterPass::DepthOwner)
     {
-        colorRow = m_colorBase + (static_cast<std::ptrdiff_t>(y0 - m_originY) *
-                                      static_cast<std::ptrdiff_t>(m_colorStride) -
-                                  m_originX);
+        colorRow = m_colorBase + static_cast<std::ptrdiff_t>(y0 - m_originY) * colorStride;
     }
     [[maybe_unused]] std::size_t cellRow = 0;
     if constexpr (Pass == RasterPass::DepthOwner)
     {
-        cellRow = static_cast<std::size_t>(y0 - m_bounds.minY) * 16 - static_cast<std::size_t>(m_bounds.minX);
+        cellRow = static_cast<std::size_t>(y0 - m_bounds.minY) * 16;
     }
     for (int y = y0; y <= y1; ++y)
     {
@@ -827,6 +826,7 @@ template <bool Instrumented, RasterPass Pass> void Rasterizer::DrawTriangleImpl(
         // float 연산 순서는 기존과 같다.
         for (; x <= x1 && (w0 | w1 | w2) >= 0; ++x)
         {
+            const int localX = x - originX;
             const float f0 = static_cast<float>(w0) / 256.f;
             const float f1 = static_cast<float>(w1) / 256.f;
             const float f2 = static_cast<float>(w2) / 256.f;
@@ -842,21 +842,21 @@ template <bool Instrumented, RasterPass Pass> void Rasterizer::DrawTriangleImpl(
                 q += t.rv2.oneOverW * c;
                 const bool finite = std::isfinite(q) && q > 0.f;
                 const bool visible = Pass == RasterPass::ShadeVisible
-                                         ? idRow[x] == t.primitiveId && depthRow[x] == q
-                                         : q > depthRow[x] || (q == depthRow[x] && t.primitiveId < idRow[x]);
+                                         ? idRow[localX] == t.primitiveId && depthRow[localX] == q
+                                         : q > depthRow[localX] || (q == depthRow[localX] && t.primitiveId < idRow[localX]);
                 if (finite && visible)
                 {
                     if constexpr (Pass != RasterPass::ShadeVisible)
                     {
-                        depthRow[x] = q;
-                        idRow[x] = t.primitiveId;
+                        depthRow[localX] = q;
+                        idRow[localX] = t.primitiveId;
                     }
                     if constexpr (Pass == RasterPass::DepthOwner)
                     {
                         // Shaded 패스라면 여기서 색을 썼을 것이다. 덮어쓴 색은 결국 버려지므로 주인만 바꾼다.
                         if (hasMaterial)
                         {
-                            const std::size_t cell = cellRow + static_cast<std::size_t>(x);
+                            const std::size_t cell = cellRow + static_cast<std::size_t>(x - m_bounds.minX);
                             m_ownerScratch.triangles[cell] = &t;
                             m_ownerScratch.samples[cell] = {a, b, c, q};
                             m_ownerMask[cell >> 6] |= std::uint64_t{1} << (cell & 63);
@@ -871,7 +871,7 @@ template <bool Instrumented, RasterPass Pass> void Rasterizer::DrawTriangleImpl(
                                 ComputeTriangleTangentFrame(t, sample.tangentWorld, sample.bitangentWorld);
                             if (m_frame.mipmapping)
                                 sample.lod = ComputeTriangleLod(t);
-                            colorRow[x] = packColor(ShadeSurface(sample, *t.sourceCommand->material, m_frame));
+                            colorRow[localX] = packColor(ShadeSurface(sample, *t.sourceCommand->material, m_frame));
                             if constexpr (Instrumented)
                                 ++m_stats->shadedPixels;
                         }
@@ -888,10 +888,10 @@ template <bool Instrumented, RasterPass Pass> void Rasterizer::DrawTriangleImpl(
         r0 -= t.dx12Fixed;
         r1 -= t.dx20Fixed;
         r2 -= t.dx01Fixed;
-        depthRow += m_depthStride;
-        idRow += m_depthStride;
+        depthRow += depthStride;
+        idRow += depthStride;
         if constexpr (Pass != RasterPass::DepthOnly && Pass != RasterPass::DepthOwner)
-            colorRow += m_colorStride;
+            colorRow += colorStride;
         if constexpr (Pass == RasterPass::DepthOwner)
             cellRow += 16;
     }
