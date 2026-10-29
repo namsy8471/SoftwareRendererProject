@@ -199,39 +199,70 @@ bool Rasterizer::PrepareRasterInto(PreparedTriangle &t, const RasterizerVertex &
 {
     if (width <= 0 || height <= 0 || primitiveId == noPrimitive)
         return false;
+
+    // Fast rejection: validate vertex screen coordinates and positive finite 1/w before copy
+    const auto isValidVertex = [](const RasterizerVertex &v) noexcept
+    {
+        return (std::abs(v.screenPos.x) < 0x1p31f) & (std::abs(v.screenPos.y) < 0x1p31f) &
+               (v.oneOverW > 0.f && v.oneOverW < std::numeric_limits<float>::infinity());
+    };
+    if (!isValidVertex(a) || !isValidVertex(b) || !isValidVertex(c))
+        return false;
+
     t.sourceCommand = command;
     t.primitiveId = primitiveId;
     t.rv0 = a;
     t.rv1 = b;
     t.rv2 = c;
-    for (const auto *v : {&t.rv0, &t.rv1, &t.rv2})
-        // |x| >= INT_MAX(2^31 - 1)는 float에서 |x| >= 2^31과 같다(2^31 바로 아래 float는 2^31 - 128).
-        // 그래서 "!isfinite || |double| >= INT_MAX"를 float 비교 하나로 쓴다. NaN은 비교가 거짓이라 거부된다.
-        // 1/w는 isfinite와 > 0 둘 다 필요하므로 "0 < 1/w < inf"로 같은 판정을 한다.
-        if (!(std::abs(v->screenPos.x) < 0x1p31f) || !(std::abs(v->screenPos.y) < 0x1p31f) ||
-            !(v->oneOverW > 0.f && v->oneOverW < std::numeric_limits<float>::infinity()))
-            return false;
-    const auto &p0 = t.rv0.screenPos;
-    const auto &p1 = t.rv1.screenPos;
-    const auto &p2 = t.rv2.screenPos;
-    // 세 값은 위에서 유한성을 검사했다. 고정 3항 비교로 표현해 작은
-    // initializer_list에도 발생하던 범용 min/max 순회 호출을 피한다.
-    t.minX = std::max(0, static_cast<int>(std::min(p0.x, std::min(p1.x, p2.x))));
-    t.minY = std::max(0, static_cast<int>(std::min(p0.y, std::min(p1.y, p2.y))));
-    t.maxX = std::min(width - 1, static_cast<int>(std::max(p0.x, std::max(p1.x, p2.x))));
-    t.maxY = std::min(height - 1, static_cast<int>(std::max(p0.y, std::max(p1.y, p2.y))));
-    if (t.minX > t.maxX || t.minY > t.maxY)
+
+    // Vectorized min/max bounds calculation across 3 vertices using SSE
+    const __m128 p0 = a.screenPos.m128;
+    const __m128 p1 = b.screenPos.m128;
+    const __m128 p2 = c.screenPos.m128;
+
+    const __m128 minXY = _mm_min_ps(_mm_min_ps(p0, p1), p2);
+    const __m128 maxXY = _mm_max_ps(_mm_max_ps(p0, p1), p2);
+
+    const __m128i minInt = _mm_max_epi32(_mm_cvttps_epi32(minXY), _mm_setzero_si128());
+    const __m128i maxLimit = _mm_set_epi32(0, 0, height - 1, width - 1);
+    const __m128i maxInt = _mm_min_epi32(_mm_cvttps_epi32(maxXY), maxLimit);
+
+    // Reject if minX > maxX || minY > maxY
+    const __m128i cmpGt = _mm_cmpgt_epi32(minInt, maxInt);
+    if ((_mm_movemask_ps(_mm_castsi128_ps(cmpGt)) & 3) != 0)
         return false;
-    t.dx01 = p0.x - p1.x;
-    t.dy01 = p0.y - p1.y;
-    t.dx12 = p1.x - p2.x;
-    t.dy12 = p1.y - p2.y;
-    t.dx20 = p2.x - p0.x;
-    t.dy20 = p2.y - p0.y;
-    if (!toFixed(t.dx01, t.dx01Fixed) || !toFixed(t.dy01, t.dy01Fixed) || !toFixed(t.dx12, t.dx12Fixed) ||
-        !toFixed(t.dy12, t.dy12Fixed) || !toFixed(t.dx20, t.dx20Fixed) || !toFixed(t.dy20, t.dy20Fixed))
-        return false;
-    t.maximumInverseW = std::max(t.rv0.oneOverW, std::max(t.rv1.oneOverW, t.rv2.oneOverW));
+
+    // Store minX, minY, maxX, maxY in one contiguous 16-byte store
+    const __m128i bounds = _mm_unpacklo_epi64(minInt, maxInt);
+    _mm_storeu_si128(reinterpret_cast<__m128i *>(&t.minX), bounds);
+
+    // Vectorized edge deltas
+    const __m128 p01 = _mm_movelh_ps(p0, p1);
+    const __m128 p12 = _mm_movelh_ps(p1, p2);
+    const __m128 d01_12 = _mm_sub_ps(p01, p12); // [dx01, dy01, dx12, dy12]
+    const __m128 d20 = _mm_sub_ps(p2, p0);      // [dx20, dy20, 0, 0]
+
+    _mm_storeu_ps(&t.dx01, d01_12);
+    _mm_store_sd(reinterpret_cast<double *>(&t.dx20), _mm_castps_pd(d20));
+
+    // Streamlined fixed-point edge delta conversions:
+    // Vertices verified |coord| < 2^31, so deltas are < 2^32, scaled by 256 is < 2^40,
+    // guaranteed to fit into int64 without overflow.
+    const __m128 scale256 = _mm_set1_ps(256.0f);
+    const __m128 scaled_01_12 = _mm_mul_ps(d01_12, scale256);
+    const __m128 scaled_20 = _mm_mul_ps(d20, scale256);
+
+    t.dx01Fixed = _mm_cvttss_si64(scaled_01_12);
+    t.dy01Fixed = _mm_cvttss_si64(_mm_shuffle_ps(scaled_01_12, scaled_01_12, _MM_SHUFFLE(1, 1, 1, 1)));
+    t.dx12Fixed = _mm_cvttss_si64(_mm_movehl_ps(scaled_01_12, scaled_01_12));
+    t.dy12Fixed = _mm_cvttss_si64(_mm_shuffle_ps(scaled_01_12, scaled_01_12, _MM_SHUFFLE(3, 3, 3, 3)));
+    t.dx20Fixed = _mm_cvttss_si64(scaled_20);
+    t.dy20Fixed = _mm_cvttss_si64(_mm_shuffle_ps(scaled_20, scaled_20, _MM_SHUFFLE(1, 1, 1, 1)));
+
+    const __m128 w0 = _mm_set_ss(a.oneOverW);
+    const __m128 w1 = _mm_set_ss(b.oneOverW);
+    const __m128 w2 = _mm_set_ss(c.oneOverW);
+    t.maximumInverseW = _mm_cvtss_f32(_mm_max_ss(_mm_max_ss(w0, w1), w2));
     return true;
 }
 
@@ -291,10 +322,12 @@ void Rasterizer::BeginTile(TileBounds bounds, bool hiZ, bool cleared, TileBuffer
                 if (ids)
                     std::copy_n(m_target.PrimitiveIds().data() + first, width, m_tile->ids.data() + y * 16);
                 else
-                    // ID 면이 없으면 이미 그려진 픽셀의 주인은 가장 작은 ID(0)로 본다. 같은 깊이면 먼저 그린 쪽이 남는다.
+                    // ID 면이 없으면 이미 그려진 픽셀의 주인은 가장 작은 ID(0)로 본다. 같은 깊이면 먼저 그린
+                    // 쪽이 남는다.
                     for (int x = 0; x < width; ++x)
-                        m_tile->ids[y * 16 + x] =
-                            m_tile->depth[y * 16 + x] == RenderTarget::emptyDepth ? RenderTarget::emptyOwner : 0;
+                        m_tile->ids[y * 16 + x] = m_tile->depth[y * 16 + x] == RenderTarget::emptyDepth
+                                                      ? RenderTarget::emptyOwner
+                                                      : 0;
                 std::copy_n(surface.pixels.data() + row * surface.stridePixels + bounds.minX, width,
                             m_tile->color.data() + y * 16);
             }
@@ -354,7 +387,8 @@ void Rasterizer::RefreshHiZ()
             for (int y = y0; y < y1; ++y)
                 for (int x = x0; x < x1; ++x)
                 {
-                    const auto index = static_cast<std::size_t>(y - m_originY) * m_depthStride + (x - m_originX);
+                    const auto index =
+                        static_cast<std::size_t>(y - m_originY) * m_depthStride + (x - m_originX);
                     const float q = m_depthBase[index];
                     if (m_idBase[index] == noPrimitive || !(q > 0.f) || !std::isfinite(q))
                         full = false;
@@ -482,7 +516,8 @@ void Rasterizer::DrawTriangleAlphaMaskImpl(const PreparedTriangle &t)
     float *const depth = m_depthBase;
     std::uint64_t *const ids = m_idBase;
     unsigned int *const colors = m_colorBase;
-    const Material *const mat = (t.sourceCommand && t.sourceCommand->material) ? t.sourceCommand->material : nullptr;
+    const Material *const mat =
+        (t.sourceCommand && t.sourceCommand->material) ? t.sourceCommand->material : nullptr;
     const float opacity = mat ? mat->opacity : 1.0f;
     const float cutoff = mat ? mat->alphaCutoff : 0.5f;
     const Texture *const diffTex = (mat && mat->diffuseTexture) ? mat->diffuseTexture.get() : nullptr;
@@ -518,9 +553,11 @@ void Rasterizer::DrawTriangleAlphaMaskImpl(const PreparedTriangle &t)
                     {
                         const float invQ = 1.0f / q;
                         const float u = (t.rv0.texcoordOverW.x * a + t.rv1.texcoordOverW.x * b +
-                                         t.rv2.texcoordOverW.x * c) * invQ;
+                                         t.rv2.texcoordOverW.x * c) *
+                                        invQ;
                         const float v = (t.rv0.texcoordOverW.y * a + t.rv1.texcoordOverW.y * b +
-                                         t.rv2.texcoordOverW.y * c) * invQ;
+                                         t.rv2.texcoordOverW.y * c) *
+                                        invQ;
                         const auto texColor = SampleTexture(*diffTex, u, v, lod, m_frame);
                         alpha *= texColor.a;
                     }
@@ -565,10 +602,31 @@ void Rasterizer::DrawTriangleAlphaMaskImpl(const PreparedTriangle &t)
         }
     };
 
+    const std::int64_t maxOffset0 = t.dy12Fixed >= 0 ? t.dy12Fixed * 3 : 0;
+    const std::int64_t maxOffset1 = t.dy20Fixed >= 0 ? t.dy20Fixed * 3 : 0;
+    const std::int64_t maxOffset2 = t.dy01Fixed >= 0 ? t.dy01Fixed * 3 : 0;
+    const std::int64_t dy12_4 = t.dy12Fixed * 4;
+    const std::int64_t dy20_4 = t.dy20Fixed * 4;
+    const std::int64_t dy01_4 = t.dy01Fixed * 4;
+
     for (int y = y0; y <= y1; ++y)
     {
         auto w0 = r0, w1 = r1, w2 = r2;
         int x = x0;
+        while (x + 3 <= x1)
+        {
+            if (((w0 + maxOffset0) | (w1 + maxOffset1) | (w2 + maxOffset2)) < 0)
+            {
+                w0 += dy12_4;
+                w1 += dy20_4;
+                w2 += dy01_4;
+                x += 4;
+            }
+            else
+            {
+                break;
+            }
+        }
         while (x <= x1 && (w0 | w1 | w2) < 0)
         {
             w0 += t.dy12Fixed;
@@ -589,8 +647,7 @@ void Rasterizer::DrawTriangleAlphaMaskImpl(const PreparedTriangle &t)
     }
 }
 
-template <bool Instrumented>
-void Rasterizer::DrawTriangleAlphaBlendImpl(const PreparedTriangle &t)
+template <bool Instrumented> void Rasterizer::DrawTriangleAlphaBlendImpl(const PreparedTriangle &t)
 {
     const int x0 = std::max(t.minX, m_bounds.minX);
     const int y0 = std::max(t.minY, m_bounds.minY);
@@ -624,7 +681,8 @@ void Rasterizer::DrawTriangleAlphaBlendImpl(const PreparedTriangle &t)
 
     const float *const depth = m_depthBase;
     unsigned int *const colors = m_colorBase;
-    const Material *const mat = (t.sourceCommand && t.sourceCommand->material) ? t.sourceCommand->material : nullptr;
+    const Material *const mat =
+        (t.sourceCommand && t.sourceCommand->material) ? t.sourceCommand->material : nullptr;
     if (!mat)
         return;
 
@@ -675,7 +733,8 @@ void Rasterizer::DrawTriangleAlphaBlendImpl(const PreparedTriangle &t)
                 {
                     const SRMath::vec3 srcColor = ShadeSurface(sample, *mat, m_frame);
                     const std::uint32_t srcPacked = packColor(srcColor);
-                    const auto colorIndex = static_cast<std::size_t>(y - m_originY) * m_colorStride + (x - m_originX);
+                    const auto colorIndex =
+                        static_cast<std::size_t>(y - m_originY) * m_colorStride + (x - m_originX);
                     const std::uint32_t dstPacked = colors[colorIndex];
 
                     const int srcB = static_cast<int>((srcPacked >> 0) & 0xFF);
@@ -701,10 +760,31 @@ void Rasterizer::DrawTriangleAlphaBlendImpl(const PreparedTriangle &t)
         }
     };
 
+    const std::int64_t maxOffset0 = t.dy12Fixed >= 0 ? t.dy12Fixed * 3 : 0;
+    const std::int64_t maxOffset1 = t.dy20Fixed >= 0 ? t.dy20Fixed * 3 : 0;
+    const std::int64_t maxOffset2 = t.dy01Fixed >= 0 ? t.dy01Fixed * 3 : 0;
+    const std::int64_t dy12_4 = t.dy12Fixed * 4;
+    const std::int64_t dy20_4 = t.dy20Fixed * 4;
+    const std::int64_t dy01_4 = t.dy01Fixed * 4;
+
     for (int y = y0; y <= y1; ++y)
     {
         auto w0 = r0, w1 = r1, w2 = r2;
         int x = x0;
+        while (x + 3 <= x1)
+        {
+            if (((w0 + maxOffset0) | (w1 + maxOffset1) | (w2 + maxOffset2)) < 0)
+            {
+                w0 += dy12_4;
+                w1 += dy20_4;
+                w2 += dy01_4;
+                x += 4;
+            }
+            else
+            {
+                break;
+            }
+        }
         while (x <= x1 && (w0 | w1 | w2) < 0)
         {
             w0 += t.dy12Fixed;
@@ -809,82 +889,374 @@ template <bool Instrumented, RasterPass Pass> void Rasterizer::DrawTriangleImpl(
     {
         cellRow = static_cast<std::size_t>(y0 - m_bounds.minY) * 16;
     }
+    const std::int64_t dy12 = t.dy12Fixed;
+    const std::int64_t dy20 = t.dy20Fixed;
+    const std::int64_t dy01 = t.dy01Fixed;
+
+    const std::int64_t dy12_3 = dy12 * 3;
+    const std::int64_t dy20_3 = dy20 * 3;
+    const std::int64_t dy01_3 = dy01 * 3;
+
+    const std::int64_t dy12_4 = dy12 * 4;
+    const std::int64_t dy20_4 = dy20 * 4;
+    const std::int64_t dy01_4 = dy01 * 4;
+
+    const std::int64_t maxOffset0 = dy12 >= 0 ? dy12_3 : 0;
+    const std::int64_t maxOffset1 = dy20 >= 0 ? dy20_3 : 0;
+    const std::int64_t maxOffset2 = dy01 >= 0 ? dy01_3 : 0;
+
+    const std::int64_t minOffset0 = dy12 >= 0 ? 0 : dy12_3;
+    const std::int64_t minOffset1 = dy20 >= 0 ? 0 : dy20_3;
+    const std::int64_t minOffset2 = dy01 >= 0 ? 0 : dy01_3;
+
+    const __m128 v0_w = _mm_set1_ps(t.rv0.oneOverW);
+    const __m128 v1_w = _mm_set1_ps(t.rv1.oneOverW);
+    const __m128 v2_w = _mm_set1_ps(t.rv2.oneOverW);
+    const __m128 inv256 = _mm_set1_ps(1.f / 256.f);
+    const __m128 one_f = _mm_set1_ps(1.f);
+    const __m128 covEps = _mm_set1_ps(1e-5f);
+    const __m128i idVec = _mm_set1_epi64x(static_cast<std::int64_t>(t.primitiveId));
+    const __m128i triVec = _mm_set1_epi64x(reinterpret_cast<std::intptr_t>(&t));
+
+    const auto shadePixelScalar = [&](int px, [[maybe_unused]] int py, std::int64_t pw0, std::int64_t pw1,
+                                      std::int64_t pw2) SR_FORCEINLINE_LAMBDA
+    {
+        const int localX = px - originX;
+        const float f0 = static_cast<float>(pw0) / 256.f;
+        const float f1 = static_cast<float>(pw1) / 256.f;
+        const float f2 = static_cast<float>(pw2) / 256.f;
+        const float total = f0 + f1 + f2;
+        if (std::isfinite(total) && total >= 1e-5f)
+        {
+            if constexpr (Instrumented)
+                ++m_stats->coveragePassed;
+            const float inverse = 1.f / total;
+            const float a = f0 * inverse, b = f1 * inverse, c = f2 * inverse;
+            float q = t.rv0.oneOverW * a;
+            q += t.rv1.oneOverW * b;
+            q += t.rv2.oneOverW * c;
+            const bool finite = std::isfinite(q) && q > 0.f;
+            const bool visible =
+                Pass == RasterPass::ShadeVisible
+                    ? idRow[localX] == t.primitiveId && depthRow[localX] == q
+                    : q > depthRow[localX] || (q == depthRow[localX] && t.primitiveId < idRow[localX]);
+            if (finite && visible)
+            {
+                if constexpr (Pass != RasterPass::ShadeVisible)
+                {
+                    depthRow[localX] = q;
+                    idRow[localX] = t.primitiveId;
+                }
+                if constexpr (Pass == RasterPass::DepthOwner)
+                {
+                    if (hasMaterial)
+                    {
+                        const std::size_t cell = cellRow + static_cast<std::size_t>(px - m_bounds.minX);
+                        m_ownerScratch.triangles[cell] = &t;
+                        m_ownerScratch.samples[cell] = {a, b, c, q};
+                        m_ownerMask[cell >> 6] |= std::uint64_t{1} << (cell & 63);
+                    }
+                }
+                else if constexpr (Pass != RasterPass::DepthOnly)
+                {
+                    if (hasMaterial)
+                    {
+                        auto sample = InterpolateSurface(t.rv0, t.rv1, t.rv2, a, b, c, 1.f / q);
+                        if (t.sourceCommand->material->normalTexture)
+                            ComputeTriangleTangentFrame(t, sample.tangentWorld, sample.bitangentWorld);
+                        if (m_frame.mipmapping)
+                            sample.lod = ComputeTriangleLod(t);
+                        colorRow[localX] =
+                            packColor(ShadeSurface(sample, *t.sourceCommand->material, m_frame));
+                        if constexpr (Instrumented)
+                            ++m_stats->shadedPixels;
+                    }
+                }
+            }
+            else if constexpr (Instrumented)
+                ++m_stats->depthRejected;
+        }
+    };
+
     for (int y = y0; y <= y1; ++y)
     {
         auto w0 = r0, w1 = r1, w2 = r2;
         int x = x0;
-        // 덮인 구간 앞의 빈 픽셀은 edge만 진행한다.
+
+        // 1. Skip leading blocks of 4 pixels that are guaranteed outside
+        while (x + 3 <= x1)
+        {
+            if (((w0 + maxOffset0) | (w1 + maxOffset1) | (w2 + maxOffset2)) < 0)
+            {
+                w0 += dy12_4;
+                w1 += dy20_4;
+                w2 += dy01_4;
+                x += 4;
+            }
+            else
+            {
+                break;
+            }
+        }
+
+        // 2. Step scalar pixel-by-pixel until first inside pixel
         while (x <= x1 && (w0 | w1 | w2) < 0)
         {
-            w0 += t.dy12Fixed;
-            w1 += t.dy20Fixed;
-            w2 += t.dy01Fixed;
+            w0 += dy12;
+            w1 += dy20;
+            w2 += dy01;
             ++x;
         }
-        // 세 edge 함수는 x에 대해 정수 일차식이므로 행의 덮임 구간은 하나다.
-        // 구간을 벗어나면 그 행의 나머지 픽셀은 볼 필요가 없다.
-        // float 연산 순서는 기존과 같다.
-        for (; x <= x1 && (w0 | w1 | w2) >= 0; ++x)
+
+        // 3. Process blocks of 4 pixels that are fully inside
+        while (x + 3 <= x1)
         {
-            const int localX = x - originX;
-            const float f0 = static_cast<float>(w0) / 256.f;
-            const float f1 = static_cast<float>(w1) / 256.f;
-            const float f2 = static_cast<float>(w2) / 256.f;
-            const float total = f0 + f1 + f2;
-            if (std::isfinite(total) && total >= 1e-5f)
+            if (((w0 + minOffset0) | (w1 + minOffset1) | (w2 + minOffset2)) >= 0)
             {
-                if constexpr (Instrumented)
-                    ++m_stats->coveragePassed;
-                const float inverse = 1.f / total;
-                const float a = f0 * inverse, b = f1 * inverse, c = f2 * inverse;
-                float q = t.rv0.oneOverW * a;
-                q += t.rv1.oneOverW * b;
-                q += t.rv2.oneOverW * c;
-                const bool finite = std::isfinite(q) && q > 0.f;
-                const bool visible = Pass == RasterPass::ShadeVisible
-                                         ? idRow[localX] == t.primitiveId && depthRow[localX] == q
-                                         : q > depthRow[localX] || (q == depthRow[localX] && t.primitiveId < idRow[localX]);
-                if (finite && visible)
+                if constexpr (Pass == RasterPass::DepthOwner)
                 {
-                    if constexpr (Pass != RasterPass::ShadeVisible)
+                    const int localX = x - originX;
+                    const auto w0_1 = w0 + dy12;
+                    const auto w0_2 = w0 + dy12 * 2;
+                    const auto w0_3 = w0 + dy12_3;
+
+                    const auto w1_1 = w1 + dy20;
+                    const auto w1_2 = w1 + dy20 * 2;
+                    const auto w1_3 = w1 + dy20_3;
+
+                    const auto w2_1 = w2 + dy01;
+                    const auto w2_2 = w2 + dy01 * 2;
+                    const auto w2_3 = w2 + dy01_3;
+
+                    const __m128 f0 =
+                        _mm_mul_ps(_mm_set_ps(static_cast<float>(w0_3), static_cast<float>(w0_2),
+                                              static_cast<float>(w0_1), static_cast<float>(w0)),
+                                   inv256);
+                    const __m128 f1 =
+                        _mm_mul_ps(_mm_set_ps(static_cast<float>(w1_3), static_cast<float>(w1_2),
+                                              static_cast<float>(w1_1), static_cast<float>(w1)),
+                                   inv256);
+                    const __m128 f2 =
+                        _mm_mul_ps(_mm_set_ps(static_cast<float>(w2_3), static_cast<float>(w2_2),
+                                              static_cast<float>(w2_1), static_cast<float>(w2)),
+                                   inv256);
+
+                    const __m128 total = _mm_add_ps(_mm_add_ps(f0, f1), f2);
+                    const __m128 covMask = _mm_cmpge_ps(total, covEps);
+                    if (_mm_movemask_ps(covMask) == 0x0F)
                     {
-                        depthRow[localX] = q;
-                        idRow[localX] = t.primitiveId;
-                    }
-                    if constexpr (Pass == RasterPass::DepthOwner)
-                    {
-                        // Shaded 패스라면 여기서 색을 썼을 것이다. 덮어쓴 색은 결국 버려지므로 주인만 바꾼다.
-                        if (hasMaterial)
+                        if constexpr (Instrumented)
+                            m_stats->coveragePassed += 4;
+
+                        const __m128 invTotal = _mm_div_ps(one_f, total);
+                        __m128 a = _mm_mul_ps(f0, invTotal);
+                        __m128 b = _mm_mul_ps(f1, invTotal);
+                        __m128 c = _mm_mul_ps(f2, invTotal);
+
+                        const __m128 q = _mm_add_ps(_mm_add_ps(_mm_mul_ps(v0_w, a), _mm_mul_ps(v1_w, b)),
+                                                    _mm_mul_ps(v2_w, c));
+                        const __m128 curDepth = _mm_loadu_ps(&depthRow[localX]);
+
+                        const __m128 cmpGt = _mm_cmpgt_ps(q, curDepth);
+                        const int passMask = _mm_movemask_ps(cmpGt);
+
+                        if (passMask == 0x0F)
                         {
-                            const std::size_t cell = cellRow + static_cast<std::size_t>(x - m_bounds.minX);
-                            m_ownerScratch.triangles[cell] = &t;
-                            m_ownerScratch.samples[cell] = {a, b, c, q};
-                            m_ownerMask[cell >> 6] |= std::uint64_t{1} << (cell & 63);
+                            _mm_storeu_ps(&depthRow[localX], q);
+                            _mm_storeu_si128(reinterpret_cast<__m128i *>(&idRow[localX]), idVec);
+                            _mm_storeu_si128(reinterpret_cast<__m128i *>(&idRow[localX + 2]), idVec);
+
+                            if (hasMaterial)
+                            {
+                                const std::size_t cell =
+                                    cellRow + static_cast<std::size_t>(x - m_bounds.minX);
+                                _mm_storeu_si128(
+                                    reinterpret_cast<__m128i *>(&m_ownerScratch.triangles[cell + 0]), triVec);
+                                _mm_storeu_si128(
+                                    reinterpret_cast<__m128i *>(&m_ownerScratch.triangles[cell + 2]), triVec);
+
+                                __m128 s0 = a, s1 = b, s2 = c, s3 = q;
+                                _MM_TRANSPOSE4_PS(s0, s1, s2, s3);
+                                _mm_storeu_ps(reinterpret_cast<float *>(&m_ownerScratch.samples[cell + 0]),
+                                              s0);
+                                _mm_storeu_ps(reinterpret_cast<float *>(&m_ownerScratch.samples[cell + 1]),
+                                              s1);
+                                _mm_storeu_ps(reinterpret_cast<float *>(&m_ownerScratch.samples[cell + 2]),
+                                              s2);
+                                _mm_storeu_ps(reinterpret_cast<float *>(&m_ownerScratch.samples[cell + 3]),
+                                              s3);
+
+                                if ((cell & 63) <= 60)
+                                {
+                                    m_ownerMask[cell >> 6] |= std::uint64_t{0x0F} << (cell & 63);
+                                }
+                                else
+                                {
+                                    m_ownerMask[(cell + 0) >> 6] |= std::uint64_t{1} << ((cell + 0) & 63);
+                                    m_ownerMask[(cell + 1) >> 6] |= std::uint64_t{1} << ((cell + 1) & 63);
+                                    m_ownerMask[(cell + 2) >> 6] |= std::uint64_t{1} << ((cell + 2) & 63);
+                                    m_ownerMask[(cell + 3) >> 6] |= std::uint64_t{1} << ((cell + 3) & 63);
+                                }
+                            }
+                        }
+                        else
+                        {
+                            alignas(16) float a_arr[4], b_arr[4], c_arr[4], q_arr[4];
+                            _mm_store_ps(a_arr, a);
+                            _mm_store_ps(b_arr, b);
+                            _mm_store_ps(c_arr, c);
+                            _mm_store_ps(q_arr, q);
+
+                            for (int i = 0; i < 4; ++i)
+                            {
+                                const float qi = q_arr[i];
+                                const int lx = localX + i;
+                                const bool finite = std::isfinite(qi) && qi > 0.f;
+                                const bool visible =
+                                    finite &&
+                                    (qi > depthRow[lx] || (qi == depthRow[lx] && t.primitiveId < idRow[lx]));
+                                if (visible)
+                                {
+                                    depthRow[lx] = qi;
+                                    idRow[lx] = t.primitiveId;
+                                    if (hasMaterial)
+                                    {
+                                        const std::size_t cell_i =
+                                            cellRow + static_cast<std::size_t>(x + i - m_bounds.minX);
+                                        m_ownerScratch.triangles[cell_i] = &t;
+                                        m_ownerScratch.samples[cell_i] = {a_arr[i], b_arr[i], c_arr[i], qi};
+                                        m_ownerMask[cell_i >> 6] |= std::uint64_t{1} << (cell_i & 63);
+                                    }
+                                }
+                                else if constexpr (Instrumented)
+                                {
+                                    ++m_stats->depthRejected;
+                                }
+                            }
                         }
                     }
-                    else if constexpr (Pass != RasterPass::DepthOnly)
+                    else
                     {
-                        if (hasMaterial)
-                        {
-                            auto sample = InterpolateSurface(t.rv0, t.rv1, t.rv2, a, b, c, 1.f / q);
-                            if (t.sourceCommand->material->normalTexture)
-                                ComputeTriangleTangentFrame(t, sample.tangentWorld, sample.bitangentWorld);
-                            if (m_frame.mipmapping)
-                                sample.lod = ComputeTriangleLod(t);
-                            colorRow[localX] = packColor(ShadeSurface(sample, *t.sourceCommand->material, m_frame));
-                            if constexpr (Instrumented)
-                                ++m_stats->shadedPixels;
-                        }
+                        shadePixelScalar(x + 0, y, w0, w1, w2);
+                        shadePixelScalar(x + 1, y, w0_1, w1_1, w2_1);
+                        shadePixelScalar(x + 2, y, w0_2, w1_2, w2_2);
+                        shadePixelScalar(x + 3, y, w0_3, w1_3, w2_3);
                     }
                 }
-                else if constexpr (Instrumented)
-                    ++m_stats->depthRejected;
+                else if constexpr (Pass == RasterPass::DepthOnly)
+                {
+                    const int localX = x - originX;
+                    const auto w0_1 = w0 + dy12;
+                    const auto w0_2 = w0 + dy12 * 2;
+                    const auto w0_3 = w0 + dy12_3;
+
+                    const auto w1_1 = w1 + dy20;
+                    const auto w1_2 = w1 + dy20 * 2;
+                    const auto w1_3 = w1 + dy20_3;
+
+                    const auto w2_1 = w2 + dy01;
+                    const auto w2_2 = w2 + dy01 * 2;
+                    const auto w2_3 = w2 + dy01_3;
+
+                    const __m128 f0 =
+                        _mm_mul_ps(_mm_set_ps(static_cast<float>(w0_3), static_cast<float>(w0_2),
+                                              static_cast<float>(w0_1), static_cast<float>(w0)),
+                                   inv256);
+                    const __m128 f1 =
+                        _mm_mul_ps(_mm_set_ps(static_cast<float>(w1_3), static_cast<float>(w1_2),
+                                              static_cast<float>(w1_1), static_cast<float>(w1)),
+                                   inv256);
+                    const __m128 f2 =
+                        _mm_mul_ps(_mm_set_ps(static_cast<float>(w2_3), static_cast<float>(w2_2),
+                                              static_cast<float>(w2_1), static_cast<float>(w2)),
+                                   inv256);
+
+                    const __m128 total = _mm_add_ps(_mm_add_ps(f0, f1), f2);
+                    const __m128 covMask = _mm_cmpge_ps(total, covEps);
+                    if (_mm_movemask_ps(covMask) == 0x0F)
+                    {
+                        if constexpr (Instrumented)
+                            m_stats->coveragePassed += 4;
+
+                        const __m128 invTotal = _mm_div_ps(one_f, total);
+                        const __m128 a = _mm_mul_ps(f0, invTotal);
+                        const __m128 b = _mm_mul_ps(f1, invTotal);
+                        const __m128 c = _mm_mul_ps(f2, invTotal);
+
+                        const __m128 q = _mm_add_ps(_mm_add_ps(_mm_mul_ps(v0_w, a), _mm_mul_ps(v1_w, b)),
+                                                    _mm_mul_ps(v2_w, c));
+                        const __m128 curDepth = _mm_loadu_ps(&depthRow[localX]);
+
+                        const __m128 cmpGt = _mm_cmpgt_ps(q, curDepth);
+                        const int passMask = _mm_movemask_ps(cmpGt);
+
+                        if (passMask == 0x0F)
+                        {
+                            _mm_storeu_ps(&depthRow[localX], q);
+                            _mm_storeu_si128(reinterpret_cast<__m128i *>(&idRow[localX]), idVec);
+                            _mm_storeu_si128(reinterpret_cast<__m128i *>(&idRow[localX + 2]), idVec);
+                        }
+                        else
+                        {
+                            alignas(16) float q_arr[4];
+                            _mm_store_ps(q_arr, q);
+
+                            for (int i = 0; i < 4; ++i)
+                            {
+                                const float qi = q_arr[i];
+                                const int lx = localX + i;
+                                const bool finite = std::isfinite(qi) && qi > 0.f;
+                                const bool visible =
+                                    finite &&
+                                    (qi > depthRow[lx] || (qi == depthRow[lx] && t.primitiveId < idRow[lx]));
+                                if (visible)
+                                {
+                                    depthRow[lx] = qi;
+                                    idRow[lx] = t.primitiveId;
+                                }
+                                else if constexpr (Instrumented)
+                                {
+                                    ++m_stats->depthRejected;
+                                }
+                            }
+                        }
+                    }
+                    else
+                    {
+                        shadePixelScalar(x + 0, y, w0, w1, w2);
+                        shadePixelScalar(x + 1, y, w0_1, w1_1, w2_1);
+                        shadePixelScalar(x + 2, y, w0_2, w1_2, w2_2);
+                        shadePixelScalar(x + 3, y, w0_3, w1_3, w2_3);
+                    }
+                }
+                else
+                {
+                    shadePixelScalar(x + 0, y, w0, w1, w2);
+                    shadePixelScalar(x + 1, y, w0 + dy12, w1 + dy20, w2 + dy01);
+                    shadePixelScalar(x + 2, y, w0 + dy12 * 2, w1 + dy20 * 2, w2 + dy01 * 2);
+                    shadePixelScalar(x + 3, y, w0 + dy12_3, w1 + dy20_3, w2 + dy01_3);
+                }
+
+                w0 += dy12_4;
+                w1 += dy20_4;
+                w2 += dy01_4;
+                x += 4;
             }
-            // 퇴화/zero-weight 픽셀도 반드시 edge를 진행한다.
-            w0 += t.dy12Fixed;
-            w1 += t.dy20Fixed;
-            w2 += t.dy01Fixed;
+            else
+            {
+                break;
+            }
         }
+
+        // 4. Scalar tail for remaining inside pixels (0 to 3 pixels)
+        for (; x <= x1 && (w0 | w1 | w2) >= 0; ++x)
+        {
+            shadePixelScalar(x, y, w0, w1, w2);
+            w0 += dy12;
+            w1 += dy20;
+            w2 += dy01;
+        }
+
         r0 -= t.dx12Fixed;
         r1 -= t.dx20Fixed;
         r2 -= t.dx01Fixed;
@@ -908,12 +1280,14 @@ void Rasterizer::ShadeOwners()
     static_assert(tileSize == 16);
     // a, b, c, q는 DrawTriangleImpl<DepthOwner>가 이 픽셀을 마지막으로 통과시킬 때 계산한 값 그대로다.
     // 이전처럼 edge 시작값(toFixed)과 정수 edge 값, 1/total을 다시 계산하지 않는다. 같은 값이라 색이 같다.
-    // 픽셀 8개씩(AVX2 지원 시) 또는 4개씩(SSE) SIMD lane에 나눠 셰이딩하고, 남은 픽셀은 4개 묶음 또는 스칼라로 한다.
+    // 픽셀 8개씩(AVX2 지원 시) 또는 4개씩(SSE) SIMD lane에 나눠 셰이딩하고, 남은 픽셀은 4개 묶음 또는
+    // 스칼라로 한다.
     const auto store = [&](std::size_t cell, const SRMath::vec3 &color) SR_FORCEINLINE_LAMBDA
     {
         const int x = m_bounds.minX + static_cast<int>(cell & 15);
         const int y = m_bounds.minY + static_cast<int>(cell >> 4);
-        m_colorBase[static_cast<std::size_t>(y - m_originY) * m_colorStride + (x - m_originX)] = packColor(color);
+        m_colorBase[static_cast<std::size_t>(y - m_originY) * m_colorStride + (x - m_originX)] =
+            packColor(color);
     };
     const bool useAvx2 = SRMath::SIMD::avx2_available();
     const int targetBatch = useAvx2 ? 8 : 4;
