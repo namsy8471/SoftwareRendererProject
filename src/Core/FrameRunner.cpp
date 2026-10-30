@@ -26,6 +26,9 @@ void FrameRunner::Update(float deltaTime, int width, int height, std::span<const
 
     const float aspectRatio = static_cast<float>(width) / static_cast<float>(height);
     m_scene.Update(deltaTime, aspectRatio, keys);
+    const Camera &camera = m_scene.GetCamera();
+    const SRMath::mat4 &projection = camera.GetProjectionMatrix();
+    m_collector.SetLodView(projection * camera.GetViewMatrix(), projection[1][1] * static_cast<float>(height) * 0.5f);
     m_collector.Collect(m_scene.GetRootObjects(), m_scene.GetCamera().GetFrustum(), m_debugFlags, m_renderQueue);
 
     if (m_debugFlags.bShowLightDirection)

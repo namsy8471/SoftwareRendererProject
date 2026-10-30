@@ -30,8 +30,8 @@
 | 파일 | 역할 |
 | --- | --- |
 | `FrameRunner.h` · `FrameRunner.cpp` | **FrameRunner**: 플랫폼 무관 한 프레임(시작 훅 → `Scene::Update` → 수집 → Clear → `RenderScene`). Scene·Renderer·DebugFlags 소유 |
-| `SceneRenderCollector.h` · `SceneRenderCollector.cpp` | **SceneRenderCollector**: 장면 → RenderQueue. 프러스텀/옥트리 컬링, 메시별 병렬 batch, 법선·AABB 디버그 선 |
-| `DebugFlags.h` | **DebugFlags**: 디버그 표시 토글(법선, AABB, 와이어프레임, 광원 방향). SceneRenderCollector만 읽는다 |
+| `SceneRenderCollector.h` · `SceneRenderCollector.cpp` | **SceneRenderCollector**: 장면 → RenderQueue. 프러스텀/옥트리 컬링, 화면 오차 기준 메시 LOD 선택, 메시별 병렬 batch, 법선·AABB 디버그 선 |
+| `DebugFlags.h` | **DebugFlags**: 디버그 표시 토글(법선, AABB, 와이어프레임, 광원 방향, LOD 끄기). SceneRenderCollector만 읽는다 |
 | `DemoScene.h` · `DemoScene.cpp` | 벤치·골든 고정 장면. **`sr::demo::LoadScene`**(모델 표), **`FitCameraToScene`**/`FitCameraToBounds`. 바꾸면 벤치 기준·골든이 바뀐다 |
 | `HeadlessRunner.h` · `HeadlessRunner.cpp` | 창 없는 실행. **ViewMode**(Fill/Wire/Normal/AABB/FXAA), **RunConfig**, **`Run()`** → FrameTimings·RunResult(픽셀 해시 포함) |
 
@@ -77,7 +77,8 @@
 
 | 파일 | 역할 |
 | --- | --- |
-| `Mesh.h` · `Mesh.cpp` | **Vertex**, **Mesh**(정점·인덱스·탄젠트·재질·Octree), `ComputeLocalAABB`, `ComputeTangents` |
+| `Mesh.h` · `Mesh.cpp` | **Vertex**, **Mesh**(정점·인덱스·탄젠트·재질·Octree·**MeshLod** 목록), `ComputeLocalAABB`, `ComputeTangents` |
+| `MeshSimplifier.h` · `MeshSimplifier.cpp` | `sr::lod::BuildLodChain`: quadric 오차 half-edge collapse로 메시 LOD 인덱스 단계를 만든다(정점 버퍼 공유, 경계·이음새·다른 메시와 맞닿는 정점 고정) |
 | `Model.h` · `Model.cpp` | **Model**: Mesh 묶음 + 모델 AABB. ModelLoader만 채운다. `Model.cpp`는 빈 파일 |
 | `Material.h` | **Material**: MTL/Phong 값(ambient·diffuse·specular·shininess·opacity)과 diffuse·normal 텍스처 |
 | `Light.h` | **DirectionalLight**(방향 = 광선 진행 방향), **PointLight**, **SpotLight** |

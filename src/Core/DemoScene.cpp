@@ -333,8 +333,6 @@ Mesh CloneMesh(const Mesh &src)
     Mesh dest;
     dest.vertices = src.vertices;
     dest.indices = src.indices;
-    dest.lodIndices = src.lodIndices;
-    dest.lodIndicesFar = src.lodIndicesFar;
     dest.material = src.material;
     dest.localAABB = src.localAABB;
     const auto tangents = src.GetTangents();

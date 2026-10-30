@@ -111,8 +111,9 @@ tools/dev.sh render wire out.png
 ```
 
 `srcli` 옵션: `--size WxH --frames N --warmup N --mode fill|wire|normal|aabb|fxaa --opt none|sort|hiz|both
---hidden-wire --dda --stats --threads N --load-every N --target-fps F --require-target --json --out file.png`.
+--hidden-wire --no-lod --dda --stats --threads N --load-every N --target-fps F --require-target --json --out file.png`.
 `--load-every N`은 측정 중 N프레임마다 teapot.obj를 백그라운드로 로드한다(결과는 버려 픽셀 동일). 로딩이 p95를 흔드는지 볼 때 쓴다.
+`--no-lod`는 메시 LOD를 끄고 원본 삼각형만 그린다. LOD 도입 전과 같은 화면(pixel_hash)이라 LOD 전후 비교에 쓴다.
 `--scene`은 데모 대신 glTF 장면을 가장 긴 변 4로 맞춰 그리고 `--clip` 애니메이션을 재생한다(자동 회전 끔). JSON에 `skinned_vertices`, `joints`,
 `anim_ms`(포즈 + 계층 transform + 스키닝 한 번의 평균, 측정 프레임 뒤 따로 잼)가 붙는다. 데모 장면 판정 수치와 섞지 않는다.
 `--stats`는 패스별 시간(`prepare/bin/raster/line/post_ms`)과 카운터를 JSON에 넣지만 측정을 느리게 하므로 최종 수치에는 쓰지 않는다.

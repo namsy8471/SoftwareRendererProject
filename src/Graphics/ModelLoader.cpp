@@ -14,6 +14,7 @@
 #include "Graphics/Model.h"
 #include "Graphics/AssetParsing.h"
 #include "Graphics/Octree.h"
+#include "Graphics/MeshSimplifier.h"
 #include "Graphics/Material.h"
 #include "Math/AABB.h"
 
@@ -413,8 +414,13 @@ void generateMissingNormals(Mesh &mesh)
         }
     }
 }
+// 원본 대비 삼각형 비율. 한 단계마다 절반씩 줄여 화면 오차에 맞는 단계를 고를 폭을 둔다.
+constexpr std::array lodTriangleRatios{0.5f, 0.25f, 0.125f, 0.0625f};
+constexpr sr::lod::LodChainSettings lodSettings{.triangleRatios = lodTriangleRatios};
+
 AABB buildSpatialData(std::span<Mesh> meshes)
 {
+    const auto sharedPositions = sr::lod::FindSharedPositions(meshes);
     sr::jobs::PerWorker<AABB> localBounds;
     sr::jobs::ParallelFor(std::size_t{0}, meshes.size(),
                           [&](std::size_t first, std::size_t last)
@@ -429,7 +435,8 @@ AABB buildSpatialData(std::span<Mesh> meshes)
                                   localBounds.Local().Encapsulate(mesh.localAABB);
                                   mesh.octree = std::make_unique<Octree>();
                                   mesh.octree->Build(mesh);
-                                  mesh.BuildLODs();
+                                  mesh.lods = sr::lod::BuildLodChain(mesh.vertices, mesh.indices, lodSettings,
+                                                                                     sharedPositions[index]);
                               }
                           });
     AABB bounds;

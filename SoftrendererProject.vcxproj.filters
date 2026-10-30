@@ -58,6 +58,9 @@
     <ClCompile Include="src\Graphics\ModelLoader.cpp">
       <Filter>소스 파일</Filter>
     </ClCompile>
+    <ClCompile Include="src\Graphics\MeshSimplifier.cpp">
+      <Filter>소스 파일</Filter>
+    </ClCompile>
     <ClCompile Include="src\Graphics\Octree.cpp">
       <Filter>소스 파일</Filter>
     </ClCompile>
@@ -112,6 +115,9 @@
       <Filter>헤더 파일</Filter>
     </ClInclude>
     <ClInclude Include="src\Graphics\ModelLoader.h">
+      <Filter>헤더 파일</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Graphics\MeshSimplifier.h">
       <Filter>헤더 파일</Filter>
     </ClInclude>
     <ClInclude Include="src\Graphics\Octree.h">

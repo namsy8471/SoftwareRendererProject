@@ -74,6 +74,9 @@ class Rasterizer
     static bool PrepareRasterInto(PreparedTriangle &out, const RasterizerVertex &, const RasterizerVertex &,
                                   const RasterizerVertex &, int width, int height, std::uint64_t primitiveId,
                                   const MeshRenderCommand *command);
+    // 한 타일 안의 4x4 픽셀 이하 삼각형이 어떤 픽셀도 칠하지 않는지 DrawTriangle*Impl과 같은 연산으로 판정한다.
+    // true면 모든 채움 패스가 이 삼각형에서 아무것도 쓰지 않으므로 빈닝 전에 버려도 결과가 같다.
+    static bool CoversNoPixel(const PreparedTriangle &t);
     static std::optional<PreparedTriangle> PrepareRaster(const RasterizerVertex &, const RasterizerVertex &,
                                                          const RasterizerVertex &, int width, int height,
                                                          std::uint64_t primitiveId,
@@ -81,8 +84,18 @@ class Rasterizer
     // buffer를 주면 16x16 이하 타일은 색/깊이/ID를 그 타일 버퍼에서 그리고 EndTile에서 타깃에 한 번 쓴다.
     // cleared면 타깃을 읽지 않고 Clear와 같은 값으로 시작한다(타깃의 그 영역은 EndTile이 덮는다).
     // buffer가 없으면 예전처럼 타깃에 바로 그린다(cleared는 무시하므로 호출자가 먼저 지운다).
-    void BeginTile(TileBounds bounds, bool hiZ, bool cleared = false, TileBuffer *buffer = nullptr);
+    // ID 면이 없는 타깃에서 두 번에 나눠 그리는 타일은 앞 패스의 픽셀 주인 ID를 idsIn/idsOut(타일 버퍼와 같은
+    // 16칸 행 배치, 256개)으로 넘긴다. idsIn이 있으면 cleared가 아닐 때 ID를 0으로 꾸미지 않고 여기서 읽고,
+    // idsOut이 있으면 EndTile이 ID를 여기에 쓴다. 같은 깊이에서 작은 ID가 이기는 규칙이 패스 경계에서도 그대로다.
+    void BeginTile(TileBounds bounds, bool hiZ, bool cleared = false, TileBuffer *buffer = nullptr,
+                   const std::uint64_t *idsIn = nullptr, std::uint64_t *idsOut = nullptr);
     void EndTile();
+    // 타일 버퍼로 그리는 중이면 4x4 블록 16개의 최소 깊이(1/w, 가장 먼 값)를 out[by * 4 + bx]에 쓰고 true다.
+    // 빈 픽셀은 emptyDepth(float 최솟값)라 그 블록은 무엇도 가리지 않는다. 타일 밖 블록도 emptyDepth다.
+    bool ComputeBlockMinimums(std::array<float, 16> &out) const noexcept;
+    // 삼각형의 어떤 픽셀 깊이(보간 1/w)도 넘지 않는 상한. 보간 오차를 바깥쪽으로 넓힌다.
+    // subnormal/overflow처럼 오차 가정이 깨지면 false다(그때는 가려졌다고 보지 않는다).
+    static bool ConservativeDepthUpper(const PreparedTriangle &, float &upper) noexcept;
     // 선의 픽셀 위상을 바꾸지 않고 담당 행만 그린다. Bresenham은 원래
     // 정수 오차 상태를 복원해 건너뛰며 DDA는 순차 누적을 유지한다. 서로 겹치지 않는
     // [minY, maxY)를 맡긴 worker끼리는 색상 버퍼를 안전하게 공유할 수 있다.
@@ -152,6 +165,7 @@ class Rasterizer
     int m_originX = 0, m_originY = 0;
     bool m_local = false;
     TileBuffer *m_tile = nullptr;
+    std::uint64_t *m_idsOut = nullptr;
 
     // 패스 선택은 삼각형당 한 번만 한다. 픽셀 루프에는 depth-only의 조명 분기를 남기지 않는다.
     template <bool Instrumented, RasterPass Pass> void DrawTriangleImpl(const PreparedTriangle &);

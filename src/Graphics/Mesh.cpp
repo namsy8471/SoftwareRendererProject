@@ -85,35 +85,6 @@ void Mesh::ComputeTangents()
     }
 }
 
-void Mesh::BuildLODs()
-{
-    const std::size_t triCount = indices.size() / 3;
-    if (triCount <= 2)
-    {
-        lodIndices = indices;
-        lodIndicesFar = indices;
-        return;
-    }
-
-    lodIndices.clear();
-    lodIndices.reserve(((triCount + 1) / 2) * 3);
-    for (std::size_t t = 0; t < triCount; t += 2)
-    {
-        lodIndices.push_back(indices[t * 3]);
-        lodIndices.push_back(indices[t * 3 + 1]);
-        lodIndices.push_back(indices[t * 3 + 2]);
-    }
-
-    lodIndicesFar.clear();
-    lodIndicesFar.reserve(((triCount + 2) / 3) * 3);
-    for (std::size_t t = 0; t < triCount; t += 3)
-    {
-        lodIndicesFar.push_back(indices[t * 3]);
-        lodIndicesFar.push_back(indices[t * 3 + 1]);
-        lodIndicesFar.push_back(indices[t * 3 + 2]);
-    }
-}
-
 AABB ComputeLocalAABB(const Mesh &mesh) noexcept
 {
     if (mesh.vertices.empty())

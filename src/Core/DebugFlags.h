@@ -8,4 +8,5 @@ struct DebugFlags
     bool bShowAABB = false;           // AABB 표시 여부
     bool bShowWireframe = false;      // 와이어프레임 표시 여부
     bool bShowLightDirection = false; // 방향광 진행/셰이딩 방향 표시 여부
+    bool bDisableLod = false;         // 메시 LOD를 끄고 항상 원본 삼각형을 그린다(비교·디버그용)
 };

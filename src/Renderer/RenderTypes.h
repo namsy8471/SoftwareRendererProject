@@ -102,6 +102,8 @@ struct RenderOptions
     bool collectStats = false;
     // 기본 와이어는 기존 X-ray 표시다. 숨은 선 제거를 선택한 경우에만 면 깊이를 만든다.
     bool hiddenWireframe = false;
+    // 가까운 물체를 먼저 그려 만든 깊이로 뒤 물체의 가려진 삼각형을 타일 분류 전에 버린다(픽셀은 같다).
+    bool occlusionPasses = true;
     bool bilinearFiltering = false;
     bool mipmapping = false;
     bool srgbGamma = false;
@@ -118,6 +120,8 @@ struct RenderStats
     std::uint64_t preparedTriangles = 0, binReferences = 0;
     std::uint64_t coveragePassed = 0, depthRejected = 0, shadedPixels = 0;
     std::uint64_t finalFilledPixels = 0, hiZTests = 0, hiZRejected = 0, lineDepthRejected = 0;
+    // 두 패스 프레임에서 앞 패스 깊이에 완전히 가려져 분류 전에 버린 뒤 패스 삼각형 수.
+    std::uint64_t occlusionRejected = 0;
     // retainedBinBytes: private flat 참조/최종 포인터/wire/debug bin capacity와
     // count·cursor·prefix offset·컨테이너 헤더·touched/활성 worker 목록.
     // allocator 내부 오버헤드 및 RSS는 별도다.

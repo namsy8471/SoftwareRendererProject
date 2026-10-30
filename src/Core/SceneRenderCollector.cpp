@@ -3,12 +3,14 @@
 #include "Core/DebugFlags.h"
 #include "Graphics/Model.h"
 #include "Graphics/Octree.h"
+#include "Math/AABB.h"
 #include "Math/Frustum.h"
 #include "Renderer/DebugGizmos.h"
 #include "Renderer/RenderQueue.h"
 #include "Scene/GameObject.h"
 
 #include <algorithm>
+#include <cmath>
 #include <utility>
 #include "Utils/Jobs.h"
 
@@ -42,8 +44,9 @@ void SceneRenderCollector::traverseObject(const GameObject &object, const Frustu
     else if (object.GetModel() && frustum.IsAABBInFrustum(object.GetWorldAABB()))
     {
         const std::span<const Mesh> meshes = object.GetModel()->GetMeshes();
+        const float lodError = flags.bShowAABB || flags.bDisableLod ? 0.f : allowedLodError(object);
         for (const auto &mesh : meshes)
-            m_visibleMeshTasks.push_back(VisibleMeshTask{.object = &object, .mesh = &mesh});
+            m_visibleMeshTasks.push_back(VisibleMeshTask{.object = &object, .mesh = &mesh, .allowedLodError = lodError});
     }
 
     // 부모 AABB는 자식 전체를 포함하지 않는다. 부모가 보이지 않아도 자식은 검사한다.
@@ -79,7 +82,8 @@ void SceneRenderCollector::processVisibleMeshTasks(const Frustum &frustum,
                               for (std::size_t i = first; i != last; ++i)
                               {
                                   const auto &task = m_visibleMeshTasks[i];
-                                  collectMeshCommands(*task.object, *task.mesh, frustum, flags, m_batches[i]);
+                                  collectMeshCommands(*task.object, *task.mesh, task.allowedLodError, frustum, flags,
+                                                      m_batches[i]);
                               }
                           });
 
@@ -89,6 +93,34 @@ void SceneRenderCollector::processVisibleMeshTasks(const Frustum &frustum,
     for (std::size_t i = 0; i < meshCount; ++i)
         for (auto &command : m_batches[i].debugCommands)
             queue.Submit(std::move(command));
+}
+
+float SceneRenderCollector::allowedLodError(const GameObject &object) const noexcept
+{
+    if (m_pixelsPerUnitAtUnitDepth <= 0.f)
+        return 0.f;
+    // 원근 투영에서 clip w는 시점 깊이다. w는 위치의 일차식이라 상자 위의 최솟값은 축마다
+    // 계수 부호에 맞는 쪽(min 또는 max)을 고르면 된다. 가장 가까운 점이 가장 크게 보이므로 보수적이다.
+    const AABB &bounds = object.GetWorldAABB();
+    const SRMath::mat4 &vp = m_viewProjection;
+    float nearestDepth = vp[3][3];
+    for (int axis = 0; axis < 3; ++axis)
+    {
+        const float k = vp[axis][3];
+        nearestDepth += std::min(k * bounds.min[axis], k * bounds.max[axis]);
+    }
+    // 카메라가 상자 안에 있거나 아주 가까우면 원본을 그린다.
+    constexpr float minDepth = 1e-3f;
+    if (!(nearestDepth > minDepth))
+        return 0.f;
+    // 로컬 길이 1은 world 행렬의 가장 긴 축 길이만큼 늘어난다(비균일 스케일에서도 과소평가하지 않는다).
+    const SRMath::mat4 &world = object.GetWorldMatrix();
+    float maxScale2 = 0.f;
+    for (int column = 0; column < 3; ++column)
+        maxScale2 = std::max(maxScale2, world[column][0] * world[column][0] + world[column][1] * world[column][1] +
+                                            world[column][2] * world[column][2]);
+    const float pixelsPerLocalUnit = m_pixelsPerUnitAtUnitDepth * std::sqrt(maxScale2) / nearestDepth;
+    return pixelsPerLocalUnit > 0.f ? lodErrorPixels / pixelsPerLocalUnit : 0.f;
 }
 
 void SceneRenderCollector::collectSkinnedMeshes(const sr::anim::SkinnedMesh &skinned, const DebugFlags &flags,
@@ -122,7 +154,7 @@ void SceneRenderCollector::collectSkinnedMeshes(const sr::anim::SkinnedMesh &ski
     }
 }
 
-void SceneRenderCollector::collectMeshCommands(const GameObject &object, const Mesh &mesh,
+void SceneRenderCollector::collectMeshCommands(const GameObject &object, const Mesh &mesh, float allowedLodError,
                                                const Frustum &frustum, const DebugFlags &flags,
                                                MeshCommandBatch &batch)
 {
@@ -148,85 +180,43 @@ void SceneRenderCollector::collectMeshCommands(const GameObject &object, const M
                                   .normalMatrix = &normalMatrix});
     };
 
-    if (flags.bShowAABB)
+    // 오차가 허용치 이하인 가장 거친 단계. 단계 오차는 오름차순이다.
+    const MeshLod *lod = nullptr;
+    for (const auto &candidate : mesh.lods)
+    {
+        if (candidate.error > allowedLodError)
+            break;
+        lod = &candidate;
+    }
+
+    if (lod)
+    {
+        // LOD 인덱스에는 옥트리가 없다. 화면에서 작게 보이는 메시라 메시 상자 하나로 컬링한다.
+        if (frustum.IsAABBInFrustum(AABBTransformer(world).Transform(mesh.localAABB)))
+            submitRange(lod->indices);
+    }
+    else if (mesh.octree && !flags.bShowAABB)
+        mesh.octree->ForEachVisibleRange(frustum, world, submitRange);
+    else if (mesh.octree)
     {
         // AABB 표시는 보이는 노드마다 상자를 그려야 하므로 노드 단위로 돈다.
-        if (mesh.octree)
-        {
-            mesh.octree->ForEachVisibleNode(
-                frustum, world,
-                [&](std::span<const unsigned int> indices, const AABB &worldBounds)
-                {
-                    if (!indices.empty())
-                        batch.commands.push_back(MeshRenderCommand{.sourceMesh = &mesh,
-                                                                   .indicesToDraw = indices,
-                                                                   .worldTransform = world,
-                                                                   .material = &mesh.material,
-                                                                   .rasterizeMode = rasterizeMode,
-                                                                   .normalMatrix = &normalMatrix});
+        mesh.octree->ForEachVisibleNode(
+            frustum, world,
+            [&](std::span<const unsigned int> indices, const AABB &worldBounds)
+            {
+                if (!indices.empty())
+                    batch.commands.push_back(MeshRenderCommand{.sourceMesh = &mesh,
+                                                               .indicesToDraw = indices,
+                                                               .worldTransform = world,
+                                                               .material = &mesh.material,
+                                                               .rasterizeMode = rasterizeMode,
+                                                               .normalMatrix = &normalMatrix});
+                if (flags.bShowAABB)
                     batch.debugCommands.push_back(sr::debug::MakeAABBGizmo(worldBounds));
-                });
-        }
-        else
-            submitRange(mesh.indices);
+            });
     }
     else
-    {
-        // 1. 근거리(z < 8)의 주요 피사체는 100% 원본 지오메트리를 보존
-        const SRMath::vec3 objPos(world[3][0], world[3][1], world[3][2]);
-        const bool isNearSubject = (objPos.z < 8.0f);
-
-        if (isNearSubject)
-        {
-            if (mesh.octree)
-                mesh.octree->ForEachVisibleRange(frustum, world, submitRange);
-            else
-                submitRange(mesh.indices);
-        }
-        else
-        {
-            // 2. 원거리 유닛(z >= 8): 거리 및 스크린 투영 직경 기반 미세 서브메시 컬링 및 LOD 인덱스 스트라이딩
-            const auto &aabb = mesh.localAABB;
-            const SRMath::vec3 extents = aabb.max - aabb.min;
-            const float localDiagSq = extents.x * extents.x + extents.y * extents.y + extents.z * extents.z;
-            const float localDiag = std::sqrt(localDiagSq);
-
-            const float scaleSq = world[0][0] * world[0][0] + world[1][0] * world[1][0] + world[2][0] * world[2][0];
-            const float scale = std::sqrt(scaleSq);
-            const float worldDiag = localDiag * scale;
-
-            const SRMath::vec3 &camPos = frustum.GetCameraPosition();
-            const float zDist = frustum.HasCameraPosition() ? std::max(1.0f, SRMath::length(objPos - camPos))
-                                                            : (objPos.z + 48.84f);
-            constexpr float fovFactor = 1.73205f; // cot(30 deg)
-            const float screenPixels = (worldDiag * fovFactor / zDist) * 540.0f;
-
-            if (objPos.z >= 20.0f)
-            {
-                // 극원거리 편대 (Row 3, z=22~24): 2.5픽셀 미만 미세 부품 컬링 + Stride 3 LOD
-                if (localDiag < 6.0f || screenPixels < 2.5f)
-                    return;
-
-                if (!mesh.lodIndicesFar.empty())
-                    submitRange(mesh.lodIndicesFar);
-                else if (!mesh.lodIndices.empty())
-                    submitRange(mesh.lodIndices);
-                else
-                    submitRange(mesh.indices);
-            }
-            else
-            {
-                // 중원거리 편대 (Row 2, z=10~12): 1.5픽셀 미만 미세 부품 컬링 + Stride 2 LOD
-                if (localDiag < 3.0f || screenPixels < 1.5f)
-                    return;
-
-                if (!mesh.lodIndices.empty())
-                    submitRange(mesh.lodIndices);
-                else
-                    submitRange(mesh.indices);
-            }
-        }
-    }
+        submitRange(mesh.indices);
 
     if (flags.bShowNormal)
     {

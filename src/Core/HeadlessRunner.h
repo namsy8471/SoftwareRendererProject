@@ -49,6 +49,8 @@ struct RunConfig
     // 스키닝·키프레임 비용을 재는 용도다. 데모 장면 벤치 수치와 섞지 않는다.
     std::filesystem::path scenePath;
     int clip = 0;
+    // true면 메시 LOD를 끄고 원본 삼각형만 그린다(LOD 전후 화면·시간 비교용).
+    bool disableLod = false;
 };
 
 struct FrameTimings

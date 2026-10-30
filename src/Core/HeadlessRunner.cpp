@@ -150,6 +150,7 @@ std::expected<RunResult, std::string> Run(const RunConfig &config)
     flags.bShowWireframe = config.mode == ViewMode::Wire;
     flags.bShowNormal = config.mode == ViewMode::Normal;
     flags.bShowAABB = config.mode == ViewMode::AABB;
+    flags.bDisableLod = config.disableLod;
 
     Renderer &renderer = runner.GetRenderer();
     renderer.SetOptions(config.options);
