@@ -154,9 +154,8 @@ void Renderer::prepareFrame()
     for (auto &scratch : m_workerScratch)
         scratch.BeginFrame();
 }
-void Renderer::binCommands(const RenderQueue &queue, const FrameContext &frame)
+void Renderer::computeCommandTriangleBases(std::span<const MeshRenderCommand> commands)
 {
-    const auto commands = queue.GetRenderCommands();
     // 안정된 제출 순서의 입력 삼각형마다 fan용 16개 ID를 예약한다.
     // clipping/culling 결과나 worker 실행 순서는 ID에 영향을 주지 않는다.
     // UINT64_MAX는 비어 있는 깊이 소유자 표시로 남겨 둔다.
@@ -171,11 +170,25 @@ void Renderer::binCommands(const RenderQueue &queue, const FrameContext &frame)
         m_commandTriangleBases[index] = triangleCount;
         triangleCount += static_cast<std::uint64_t>(count);
     }
+}
+void Renderer::binCommands(const RenderQueue &queue, const FrameContext &frame)
+{
+    binCommands(queue, frame, {}, true);
+}
+void Renderer::binCommands(const RenderQueue &queue, const FrameContext &frame, std::span<const std::uint32_t> order,
+                           bool planLines)
+{
+    const auto commands = queue.GetRenderCommands();
+    // 두 패스 프레임도 ID는 전체 제출 순서로 매긴다. 뒤 패스는 앞 패스가 계산한 값을 그대로 쓴다.
+    if (planLines)
+        computeCommandTriangleBases(commands);
     // 깊이 검사 선(법선)의 준비는 타일 결과와 무관하다. 따로 병렬 단계를 열지 않고 명령 뒤에 이어 붙여
     // 같은 작업에서 돌린다. 분류가 끝나 가며 놀던 스레드가 이 chunk를 가져간다.
-    planDepthTestedLines(queue, frame);
-    const auto commandCount = commands.size();
-    const auto lineChunkCount = m_debugLinePlan == DebugLinePlan::Parallel ? m_debugLineChunks.size() : 0;
+    if (planLines)
+        planDepthTestedLines(queue, frame);
+    const auto commandCount = order.empty() ? commands.size() : order.size();
+    const auto lineChunkCount =
+        planLines && m_debugLinePlan == DebugLinePlan::Parallel ? m_debugLineChunks.size() : 0;
     // 스레드마다 자기 분류가 끝나면(더 가져갈 명령이 없으면) 그 자리에서 자기 참조를 타일별로 정렬한다.
     // 예전에는 모두 끝날 때까지 기다린 뒤 정렬만 하는 병렬 단계를 한 번 더 열었다(합류 1회 + worker 깨우기).
     sr::jobs::ParallelFor<sr::jobs::Split::Fixed>(
@@ -184,7 +197,11 @@ void Renderer::binCommands(const RenderQueue &queue, const FrameContext &frame)
         {
             for (auto index = first; index != last; ++index)
                 if (index < commandCount)
-                    processCommand(commands[index], frame, m_workerScratch.Local(), m_commandTriangleBases[index]);
+                {
+                    const std::size_t command = order.empty() ? index : order[index];
+                    processCommand(commands[command], frame, m_workerScratch.Local(),
+                                   m_commandTriangleBases[command]);
+                }
                 else
                     prepareDebugLineChunk(index - commandCount);
         },
@@ -287,10 +304,15 @@ void Renderer::processCommand(const MeshRenderCommand &cmd, const FrameContext &
                 continue;
 
             const auto primitiveId = (triangleBase + static_cast<std::uint64_t>(i / 3)) * 16;
-            if (Rasterizer::PrepareRasterInto(scratch.triangles.Slot(), setup0.raster, setup1.raster,
-                                              setup2.raster, m_width, m_height, primitiveId, &cmd))
+            auto &slot = scratch.triangles.Slot();
+            if (Rasterizer::PrepareRasterInto(slot, setup0.raster, setup1.raster, setup2.raster, m_width, m_height,
+                                              primitiveId, &cmd))
             {
-                binPrepared(cmd, scratch.triangles.Commit(), frame, scratch);
+                // 뒤 패스: 앞 패스 깊이에 모든 픽셀이 가려지면 Commit하지 않는다(다음 Slot이 같은 자리를 준다).
+                if (m_occlusionTest && isOccludedByOccluders(slot))
+                    ++scratch.occlusionRejected;
+                else
+                    binPrepared(cmd, scratch.triangles.Commit(), frame, scratch);
             }
         }
         else
@@ -345,8 +367,14 @@ void Renderer::binTriangle(const MeshRenderCommand &cmd, const ShadedVertex &v0,
     if (scratch.tileScatter.size() != m_tileStats.size()) [[unlikely]]
         scratch.tileScatter.resize(m_tileStats.size());
     const auto prepared = Rasterizer::Prepare(v0, v1, v2, m_width, m_height, primitiveId, &cmd);
-    if (prepared)
-        binPrepared(cmd, &scratch.triangles.emplace_back(*prepared), frame, scratch);
+    if (!prepared)
+        return;
+    if (m_occlusionTest && isOccludedByOccluders(*prepared))
+    {
+        ++scratch.occlusionRejected;
+        return;
+    }
+    binPrepared(cmd, &scratch.triangles.emplace_back(*prepared), frame, scratch);
 }
 void Renderer::binPrepared(const MeshRenderCommand &cmd, TriangleRef *finalTri, const FrameContext &frame,
                            WorkerScratch &scratch)

@@ -291,9 +291,11 @@ void Rasterizer::useTarget()
     m_local = false;
 }
 
-void Rasterizer::BeginTile(TileBounds bounds, bool hiZ, bool cleared, TileBuffer *buffer)
+void Rasterizer::BeginTile(TileBounds bounds, bool hiZ, bool cleared, TileBuffer *buffer,
+                           const std::uint64_t *idsIn, std::uint64_t *idsOut)
 {
     EndTile();
+    m_idsOut = nullptr;
     bounds.minX = std::clamp(bounds.minX, 0, m_target.Width());
     bounds.minY = std::clamp(bounds.minY, 0, m_target.Height());
     bounds.maxX = std::clamp(bounds.maxX, bounds.minX, m_target.Width());
@@ -321,6 +323,8 @@ void Rasterizer::BeginTile(TileBounds bounds, bool hiZ, bool cleared, TileBuffer
                 std::copy_n(m_target.Depth().data() + first, width, m_tile->depth.data() + y * 16);
                 if (ids)
                     std::copy_n(m_target.PrimitiveIds().data() + first, width, m_tile->ids.data() + y * 16);
+                else if (idsIn)
+                    std::copy_n(idsIn + y * 16, width, m_tile->ids.data() + y * 16);
                 else
                     // ID 면이 없으면 이미 그려진 픽셀의 주인은 가장 작은 ID(0)로 본다. 같은 깊이면 먼저 그린
                     // 쪽이 남는다.
@@ -339,6 +343,7 @@ void Rasterizer::BeginTile(TileBounds bounds, bool hiZ, bool cleared, TileBuffer
         m_originX = bounds.minX;
         m_originY = bounds.minY;
         m_local = true;
+        m_idsOut = m_target.HasPrimitiveIds() ? nullptr : idsOut;
     }
     // 4x4 요약 16개는 최대 16x16 타일만 표현한다.
     m_hiZ = hiZ && !m_target.Empty() && bounds.maxX > bounds.minX && bounds.maxY > bounds.minY &&
@@ -367,7 +372,54 @@ void Rasterizer::EndTile()
         std::copy_n(m_tile->color.data() + y * 16, width,
                     surface.pixels.data() + row * surface.stridePixels + m_bounds.minX);
     }
+    if (m_idsOut)
+        std::copy_n(m_tile->ids.data(), m_tile->ids.size(), m_idsOut);
+    m_idsOut = nullptr;
     useTarget();
+}
+
+bool Rasterizer::ComputeBlockMinimums(std::array<float, 16> &out) const noexcept
+{
+    if (!m_local || !m_tile)
+        return false;
+    const int width = m_bounds.maxX - m_bounds.minX, height = m_bounds.maxY - m_bounds.minY;
+    const float *depth = m_tile->depth.data();
+    if (width == 16 && height == 16) [[likely]]
+    {
+        // 블록 한 행(4픽셀)이 __m128 하나다. 블록마다 4행의 min을 모으고 가로로 접는다.
+        for (int by = 0; by < 4; ++by)
+            for (int bx = 0; bx < 4; ++bx)
+            {
+                const float *block = depth + by * 64 + bx * 4;
+                __m128 m = _mm_min_ps(_mm_min_ps(_mm_loadu_ps(block), _mm_loadu_ps(block + 16)),
+                                      _mm_min_ps(_mm_loadu_ps(block + 32), _mm_loadu_ps(block + 48)));
+                m = _mm_min_ps(m, _mm_movehl_ps(m, m));
+                m = _mm_min_ss(m, _mm_shuffle_ps(m, m, 1));
+                out[static_cast<std::size_t>(by * 4 + bx)] = _mm_cvtss_f32(m);
+            }
+        return true;
+    }
+    out.fill(RenderTarget::emptyDepth);
+    for (int by = 0; by * 4 < height; ++by)
+        for (int bx = 0; bx * 4 < width; ++bx)
+        {
+            float minimum = std::numeric_limits<float>::infinity();
+            for (int y = by * 4; y < std::min(by * 4 + 4, height); ++y)
+                for (int x = bx * 4; x < std::min(bx * 4 + 4, width); ++x)
+                    minimum = std::min(minimum, depth[y * 16 + x]);
+            out[static_cast<std::size_t>(by * 4 + bx)] = minimum;
+        }
+    return true;
+}
+
+bool Rasterizer::ConservativeDepthUpper(const PreparedTriangle &t, float &upper) noexcept
+{
+    // 양의 유한 가중치의 합/나눗셈/곱/덧셈 오차를 바깥쪽으로 확장한다.
+    // subnormal/overflow는 상대 오차 가정을 만족하지 않아 기각하지 않는다.
+    if (!std::isnormal(t.rv0.oneOverW) || !std::isnormal(t.rv1.oneOverW) || !std::isnormal(t.rv2.oneOverW))
+        return false;
+    upper = std::nextafter(t.maximumInverseW * (1.f + 32.f * floatEpsilon), std::numeric_limits<float>::infinity());
+    return std::isfinite(upper);
 }
 
 void Rasterizer::RefreshHiZ()
@@ -405,13 +457,8 @@ bool Rasterizer::IsOccluded(const PreparedTriangle &t)
 {
     if (m_stats)
         ++m_stats->hiZTests;
-    // 양의 유한 가중치의 합/나눗셈/곱/덧셈 오차를 바깥쪽으로 확장한다.
-    // subnormal/overflow는 상대 오차 가정을 만족하지 않아 기각하지 않는다.
-    if (!std::isnormal(t.rv0.oneOverW) || !std::isnormal(t.rv1.oneOverW) || !std::isnormal(t.rv2.oneOverW))
-        return false;
-    const float upper = std::nextafter(t.maximumInverseW * (1.f + 32.f * floatEpsilon),
-                                       std::numeric_limits<float>::infinity());
-    if (!std::isfinite(upper))
+    float upper;
+    if (!ConservativeDepthUpper(t, upper))
         return false;
     bool hidden = m_tileFull && upper < m_tileMinimum;
     if (!hidden)
