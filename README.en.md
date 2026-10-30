@@ -36,9 +36,9 @@ This CPU-based software renderer began as a way to verify the rendering-pipeline
 
 Since 2026-10-20, AI (Claude 5.5 Opus, Gemini 3.8/Argon) writes and optimizes the code. Changes are judged by measured fps/ms and assembly review, and verified by tests, golden images, and CI.
 
-## AI work summary (2026-10-20 to 10-22)
+## AI work summary (2026-10-20 to 10-30)
 
-**Bottom line: the 100 fps goal at 1920×1080 is met in all three modes.** On the PC (MSVC Release x64, 24 threads) the slow-frame times (p95) are fill 3.39 ms, wire 4.15 ms and normal 6.05 ms, all inside the p95 ≤ 9 ms bar. Against the first 1080p measurement on 2026-10-21, mean frame time fell by 54–56%.
+**Bottom line: the 100 fps goal at 1920×1080 is met in all three modes.** On the original demo scene (1 IronMan + 1 teapot) on the PC (MSVC Release x64, 24 threads) the slow-frame times (p95) are fill 3.39 ms, wire 4.15 ms and normal 6.05 ms, all inside the p95 ≤ 9 ms bar. Against the first 1080p measurement on 2026-10-21, mean frame time fell by 54–56%.
 
 | Mode | First (2026-10-21) mean / p95 | Now (main 8df4d1b) mean / p95 | Mean time | Mean fps |
 |---|---|---|---|---|
@@ -47,6 +47,16 @@ Since 2026-10-20, AI (Claude 5.5 Opus, Gemini 3.8/Argon) writes and optimizes th
 | normal | 11.27 / 12.69 ms (missed the bar) | 5.14 / 6.05 ms | **−54.4%** | 89 → **195** |
 
 > "First" is `RendererTests --benchmark` just before PR #6 (600 frames, median of 6 runs); "now" is a PC A/B (`srcli bench`) of main with #31 merged (8df4d1b) interleaved with main right after #27 (c152e76). In that run #28–#32 together gave fill −11.2%, wire −2.6% (inconclusive) and normal −15.2%. They were taken on different days with different tools, so the cumulative change is approximate; the per-PR A/B results below are the exact evidence. Every change kept the pixel hash identical (no visible change).
+
+**Crowd scene (default demo since 10-29): fill went from 33 to 136 fps on 1.88M triangles.** #49 made the default demo 12 times heavier: 12 IronMan + 10 teapots (1,878,204 triangles, 2,660 sub-meshes). Since then, #50–#58 cut the mean fill frame time by 76.1%.
+
+| Mode | Right after #49 (f0b942b) mean / p95 | Now (main 2e87ae2) mean / p95 | Mean time | Mean fps |
+|---|---|---|---|---|
+| fill | 30.13 / 31.67 ms | 7.37 / 8.26 ms | **−76.1%** | 33 → **136** |
+| wire | 46.33 / 49.35 ms | 25.64 / 26.79 ms | **−45.0%** | 22 → **39** |
+| normal | 49.31 / 52.33 ms | 23.82 / 25.91 ms | **−51.9%** | 20 → **42** |
+
+> PC A/B of the two commits, interleaved (`srcli bench`, 1920×1080, 2026-10-30). #58 (LOD) draws distant objects with fewer triangles, so the image changes very slightly and the pixel hashes in this comparison differ (`--no-lod` gives the pre-#58 pixels exactly). Because the scene is heavy, each round used 130–210 frames.
 
 ### 1. Optimizations (adopted)
 
@@ -67,10 +77,18 @@ Each PR was measured on the same PC with base and head interleaved, and adopted 
 | #30 | Sort tile references and prepare normal lines inside the binning job; draw normal-line bands as soon as their tile rows finish (joins removed) | −3.4% | no change | **−8.4%** |
 | #32 | Hybrid CPU: shorter wait spin on E-cores, pool threads opted out of Windows power throttling (EcoQoS) | n.s. | n.s. | −6.3% |
 | #31 | Split tile chunks per thread by last frame's cost (screen order kept) | −2.9% | no change | −2.3% |
-| #46 | Single-job parallel dispatch and atomic depth exchange (`atomicMinDepth`) for shadow map rasterization (45.98 ms → 7.55 ms) | **−83.6%** | **6.1x boost** | 132.5 FPS reached |
-| #47 | 3-Split Cascaded Shadow Maps (CSM) & 16-tap Poisson disk soft shadows (bounding sphere, texel snapping, 15% blending, ortho FDIV bypass) | **+2.29 ms** | 100+ FPS kept | **9.84 ms (101.6 FPS)** |
-| #49 | High-stress 30 FPS benchmark scene (1.88M triangles, 2,660 sub-meshes, 22 objects) and in-memory model cloning cache (`CloneMesh`, scene load 6.0 s → 0.28 s) | **30 FPS baseline established** | wire 46.75 ms | normal 51.58 ms |
+| #46 | Shadow map rasterization in one parallel job with atomic depth updates (`atomicMinDepth`); shadow pass 45.98 → 7.55 ms (6.1x) | — | — | — |
+| #47 | 3-split cascaded shadow maps (CSM) and 16-tap Poisson soft shadows; 1080p frame with shadows 9.84 ms (101.6 FPS), CSM adds +2.29 ms | — | — | — |
+| #49 | Default demo replaced by the crowd scene (1.88M triangles, 2,660 sub-meshes); model clone cache, load 6.0 → 0.28 s. **Rows below use this scene** | 31.20 ms (baseline) | 46.75 ms | 51.58 ms |
 | #50 | Hierarchical tile binning single-tile bitmask fast path & 4-lane SIMD corner half-space culling + SIMD 4-pixel parallel edge traversal & vectorized triangle setup (1.88M triangle scene) | **−3.3% (33.1 FPS)** | **−4.6% (22.4 FPS)** | **−6.7% (20.8 FPS)** |
+| #53 | Share models between instances, skip transforms of objects that did not move, one ParallelFor for scene collection (update 0.53 → 0.35 ms) | — | — | — |
+| #54 | Draw command batching, AVX2 transform of all 8 AABB corners at once, binning/sort cleanup | — | — | — |
+| #55 | Same-frame Hi-Z occlusion culling: draw the nearest objects first, then drop hidden triangles before binning (13% per frame) | −5.5% | +1.8% | −4.3% |
+| #56 | Drop small triangles that cover no pixel center before binning (prepared triangles 1.34M → 0.30M, identical pixels) | **−66.0%** | −0.5% | **−40.6%** |
+| #58 | Quadric edge-collapse LOD: pick the coarsest level whose error projects to ≤ 0.5 px (only fill/fxaa goldens change) | **−26.3%** | **−41.5%** | −9.5% |
+| #57 | Tile tasks of 1 tile instead of 4 (the last task to finish is 4x smaller) | −3.1% | n.s. | −2.9% |
+
+#46 and #47 only run with shadows on, so they do not affect the default bench (shadows off). #49 and #50 were measured by Gemini CLI; #53 and #54 have no PC A/B record.
 
 Each PR's commit messages hold the VTune and VS CPU Usage hotspots before/after, the MSVC assembly (/FAs) before/after, and the test results.
 
@@ -91,6 +109,10 @@ Changes that were not at least 2% faster, or were slower, were dropped and the r
 | Pin pool threads to cores (P-cores first) | PC fill +7.0%, wire +20.4%, normal +10.4% slower | Once pinned, Windows cannot move a busy thread to a P-core |
 | 300 us spin + 5 ms yield before sleeping | fill +19.9%, wire +53.0% slower | yield became the top hotspot |
 | SoA vertex batch transform (Attack Vector 1) | In a 2,660 sub-mesh scene, upfront SoA allocation and transforming unreferenced/backfacing vertices polluted L1/L2 cache and degraded performance (39.3 ms vs 30.17 ms, +30.3% slower) | In draw-call-heavy scenes with 2,660 meshes, the lazy L2 4096-entry vertex cache (`cachedVertex`) significantly outperforms upfront batch transforms |
+| Gemini's stride LOD draft | Skipped every 2nd/3rd triangle (holes) and regenerated every golden | Reimplemented as quadric LOD (#58) |
+| Gemini's draft reusing last frame's Hi-Z | Wrong when objects move; never tested | Reimplemented as same-frame two passes (#55) |
+| Gemini's tile buckets + a work-stealing copy inside Renderer | Cloud fill +12%, MSVC /analyze failed | The gain came only from task size (#57) |
+| SoA vertex transform (PC re-measure) | PC fill −0.8%, MSVC pixel hash mismatch | |
 
 ### 3. Tools and docs for AI work
 
@@ -101,7 +123,7 @@ Changes that were not at least 2% faster, or were slower, were dropped and the r
 | Mandatory profiling rule (CLAUDE.md, PR #22) | Every optimization is profiled on the PC with both VTune and VS CPU Usage, before and after, with hotspot shares recorded |
 | [CODEMAP.md](CODEMAP.md) | One line per source file; CI (`tools/ci/check_codemap.py`) catches missing files |
 | `srcli` (`tools/srcli`) | Renders the demo scene without a window: `bench --json` (frame times, `pixel_hash`), `render --out` (PNG), `--scene` (glTF + animation) |
-| Tests | Framework-free `RendererTests` (118 passed on PC MSVC) and 8 golden images (`tests/golden`) |
+| Tests | Framework-free `RendererTests` (124 passed on PC MSVC) and 8 golden images (`tests/golden`) |
 | Scripts | `tests/RunTests.ps1 -Quick/-Filter/-UpdateGolden`, `tests/Bench.ps1` (JSON Lines), `tests/CaptureCpuProfiles.ps1` (VTune + VS CPU Usage), `tools/dev.sh` (Linux), `tools/Worktree.ps1` |
 
 ### 4. Automation
@@ -166,13 +188,13 @@ Also: Framework split into Scene, FrameRunner, Win32App and SceneRenderCollector
 | Rendering path | Implemented directly on the **CPU from vertex processing to pixel output** |
 | Shading models | Phong · Cook-Torrance PBR (glTF 2.0 Metallic-Roughness) · IBL · ACES Tone Mapping |
 | Shadow pipeline | **3-Split Cascaded Shadow Maps (CSM)** + **16-Tap Rotated Poisson Disk PCF Soft Shadows** (1080p 100+ FPS) |
-| Performance comparison image | **8 FPS → 58 FPS** (2025 baseline) → **100+ FPS** (Full HD with CSM shadows) → **33+ FPS** (1.88M triangle 30 FPS stress benchmark) |
+| Performance comparison image | **8 FPS → 58 FPS** (2025 baseline) → **100+ FPS** (Full HD with CSM shadows) → **33+ FPS** (1.88M triangle 30 FPS stress benchmark) → **136 FPS** (same crowd scene, fill) |
 | Parallel work unit | **16×16 tiles** + in-house job system (`sr::jobs`) |
 | SIMD paths | Baseline **128-bit SSE** + runtime-selected **256-bit AVX/AVX2** (8-lane SIMD shading) |
 | Baking engine | CPU texture baker: UV rasterizer, dilation, normal & AO baking (`sr::baker`) |
-| Spatial acceleration | Object-AABB frustum culling + octree-node culling |
+| Spatial acceleration | Object-AABB frustum culling + octree-node culling + same-frame Hi-Z occlusion culling + screen-error LOD + no-pixel triangle rejection |
 | External dependencies | **Zero external dependencies** (stb_image and oneTBB completely removed) |
-| Unit & regression tests | **118 passed** (`SUMMARY passed=118 failed=0`) |
+| Unit & regression tests | **124 passed** (`SUMMARY passed=124 failed=0`) |
 | Debug tools | Wireframe · Normal · AABB · Light Direction · Transform Gizmo |
 | Build matrix | Debug/Release × Win32/x64 |
 
@@ -529,7 +551,7 @@ SoftwareRendererProject/
 
 Since October 20, 2026, this project has undergone architectural overhaul and extreme low-level optimization through pair programming with advanced autonomous AI agents.
 
-- **Claude 5.5 Opus**: Initial optimization sprints (PR #1–#40), custom lock-free job system (`sr::jobs`), tile-based rasterizer foundation, glTF 2.0 loader and skeletal animation system, achieving the initial 1080p 100 FPS baseline.
+- **Claude 5.5 Opus**: Initial optimization sprints (PR #1–#40), crowd-scene optimizations (#55 Hi-Z occlusion culling, #56 no-pixel triangle rejection, #57 tile task size, #58 quadric LOD: Gemini drafts verified and reimplemented), custom lock-free job system (`sr::jobs`), tile-based rasterizer foundation, glTF 2.0 loader and skeletal animation system, achieving the initial 1080p 100 FPS baseline.
 - **Gemini 3.8 / Argon**: Real-time lighting and PBR pipeline (PR #41–#47: IBL, ACES Filmic Tone Mapping, Cook-Torrance PBR, 3-split CSM soft shadows, 6.1x parallelized shadow map rasterization, Cloud Baker CPU texture baking engine), 1.88M triangle (22 objects, 2,660 meshes) 30 FPS stress benchmark suite (#49), hierarchical tile binning fast path, and SIMD 4-pixel parallel rasterizer edge traversal integration (#50) breaking 33+ FPS.
 
 ## Third-party libraries
