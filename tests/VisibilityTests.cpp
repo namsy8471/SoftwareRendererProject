@@ -110,6 +110,69 @@ void drawPrepared(RenderTarget &target, const RenderFrameContext &frame,
                 rasterizer.ShadeOwners();
         }
 }
+// 가림 패스는 한 타일을 두 번(앞 패스, 뒤 패스) 그린다. ID 면이 없는 타깃이어도 앞 패스 픽셀 주인 ID를 넘겨 받으면
+// "같은 깊이면 작은 ID" 규칙이 한 번에 그린 결과와 같아야 한다. 뒤 패스의 작은 ID가 같은 깊이의 앞 패스 픽셀을 이긴다.
+void passBoundaryTieTests()
+{
+    constexpr int width = 17, height = 19;
+    Material red, blue;
+    red.ambient = {1.f, 0.f, 0.f};
+    blue.ambient = {0.f, 0.f, 1.f};
+    MeshRenderCommand redCommand{}, blueCommand{};
+    redCommand.material = &red;
+    blueCommand.material = &blue;
+    const RenderFrameContext frame{SRMath::mat4::identity(), {0.f, 0.f, 5.f}, {}, 2, 2};
+    const auto front = rectangle(0, 0, width, height, 1.f, 16, width, height, redCommand);
+    const auto tie = rectangle(0, 0, width, height, 1.f, 0, width, height, blueCommand);
+    std::vector<unsigned int> pixels(width * height);
+    RenderTarget target;
+    require(target.Attach({pixels, width, height, width}, false).has_value(), "target without id plane");
+    TileBuffer buffer{};
+    std::vector<std::uint64_t> store(4 * 256);
+    const auto drawTiles = [&](std::span<const PreparedTriangle> triangles, bool cleared, bool passIds,
+                               bool saveIds, std::vector<std::array<float, 16>> *blocks = nullptr)
+    {
+        std::size_t tile = 0;
+        for (int y = 0; y < height; y += tileSize)
+            for (int x = 0; x < width; x += tileSize, ++tile)
+            {
+                Rasterizer rasterizer(target, frame);
+                rasterizer.BeginTile({x, y, std::min(x + tileSize, width), std::min(y + tileSize, height)}, false,
+                                     cleared, &buffer, passIds ? store.data() + tile * 256 : nullptr,
+                                     saveIds ? store.data() + tile * 256 : nullptr);
+                for (const auto &triangle : triangles)
+                    rasterizer.DrawTriangle(triangle, RasterPass::DepthOwner);
+                rasterizer.ShadeOwners();
+                if (blocks)
+                    require(rasterizer.ComputeBlockMinimums((*blocks)[tile]), "block minimums from tile buffer");
+            }
+    };
+    std::vector<PreparedTriangle> both = front;
+    both.insert(both.end(), tie.begin(), tie.end());
+    drawTiles(both, true, false, false);
+    const auto reference = pixels;
+    require(std::ranges::all_of(reference, [&](auto pixel) { return pixel == reference[0]; }) && reference[0] != 0,
+            "single pass: smaller id wins the tie everywhere");
+
+    std::vector<std::array<float, 16>> blocks(4);
+    drawTiles(front, true, false, true, &blocks);
+    const auto frontOnly = pixels;
+    require(frontOnly != reference, "front pass alone shows the other color");
+    // 17x19 화면의 오른쪽/아래 타일은 일부만 화면이다. 화면 밖 블록은 무엇도 가리지 않는 값이다.
+    const auto drawn = [](float q) { return std::abs(q - 1.f) < 1e-5f; };
+    require(drawn(blocks[0][0]) && drawn(blocks[0][15]) && drawn(blocks[1][0]) &&
+                blocks[1][1] == RenderTarget::emptyDepth && drawn(blocks[2][0]) &&
+                blocks[2][4] == RenderTarget::emptyDepth && drawn(blocks[3][0]),
+            "block minimum depth covers only on-screen pixels");
+    drawTiles(tie, false, true, false);
+    require(pixels == reference, "two passes with carried ids match the single pass");
+
+    // ID를 넘기지 않으면 이미 그려진 픽셀이 ID 0으로 보여 같은 깊이에서 뒤 패스가 진다(넘기는 이유).
+    drawTiles(front, true, false, false);
+    drawTiles(tie, false, false, false);
+    require(pixels == frontOnly, "without carried ids the earlier pass keeps ties");
+}
+
 void depthAndHiZTests()
 {
     MemoryTarget image(17, 19);
@@ -1180,6 +1243,7 @@ void nearPlaneTests()
 void sr::test::RegisterVisibilityTests(TestRegistry &registry)
 {
     registry.Add("visibility.depthAndHiZ", depthAndHiZTests);
+    registry.Add("visibility.passBoundaryTie", passBoundaryTieTests);
     registry.Add("visibility.variableDepthHiZ", variableDepthHiZTests);
     registry.Add("visibility.hiddenLine", hiddenLineTests);
     registry.Add("visibility.determinism", determinismTests);

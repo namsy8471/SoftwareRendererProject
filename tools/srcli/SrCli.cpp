@@ -41,6 +41,7 @@ options:
   --mode M            fill | wire | normal | aabb | fxaa (default fill)
   --opt O             none | sort | hiz | both (default none)
   --hidden-wire       hidden-line wireframe (depth prepass)
+  --no-occlusion      draw in one pass (turn off near-first occlusion passes)
   --bilinear          enable bilinear texture filtering
   --mipmap            enable mipmap LOD sampling
   --srgb              enable sRGB gamma correction
@@ -95,7 +96,6 @@ struct Options
     bool json = false;
     bool requireTarget = false;
     bool framesGiven = false;
-    bool optGiven = false;
     double targetFps = 100.0;
     std::optional<std::filesystem::path> outPath;
 };
@@ -174,7 +174,6 @@ Options parseArguments(int argc, char **argv)
         }
         else if (argument == "--opt")
         {
-            options.optGiven = true;
             const auto text = next();
             if (text != "none" && text != "sort" && text != "hiz" && text != "both")
                 usageError("unknown opt: " + std::string(text));
@@ -183,6 +182,8 @@ Options parseArguments(int argc, char **argv)
         }
         else if (argument == "--hidden-wire")
             config.options.hiddenWireframe = true;
+        else if (argument == "--no-occlusion")
+            config.options.occlusionPasses = false;
         else if (argument == "--bilinear")
             config.options.bilinearFiltering = true;
         else if (argument == "--mipmap")
@@ -269,8 +270,6 @@ Options parseArguments(int argc, char **argv)
         if (!options.bakeConfig.outNormal && !options.bakeConfig.outAO)
             usageError("bake needs at least one of --out-normal <png> or --out-ao <png>");
     }
-    if (options.command == "bench" && !options.optGiven)
-        options.config.options.hiZ = true;
     if (options.config.assetDirectory.empty())
         options.config.assetDirectory = defaultAssetDirectory();
     return options;
@@ -364,6 +363,7 @@ std::string toJson(const Options &options, const sr::headless::RunResult &result
             << ",\"depth_rejected\":" << stats.depthRejected << ",\"shaded_pixels\":" << stats.shadedPixels
             << ",\"final_filled_pixels\":" << stats.finalFilledPixels << ",\"hiz_tests\":" << stats.hiZTests
             << ",\"hiz_rejected\":" << stats.hiZRejected << ",\"line_depth_rejected\":" << stats.lineDepthRejected
+            << ",\"occlusion_rejected\":" << stats.occlusionRejected
             << ",\"prepare_ms\":" << stats.prepareMs << ",\"bin_ms\":" << stats.binMs
             << ",\"raster_ms\":" << stats.rasterMs << ",\"line_ms\":" << stats.lineMs
             << ",\"post_ms\":" << stats.postMs << "}";

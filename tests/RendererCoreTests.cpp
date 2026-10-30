@@ -8,6 +8,7 @@
 #include "Graphics/Texture.h"
 #include "Graphics/IBL.h"
 #include "Core/DemoScene.h"
+#include "Core/FrameRunner.h"
 #include "Graphics/Light.h"
 #include "Graphics/AssetParsing.h"
 #include "Scene/GameObject.h"
@@ -1141,6 +1142,61 @@ void primitiveIdPlaneOptional(const TestContext &context)
             }
 }
 
+// 가림 패스(가까운 물체 먼저, 뒤 물체의 가려진 삼각형 버림)는 데모 장면에서 실제로 삼각형을 버리면서도
+// 한 번에 그린 것과 색·깊이·ID가 비트 단위로 같아야 한다. 자동 회전으로 프레임마다 물체 배치가 바뀐다.
+void occlusionPassesExact(const TestContext &context)
+{
+    constexpr int width = 200, height = 150; // 16의 배수가 아닌 크기로 가장자리 타일도 확인한다.
+    auto loaded = sr::demo::LoadScene(context.root / "assets");
+    check(loaded.has_value(), "demo scene load");
+    sr::demo::FitCameraToScene(*loaded, static_cast<float>(width) / height);
+    FrameRunner runner;
+    runner.SetScene(std::move(*loaded));
+    std::vector<unsigned int> onPixels(width * height), offPixels(width * height);
+    RenderTarget on, off;
+    for (bool ids : {false, true})
+    {
+        check(on.Attach({onPixels, width, height, width}, ids).has_value() &&
+                  off.Attach({offPixels, width, height, width}, ids).has_value(),
+              "occlusion test targets");
+        for (int frame = 0; frame < 3; ++frame)
+        {
+            runner.Update(0.25f, width, height);
+            for (bool clearInRenderer : {false, true})
+            {
+                const auto render = [&](RenderTarget &target, bool occlusion)
+                {
+                    RenderOptions options;
+                    options.collectStats = true;
+                    options.occlusionPasses = occlusion;
+                    Renderer renderer;
+                    renderer.SetOptions(options);
+                    const auto &scene = runner.GetScene();
+                    if (clearInRenderer)
+                        renderer.ClearAndRenderScene(target, runner.GetRenderQueue(), scene.GetCamera().GetViewParams(),
+                                                     scene.GetLights());
+                    else
+                    {
+                        target.Clear();
+                        renderer.RenderScene(target, runner.GetRenderQueue(), scene.GetCamera().GetViewParams(),
+                                             scene.GetLights());
+                    }
+                    return renderer.GetStats();
+                };
+                const auto withPasses = render(on, true);
+                const auto single = render(off, false);
+                check(withPasses.occlusionRejected > 0 && single.occlusionRejected == 0,
+                      "occlusion passes reject hidden triangles in the demo scene");
+                check(withPasses.preparedTriangles + withPasses.occlusionRejected == single.preparedTriangles,
+                      "every rejected triangle was prepared by the single pass");
+                check(onPixels == offPixels && std::ranges::equal(on.Depth(), off.Depth()) &&
+                          std::ranges::equal(on.PrimitiveIds(), off.PrimitiveIds()),
+                      "occlusion passes keep color, depth and owner ids identical");
+            }
+        }
+    }
+}
+
 void textureBilinearAndMipmap()
 {
     // 4x4 사분면 텍스처: 좌상 Red, 우상 Green, 좌하 Blue, 우하 White
@@ -2271,6 +2327,7 @@ void sr::test::RegisterRendererTests(TestRegistry &registry)
     registry.Add("renderer.srgbGamma", srgbGammaTests);
     registry.Add("renderer.smoke", renderSmoke);
     registry.Add("renderer.primitiveIdPlaneOptional", primitiveIdPlaneOptional);
+    registry.Add("renderer.occlusionPassesExact", occlusionPassesExact);
     registry.Add("renderer.shadowMapping", shadowMappingTests);
     registry.Add("renderer.swappableShading", swappableShadingTests);
     registry.Add("renderer.avx2ShadingEquivalence", avx2ShadingEquivalenceTests);

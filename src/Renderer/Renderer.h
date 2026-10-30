@@ -12,7 +12,6 @@
 #include "Graphics/ViewParams.h"
 #include "Renderer/RenderCommand.h"
 #include "Renderer/Tile.h"
-#include "Renderer/HiZBuffer.h"
 #include "Renderer/RenderTypes.h"
 #include "Renderer/RenderTarget.h"
 #include "Renderer/Rasterizer.h"
@@ -45,7 +44,6 @@ class Renderer
     EAAAlgorithm m_currentAAAlgorithm = EAAAlgorithm::None;
     RenderOptions m_options;
     RenderStats m_stats;
-    HiZBuffer m_hiZBuffer;
     struct TileReference
     {
         std::size_t tileIndex = 0;
@@ -67,6 +65,37 @@ class Renderer
     // 묶음별 지난 프레임 래스터 시간(steady_clock 틱)과 그 누적 합(크기 묶음 수 + 1, 스레드 구간 경계용).
     std::vector<std::uint64_t> m_tileChunkCost;
     std::vector<std::uint64_t> m_tileChunkCostPrefix;
+    // 두 패스 프레임(가림 패스)은 앞/뒤 패스의 타일 비용이 달라 뒤 패스 비용을 따로 둔다.
+    std::vector<std::uint64_t> m_occludeeChunkCost;
+
+    // 가림 패스. 카메라에 가까운 물체(같은 world 행렬의 명령 묶음)부터 삼각형 절반을 앞 패스(occluder)로 먼저
+    // 분류·래스터하고, 그 깊이로 만든 4x4 블록 최소 깊이 지도에 완전히 가려지는 뒤 패스(occludee) 삼각형은
+    // 타일 참조를 만들기 전에 버린다. 가려진 삼각형은 어느 픽셀에서도 깊이 검사를 통과하지 못하므로 화면은 같다.
+    // primitive ID는 두 패스 모두 전체 제출 순서의 번호를 쓴다(같은 깊이에서 작은 ID 우선 규칙 유지).
+    enum class TilePass
+    {
+        Single,
+        Occluders,
+        Occludees
+    };
+    std::vector<std::uint32_t> m_occluderCommands, m_occludeeCommands;
+    struct OcclusionObject
+    {
+        float distanceSquared;
+        std::size_t triangles;
+        std::uint32_t firstCommand;
+    };
+    std::vector<OcclusionObject> m_occlusionObjects;
+    std::vector<std::uint32_t> m_commandObject;
+    // 타일마다 앞 패스가 그렸는지(0 안 그림, 1 그림, 2 그림 + 깊이 요약 있음)와 4x4 블록 16개의 최소 깊이.
+    // 앞 패스 타일 작업이 쓰고 뒤 패스 분류와 타일 작업이 읽는다.
+    std::vector<std::uint8_t> m_occluderTileDrawn;
+    std::vector<std::array<float, 16>> m_occluderBlockMinimum;
+    // ID 면이 없는 타깃에서 앞 패스가 그린 타일의 픽셀 주인 ID(타일당 256개). 앞 패스 타일만 쓰고 읽는다.
+    std::unique_ptr<std::uint64_t[]> m_occluderTileIds;
+    std::size_t m_occluderTileIdCount = 0;
+    // 뒤 패스 분류 중이면 true. processCommand가 삼각형마다 읽는다.
+    bool m_occlusionTest = false;
     std::vector<std::uint64_t> m_commandTriangleBases;
     std::vector<unsigned int> m_fxaaSnapshot;
     // 프레임마다 값을 갱신하고 capacity만 재사용한다. worker는 이 저장소를 읽기만 한다.
@@ -144,7 +173,7 @@ class Renderer
         std::vector<std::size_t> touchedTileIds;
         ClipBuffer clipInput, clipOutput, clippedVertices;
         // 정점 하나는 평균 여섯 삼각형이 공유한다. 정점 셰이딩과 clip 검사, NDC, 화면 정점(1/w, 원근 보정
-        // 속성)을 꼭짓점마마다 아니라 정점마다 한 번만 계산해 둔다. 같은 함수에 같은 입력이라 값은 같다.
+        // 속성)을 꼭짓점마다가 아니라 정점마다 한 번만 계산해 둔다. 같은 함수에 같은 입력이라 값은 같다.
         struct VertexSetup
         {
             RasterizerVertex raster;
@@ -177,11 +206,7 @@ class Renderer
         bool transformCacheValid = false;
         SRMath::mat4 modelViewProjection = SRMath::mat4::identity();
         SRMath::mat4 normalMatrix = SRMath::mat4::identity();
-
-        // Hi-Z 통계: worker별로 누적 후 프레임 join에서 합산
-        std::uint64_t hiZTests = 0;
-        std::uint64_t hiZRejected = 0;
-
+        std::uint64_t occlusionRejected = 0;
         WorkerScratch();
         void BeginFrame();
         void BeginCommand();
@@ -205,8 +230,16 @@ class Renderer
     std::span<const PreparedPointLight> preparePointLights(std::span<const PointLight>);
     std::span<const PreparedSpotLight> prepareSpotLights(std::span<const SpotLight>);
     void prepareFrame();
-    std::uint64_t binCommands(std::span<const MeshRenderCommand> commands, const FrameContext &, std::uint64_t baseTriangleIndex = 0);
     void binCommands(const RenderQueue &, const FrameContext &);
+    // order가 비어 있지 않으면 그 명령 번호만 그 순서로 분류한다. 깊이 검사 선 준비는 planLines일 때만 붙인다.
+    void binCommands(const RenderQueue &, const FrameContext &, std::span<const std::uint32_t> order,
+                     bool planLines);
+    void computeCommandTriangleBases(std::span<const MeshRenderCommand>);
+    void accumulateBinStats();
+    // 이번 프레임을 가림 패스로 나눌지 정하고 m_occluderCommands/m_occludeeCommands를 채운다.
+    bool planOcclusionPasses(const RenderQueue &, const ViewParams &, bool hasWireframe);
+    // 앞 패스 깊이 지도에서 삼각형의 모든 픽셀이 더 가까운 면에 가려졌는지.
+    [[nodiscard]] bool isOccludedByOccluders(const PreparedTriangle &) const noexcept;
     void collectActiveTileWorkers();
     void prepareTileReferences();
     void gatherTileReferences(std::size_t tile, std::vector<TriangleRef *> &bin) const;
@@ -241,7 +274,7 @@ class Renderer
                              ClipBuffer &, ClipBuffer &);
     // drawLineBands면 깊이 검사 선 band도 같은 작업에서 그린다(band가 덮는 타일 행이 모두 끝난 뒤).
     void renderTiles(RenderTarget &, const FrameContext &, bool needsDepthPrepass, bool clearTiles = false,
-                     bool drawLineBands = false);
+                     bool drawLineBands = false, TilePass pass = TilePass::Single);
     void renderLines(RenderTarget &, const RenderQueue &, const FrameContext &);
     void renderDepthTestedLines(RenderTarget &, const RenderQueue &, const FrameContext &);
     void planDepthTestedLines(const RenderQueue &, const FrameContext &);
@@ -251,7 +284,7 @@ class Renderer
     void drawDebugLineBand(RenderTarget &, const FrameContext &, int band);
     void renderTileRange(RenderTarget &, const FrameContext &, std::size_t first, std::size_t last,
                          bool needsDepthPrepass, bool clearTiles, std::vector<TriangleRef *> &gathered,
-                         TileBuffer &tileBuffer);
+                         TileBuffer &tileBuffer, TilePass pass);
     void applyPostProcessing(RenderTarget &);
     friend struct RendererTestAccess;
 
@@ -269,8 +302,6 @@ class Renderer
     }
     [[nodiscard]] RenderOptions GetOptions() const noexcept { return m_options; }
     [[nodiscard]] const RenderStats &GetStats() const noexcept { return m_stats; }
-    [[nodiscard]] const HiZBuffer &GetHiZBuffer() const noexcept { return m_hiZBuffer; }
-    [[nodiscard]] HiZBuffer &GetHiZBuffer() noexcept { return m_hiZBuffer; }
 
     // target.Clear → RenderScene → presenter.Present. 참조는 동기 호출 동안만 빌린다.
     // 같은 Renderer/target을 동시에 호출하지 않는다. 빈 target은 안전한 no-op이다.
