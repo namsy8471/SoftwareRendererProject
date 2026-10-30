@@ -282,23 +282,9 @@ bool Rasterizer::CoversNoPixel(const PreparedTriangle &t)
         !toFixed(t.dy20 * (x0 + 0.5f - p2.x) - t.dx20 * (y0 + 0.5f - p2.y), r1) ||
         !toFixed(t.dy01 * (x0 + 0.5f - p0.x) - t.dx01 * (y0 + 0.5f - p0.y), r2))
         return true;
-    // bbox가 4x4 이하라 smallEdges의 크기 조건만 남는다. 넘으면 safeEdge로 같은 판정을 한다.
-    const auto magnitude = [](std::int64_t v) { return static_cast<std::uint64_t>(v < 0 ? -v : v); };
-    if ((magnitude(r0) | magnitude(r1) | magnitude(r2) | magnitude(t.dx12Fixed) | magnitude(t.dy12Fixed) |
-         magnitude(t.dx20Fixed) | magnitude(t.dy20Fixed) | magnitude(t.dx01Fixed) | magnitude(t.dy01Fixed)) >=
-        (std::uint64_t{1} << 56))
-    {
-        const double rows = t.maxY - y0 + 1., cols = t.maxX - x0 + 1.;
-        const auto safeEdge = [&](std::int64_t r, std::int64_t dx, std::int64_t dy)
-        {
-            return std::abs(static_cast<double>(r)) + std::abs(static_cast<double>(dx)) * rows +
-                       std::abs(static_cast<double>(dy)) * cols <
-                   0x1p62;
-        };
-        if (!safeEdge(r0, t.dx12Fixed, t.dy12Fixed) || !safeEdge(r1, t.dx20Fixed, t.dy20Fixed) ||
-            !safeEdge(r2, t.dx01Fixed, t.dy01Fixed))
-            return true;
-    }
+    // 래스터 함수의 safeEdge 검사는 여기서 항상 통과한다. PrepareRasterInto가 |좌표| < 2^31을 보장해
+    // 고정소수점 증분은 |d| < 2^32 * 256 = 2^40이고, toFixed가 |r| < 2^60을 보장하므로
+    // |r| + 4행 * 2^40 + 4열 * 2^40 < 2^62다. 같은 이유로 아래 누적도 넘치지 않는다.
     // 래스터 루프는 세 edge가 모두 0 이상인 픽셀만 칠한다. 그런 픽셀이 하나도 없으면 칠할 것이 없다.
     for (int y = y0; y <= t.maxY; ++y)
     {
