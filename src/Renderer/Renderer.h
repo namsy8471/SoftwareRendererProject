@@ -60,8 +60,8 @@ class Renderer
     sr::jobs::PerWorker<std::vector<TriangleRef *>> m_tileGather;
     sr::jobs::PerWorker<TileBuffer> m_tileBuffers;
     std::vector<RenderStats> m_tileStats;
-    // 타일 작업 한 조각이 맡는 연속 타일 수(행 순서).
-    static constexpr std::size_t tilesPerTask = 4;
+    // 타일 작업 한 조각이 맡는 연속 타일 수(행 순서). 1이면 타일 하나가 훔치기와 비용 측정의 단위다.
+    static constexpr std::size_t tilesPerTask = 1;
     // 묶음별 지난 프레임 래스터 시간(steady_clock 틱)과 그 누적 합(크기 묶음 수 + 1, 스레드 구간 경계용).
     std::vector<std::uint64_t> m_tileChunkCost;
     std::vector<std::uint64_t> m_tileChunkCostPrefix;
