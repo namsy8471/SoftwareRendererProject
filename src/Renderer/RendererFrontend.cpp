@@ -308,6 +308,11 @@ void Renderer::processCommand(const MeshRenderCommand &cmd, const FrameContext &
             if (Rasterizer::PrepareRasterInto(slot, setup0.raster, setup1.raster, setup2.raster, m_width, m_height,
                                               primitiveId, &cmd))
             {
+                // 픽셀 중심을 하나도 덮지 않는 작은 삼각형은 칠할 것이 없다. 슬롯을 Commit하지 않으면
+                // 타일 참조·정렬·래스터 호출이 모두 사라진다. primitiveId는 인덱스로 정해져 다른 삼각형은 그대로다.
+                // 가림 검사보다 싸고 더 많이 걸러서 먼저 본다.
+                if (cmd.rasterizeMode == ERasterizeMode::Fill && Rasterizer::CoversNoPixel(slot))
+                    continue;
                 // 뒤 패스: 앞 패스 깊이에 모든 픽셀이 가려지면 Commit하지 않는다(다음 Slot이 같은 자리를 준다).
                 if (m_occlusionTest && isOccludedByOccluders(slot))
                     ++scratch.occlusionRejected;
