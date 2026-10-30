@@ -17,6 +17,13 @@ struct Vertex
     SRMath::vec3 normal;   // vn
 };
 
+// 단순화한 인덱스 버퍼 한 단계. 같은 Mesh::vertices를 가리킨다(정점 버퍼는 단계마다 새로 만들지 않는다).
+struct MeshLod
+{
+    std::vector<unsigned int> indices;
+    float error = 0.f; // 원본 표면과의 최대 편차 추정치(메시 로컬 단위). 단계가 높을수록 크다.
+};
+
 struct Mesh
 {
     std::vector<Vertex> vertices;      // 이 메시에 속한 고유 정점 데이터 (VBO용)
@@ -24,6 +31,7 @@ struct Mesh
     Material material;                 // 이 메시에 적용할 재질
     AABB localAABB;                    // 이 메시에 적용할 로컬 AABB
     std::unique_ptr<Octree> octree;
+    std::vector<MeshLod> lods; // lods[0] = LOD1. 오차가 작은 단계부터. 비어 있으면 원본만 쓴다.
 
     Mesh();
     ~Mesh();

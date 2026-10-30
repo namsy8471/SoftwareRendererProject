@@ -5,6 +5,7 @@
     <ClCompile Include="src\Graphics\Mesh.cpp" />
     <ClCompile Include="src\Graphics\Model.cpp" />
     <ClCompile Include="src\Graphics\ModelLoader.cpp" />
+    <ClCompile Include="src\Graphics\MeshSimplifier.cpp" />
     <ClCompile Include="src\Graphics\Octree.cpp" />
     <ClCompile Include="src\Graphics\Texture.cpp" />
     <ClCompile Include="src\Graphics\TextureLoader.cpp" />
@@ -35,6 +36,7 @@
     <ClInclude Include="src\Graphics\Mesh.h" />
     <ClInclude Include="src\Graphics\Model.h" />
     <ClInclude Include="src\Graphics\ModelLoader.h" />
+    <ClInclude Include="src\Graphics\MeshSimplifier.h" />
     <ClInclude Include="src\Graphics\Octree.h" />
     <ClInclude Include="src\Graphics\Texture.h" />
     <ClInclude Include="src\Graphics\TextureLoader.h" />

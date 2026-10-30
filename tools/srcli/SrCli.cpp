@@ -42,6 +42,7 @@ options:
   --opt O             none | sort | hiz | both (default none)
   --hidden-wire       hidden-line wireframe (depth prepass)
   --no-occlusion      draw in one pass (turn off near-first occlusion passes)
+  --no-lod            draw original meshes only (disable mesh LOD)
   --bilinear          enable bilinear texture filtering
   --mipmap            enable mipmap LOD sampling
   --srgb              enable sRGB gamma correction
@@ -184,6 +185,8 @@ Options parseArguments(int argc, char **argv)
             config.options.hiddenWireframe = true;
         else if (argument == "--no-occlusion")
             config.options.occlusionPasses = false;
+        else if (argument == "--no-lod")
+            config.disableLod = true;
         else if (argument == "--bilinear")
             config.options.bilinearFiltering = true;
         else if (argument == "--mipmap")
