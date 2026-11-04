@@ -86,11 +86,11 @@ gh run watch                                                               # 진
 3. 1번 화면의 `Download` 명령(Invoke-WebRequest, 압축 풀기)을 그대로 실행한다.
 4. 1번 화면의 `config.cmd` 명령에 이름과 라벨을 붙여 실행한다.
    ```powershell
-   ./config.cmd --url https://github.com/namsy8471/SoftwareRendererProject --token <화면의 토큰> --name DESKTOP-IHVV44E --labels renderer-pc --work _work
+   ./config.cmd --url https://github.com/namsy8471/SoftwareRendererProject --token <화면의 토큰> --name $env:COMPUTERNAME --labels renderer-pc --work _work
    ```
    - runner group, 추가 라벨 질문은 Enter(기본값).
    - "Would you like to run the runner as service?"에 `Y`. PC가 켜져 있으면 자동으로 job을 받는다.
-5. Settings → Actions → Runners에 `DESKTOP-IHVV44E`가 **Idle**로 보이면 끝이다.
+5. Settings → Actions → Runners에 이 PC 이름(`$env:COMPUTERNAME` 값)이 **Idle**로 보이면 끝이다.
 
 필요한 도구(이미 설치된 것): Visual Studio 18(v145, C++ 데스크톱), PowerShell 7(`pwsh`), Git, GitHub CLI(`gh`, main 비교용).
 
