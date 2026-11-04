@@ -250,7 +250,8 @@ tools/dev.sh render wire out.png
 - CPU: **Intel Core Ultra 9 275HX (노트북), 하이퍼스레딩 없음**. P코어 8개(논리 0,1,10-13,22,23, 각자 L2 3MB) + E코어 16개(2-9, 14-21, 4개씩 묶여 L2 4MB 공유), L3 36MB.
   **작업 스레드를 코어에 고정(pinning)하지 않는다**: Windows가 바쁜 스레드를 P코어로 옮기지 못해 fill +7%, wire +20% 느려졌다. "SMT 형제" 최적화는 이 PC에서 의미가 없다.
 - 벤치는 창 없이 돌아서 Windows가 EcoQoS를 걸 수 있다. #32의 EcoQoS 해제 효과는 실제 앱(전면 창)에서는 더 작을 수 있다(미확인).
-- 저장소: `C:\Users\siyoungNam\Documents\GitHub\SoftwareRendererProject` (메인 체크아웃, 브랜치를 바꾸지 않는다).
+- 저장소: `$env:USERPROFILE\Documents\GitHub\SoftwareRendererProject` (메인 체크아웃, 브랜치를 바꾸지 않는다).
+  아래 경로는 모두 이 기준이다. `SR-worktrees`는 저장소 옆 폴더(`$env:USERPROFILE\Documents\GitHub\SR-worktrees`)다.
   작업은 `./tools/Worktree.ps1 new <브랜치>` → `..\SR-worktrees\<이름>`. GitHub: `namsy8471/SoftwareRendererProject`, PC의 `gh`는 namsy8471로 로그인되어 있다.
 - 도구: MSVC (VS 18, v145), VTune, pwsh 7 (`CaptureCpuProfiles.ps1`는 pwsh 7에서 실행), Windows PowerShell 5.1.
 
@@ -259,7 +260,7 @@ tools/dev.sh render wire out.png
 PC에서는 다른 작업(Claude 등)도 벤치를 돌린다. 벤치 두 개가 동시에 돌면 둘 다 무효이므로 **A/B·프로파일은 직접 돌리지 말고 큐에 넣는다.**
 러너가 한 번에 하나씩, 폴더 이름 순서로 실행한다. 빌드만 하거나 `RunTests.ps1 -Quick`만 돌릴 때도 큐에 `RUNNING` 작업이 있으면 끝날 때까지 기다린다.
 
-- 큐: `C:\Users\siyoungNam\Documents\GitHub\SR-worktrees\_incoming\queue\<yyyyMMdd-HHmmss(KST)>-<작업명>\`
+- 큐: `$env:USERPROFILE\Documents\GitHub\SR-worktrees\_incoming\queue\<yyyyMMdd-HHmmss(KST)>-<작업명>\`
 - 넣는 법: 폴더에 `job.ps1`(+ 번들, `job.json`)을 먼저 쓰고, **마지막에** `READY` 파일을 만든다(러너는 READY가 생겨야 본다).
 - 상태: 작업 폴더의 `status.txt`, `stdout.txt`, `stderr.txt`, `exit.txt`, `DONE` / `FAILED`, 결과는 `results\`.
   러너 상태: `queue\_runner\snapshot.json`(현재 단계·대기열), `heartbeat.txt`(30초마다 갱신), `runner.log`. 일시정지: `queue\PAUSE`.
@@ -269,7 +270,7 @@ PC에서는 다른 작업(Claude 등)도 벤치를 돌린다. 벤치 두 개가 
 
 ```powershell
 . $env:SR_HELPERS
-. 'C:\Users\siyoungNam\Documents\GitHub\SR-worktrees\_incoming\_lib\SRJob.ps1'
+. "$env:USERPROFILE\Documents\GitHub\SR-worktrees\_incoming\_lib\SRJob.ps1"
 try {
     Invoke-SRStandardJob -Bundle (Join-Path $env:SR_JOB_DIR 'x.bundle') -BundleSha256 '<SHA256>' -BundleRef 'perf/x' `
         -Base '<base 전체 sha>' -Head '<head 전체 sha>'
