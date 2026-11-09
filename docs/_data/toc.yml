@@ -2,11 +2,11 @@
 - part: "1부. 가장 단순한 렌더러"
   chapters:
     - { n: 1, title: "창 띄우고 픽셀 찍기", url: "/ch01/" }
-    - { n: 2, title: "선 그리기와 와이어프레임" }
-    - { n: 3, title: "삼각형 채우기: 무게중심 좌표" }
-    - { n: 4, title: "원근 투영, 깊이 버퍼, 클리핑" }
-    - { n: 5, title: "OBJ/MTL 로드, 법선, 텍스처" }
-    - { n: 6, title: "조명: Lambert에서 Phong까지" }
+    - { n: 2, title: "선 그리기와 와이어프레임", url: "/ch02/" }
+    - { n: 3, title: "삼각형 채우기: 무게중심 좌표", url: "/ch03/" }
+    - { n: 4, title: "원근 투영, 깊이 버퍼, 클리핑", url: "/ch04/" }
+    - { n: 5, title: "OBJ/MTL 로드, 법선, 텍스처", url: "/ch05/" }
+    - { n: 6, title: "조명: Lambert에서 Phong까지", url: "/ch06/" }
 - part: "2부. 구조를 갖추기"
   chapters:
     - { n: 7, title: "Render Queue: 그리기를 명령으로" }
