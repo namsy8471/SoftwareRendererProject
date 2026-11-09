@@ -1,0 +1,16 @@
+# GitHub Pages(Jekyll) 설정. 저장소 Settings → Pages에서 "main 브랜치 /docs"를 고르면 이 폴더가 사이트가 된다.
+title: "CPU로 그리는 렌더러"
+description: "소프트웨어 렌더러를 처음부터 만들고, 1080p 100fps까지 빠르게 만든 기록을 교과서처럼 정리했습니다."
+lang: ko
+baseurl: "/SoftwareRendererProject"
+url: "https://namsy8471.github.io"
+markdown: kramdown
+kramdown:
+  input: GFM
+  hard_wrap: false
+  syntax_highlighter: rouge
+permalink: pretty
+defaults:
+  - scope: { path: "" }
+    values: { layout: default }
+exclude: [README.md, Gemfile, Gemfile.lock]
