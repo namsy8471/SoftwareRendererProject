@@ -292,6 +292,9 @@ bool Rasterizer::CoversNoPixel(const PreparedTriangle &t)
         !toFixed(t.dy20 * (x0 + 0.5f - p2.x) - t.dx20 * (y0 + 0.5f - p2.y), r1) ||
         !toFixed(t.dy01 * (x0 + 0.5f - p0.x) - t.dx01 * (y0 + 0.5f - p0.y), r2))
         return true;
+    // 픽셀 중심이 하나뿐이면 어느 edge든 음수일 때 다음 위치를 계산할 필요가 없다.
+    if ((r0 | r1 | r2) < 0 && x0 == t.maxX && y0 == t.maxY)
+        return true;
     // bbox가 4x4 이하라 smallEdges의 크기 조건만 남는다. 넘으면 safeEdge로 같은 판정을 한다.
     const auto magnitude = [](std::int64_t v) { return static_cast<std::uint64_t>(v < 0 ? -v : v); };
     if ((magnitude(r0) | magnitude(r1) | magnitude(r2) | magnitude(t.dx12Fixed) | magnitude(t.dy12Fixed) |
