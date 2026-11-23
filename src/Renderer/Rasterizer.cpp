@@ -109,7 +109,7 @@ BresenhamRows restrictBresenhamRows(int startX, int startY, int endX, int endY, 
 }
 
 // MSVC /O2에서도 중첩 lambda가 픽셀마다 별도 호출되어 프로파일 병목이 되었다.
-// 이름 있는 호출 연산자에 forceinline을 적용하되 원래 수식/분기 순서는 유지한다.
+// 이름 있는 픽셀 쓰기 함수에 forceinline을 적용하되 깊이 판정 수식/분기 순서는 유지한다.
 // 뷰와 계수는 값으로 보관하며 빌린 target 저장소는 동기 선분 순회 동안 유효하다.
 template <bool DepthTest, bool Sloped, bool VaryingDepth, bool Instrumented> struct LinePixelWriter
 {
@@ -125,11 +125,13 @@ template <bool DepthTest, bool Sloped, bool VaryingDepth, bool Instrumented> str
     std::uint32_t color;
     int minY, maxY;
 
-    SR_FORCEINLINE void operator()(int px, int py) const
+    template <bool CheckRows> SR_FORCEINLINE void write(int px, int py) const
     {
-        if (static_cast<unsigned int>(px) >= static_cast<unsigned int>(surface.width) || py < minY ||
-            py >= maxY)
+        if (static_cast<unsigned int>(px) >= static_cast<unsigned int>(surface.width))
             return;
+        if constexpr (CheckRows)
+            if (py < minY || py >= maxY)
+                return;
         if constexpr (DepthTest && !Instrumented)
         {
             // 선은 깊이/owner를 바꾸지 않는다. 색이 이미 같으면 깊이 판정이
@@ -1585,7 +1587,7 @@ void Rasterizer::DrawScreenLine(SRMath::vec2 a, SRMath::vec2 b, float qa, float 
             const int steps = std::max(std::abs(dx), std::abs(dy));
             if (steps == 0)
             {
-                plot(startX, startY);
+                plot.template write<true>(startX, startY);
                 return;
             }
             const double incrementX = dx / static_cast<double>(steps),
@@ -1593,7 +1595,7 @@ void Rasterizer::DrawScreenLine(SRMath::vec2 a, SRMath::vec2 b, float qa, float 
             double currentX = startX, currentY = startY;
             for (int i = 0; i <= steps; ++i)
             {
-                plot(static_cast<int>(std::round(currentX)), static_cast<int>(std::round(currentY)));
+                plot.template write<true>(static_cast<int>(std::round(currentX)), static_cast<int>(std::round(currentY)));
                 currentX += incrementX;
                 currentY += incrementY;
             }
@@ -1609,7 +1611,8 @@ void Rasterizer::DrawScreenLine(SRMath::vec2 a, SRMath::vec2 b, float qa, float 
             auto error = rows.error;
             while (true)
             {
-                plot(x, y);
+                // 시작과 끝을 band 안으로 제한했고 Y는 단조로 움직인다.
+                plot.template write<false>(x, y);
                 if (x == rows.lastX && y == rows.lastY)
                     break;
                 const auto twiceError = 2 * error;
