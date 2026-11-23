@@ -1,5 +1,6 @@
 #include "Renderer/Renderer.h"
 #include "Renderer/RenderQueue.h"
+#include "Renderer/RendererShadingAVX2.h"
 #include "Renderer/DebugGizmos.h"
 #include "Renderer/FXAA.h"
 #include "Graphics/Model.h"
@@ -1265,6 +1266,47 @@ void textureBilinearAndMipmap()
                   std::bit_cast<std::uint32_t>(scalarOut.y) == std::bit_cast<std::uint32_t>(laneOut[i].y) &&
                   std::bit_cast<std::uint32_t>(scalarOut.z) == std::bit_cast<std::uint32_t>(laneOut[i].z),
               "ShadeSurface4 matches ShadeSurface bitwise with bilinear+mipmapping");
+
+    if (SRMath::SIMD::avx2_available())
+    {
+        mat.specular = {0.08f, 0.06f, 0.04f};
+        mat.shininess = 5.f;
+        MeshRenderCommand command{};
+        command.material = &mat;
+        PreparedTriangle triangle{};
+        triangle.sourceCommand = &command;
+        triangle.rv0 = {{0.f, 0.f}, 1.f, {0.f, 0.f, 1.f}, {0.1f, 0.2f}, {-0.8f, -0.5f, 0.f}};
+        triangle.rv1 = {{4.f, 0.f}, 0.56f, {0.15f, 0.f, 0.53f}, {0.95f, 0.15f}, {0.4f, -0.4f, 0.1f}};
+        triangle.rv2 = {{0.f, 4.f}, 0.74f, {0.f, 0.2f, 0.7f}, {0.07f, 0.53f}, {-0.6f, 0.6f, 0.2f}};
+        check(Rasterizer::ComputeTriangleLod(triangle) > 0.f, "owner interpolation uses a nonzero mip LOD");
+
+        const PreparedTriangle copy = triangle;
+        const PreparedTriangle *const sameOwners[8] = {
+            &triangle, &triangle, &triangle, &triangle, &triangle, &triangle, &triangle, &triangle};
+        const PreparedTriangle *const mixedOwners[8] = {
+            &triangle, &triangle, &triangle, &triangle, &copy, &triangle, &triangle, &triangle};
+        Rasterizer::OwnerSample samples[8];
+        const Rasterizer::OwnerSample *samplePtrs[8];
+        for (int i = 0; i < 8; ++i)
+        {
+            const float a = 0.10f + 0.07f * static_cast<float>(i);
+            const float b = 0.40f - 0.0375f * static_cast<float>(i);
+            const float c = 1.f - a - b;
+            samples[i] = {a, b, c, a + b * triangle.rv1.oneOverW + c * triangle.rv2.oneOverW};
+            samplePtrs[i] = &samples[i];
+        }
+
+        SRMath::vec3 sameColors[8], mixedColors[8];
+        sr::renderer::avx2::ShadeOwner8(sameOwners, samplePtrs, frame, sameColors);
+        sr::renderer::avx2::ShadeOwner8(mixedOwners, samplePtrs, frame, mixedColors);
+        for (int i = 0; i < 8; ++i)
+        {
+            for (int channel = 0; channel < 3; ++channel)
+                check(std::bit_cast<std::uint32_t>(sameColors[i][channel]) ==
+                          std::bit_cast<std::uint32_t>(mixedColors[i][channel]),
+                      "same-triangle AVX2 interpolation matches mixed owners bitwise");
+        }
+    }
 }
 
 void pointAndSpotLights()
