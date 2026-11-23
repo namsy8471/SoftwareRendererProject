@@ -1198,7 +1198,8 @@ template <bool Instrumented, RasterPass Pass> void Rasterizer::DrawTriangleImpl(
                                 }
                             }
                         }
-                        else
+                        // 동률은 더 작은 ID가 이길 수 있으므로 스칼라 판정으로 넘긴다.
+                        else if (_mm_movemask_ps(_mm_cmpge_ps(q, curDepth)) != 0)
                         {
                             alignas(16) float a_arr[4], b_arr[4], c_arr[4], q_arr[4];
                             _mm_store_ps(a_arr, a);
@@ -1233,6 +1234,8 @@ template <bool Instrumented, RasterPass Pass> void Rasterizer::DrawTriangleImpl(
                                 }
                             }
                         }
+                        else if constexpr (Instrumented)
+                            m_stats->depthRejected += 4;
                     }
                     else
                     {
@@ -1295,7 +1298,7 @@ template <bool Instrumented, RasterPass Pass> void Rasterizer::DrawTriangleImpl(
                             _mm_storeu_si128(reinterpret_cast<__m128i *>(&idRow[localX]), idVec);
                             _mm_storeu_si128(reinterpret_cast<__m128i *>(&idRow[localX + 2]), idVec);
                         }
-                        else
+                        else if (_mm_movemask_ps(_mm_cmpge_ps(q, curDepth)) != 0)
                         {
                             alignas(16) float q_arr[4];
                             _mm_store_ps(q_arr, q);
@@ -1319,6 +1322,8 @@ template <bool Instrumented, RasterPass Pass> void Rasterizer::DrawTriangleImpl(
                                 }
                             }
                         }
+                        else if constexpr (Instrumented)
+                            m_stats->depthRejected += 4;
                     }
                     else
                     {
