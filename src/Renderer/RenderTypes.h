@@ -120,6 +120,8 @@ struct RenderStats
     std::uint64_t preparedTriangles = 0, binReferences = 0;
     std::uint64_t coveragePassed = 0, depthRejected = 0, shadedPixels = 0;
     std::uint64_t finalFilledPixels = 0, hiZTests = 0, hiZRejected = 0, lineDepthRejected = 0;
+    // 정수 끝점으로 비교 가능한 X-ray 선의 band별 방문 수와 cache 적중 수.
+    std::uint64_t xrayWireEdges = 0, xrayWireEdgesReused = 0;
     // 두 패스 프레임에서 앞 패스 깊이에 완전히 가려져 분류 전에 버린 뒤 패스 삼각형 수.
     std::uint64_t occlusionRejected = 0;
     // retainedBinBytes: private flat 참조/최종 포인터/wire/debug bin capacity와
@@ -139,5 +141,7 @@ struct RenderStats
         hiZTests += other.hiZTests;
         hiZRejected += other.hiZRejected;
         lineDepthRejected += other.lineDepthRejected;
+        xrayWireEdges += other.xrayWireEdges;
+        xrayWireEdgesReused += other.xrayWireEdgesReused;
     }
 };
