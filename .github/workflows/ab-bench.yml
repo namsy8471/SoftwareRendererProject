@@ -8,20 +8,9 @@
 # - 수동: Actions → Cloud A/B bench → Run workflow 또는
 #     gh workflow run ab-bench.yml --ref <브랜치> -f base=main -f modes=normal -f rounds=60
 # 절대 기준(p95 <= 9ms)은 여기서 판정하지 않는다. 그것은 PC 벤치(windows.yml bench)의 몫이다.
-name: Cloud A/B bench
+name: Cloud renderer workload A/B
 
 on:
-  pull_request:
-    # labeled: 라벨을 붙이는 순간 바로 돌게 한다. 다른 라벨을 붙일 때는 아래 if 조건이 건너뛴다.
-    types: [opened, synchronize, reopened, labeled]
-    paths:
-      - 'src/**'
-      - 'tools/srcli/**'
-      - 'assets/**'
-      - 'build/**'
-      - '*.vcxproj'
-      - 'tools/ci/AB-*.ps1'
-      - '.github/workflows/ab-bench.yml'
   workflow_dispatch:
     inputs:
       base:
@@ -35,8 +24,8 @@ on:
         type: boolean
         default: true
       modes:
-        description: 쉼표로 구분한 모드 (fill,wire,normal,aabb,fxaa)
-        default: fill,wire,normal
+        description: Comma-separated scene names
+        default: few-small,many-small
       rounds:
         description: 모드마다 base/head 쌍을 최대 몇 번 잴지 (결과가 분명하면 8라운드부터 일찍 멈춘다. 많을수록 감지 한계가 작아진다)
         default: '30'
@@ -109,7 +98,7 @@ jobs:
           Write-Output $context
 
   bench:
-    name: A/B ${{ matrix.mode }} 1920x1080 (cloud)
+    name: Workload A/B ${{ matrix.mode }} 1920x1080 (cloud)
     needs: plan
     runs-on: windows-2025
     timeout-minutes: 75
@@ -120,7 +109,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.plan.outputs.head }}
           fetch-depth: 0
 
       # base와 head를 같은 폴더에서 차례로 빌드한다(경로 문자열이 같아야 같은 소스가 같은 바이너리가 된다).
@@ -150,60 +138,42 @@ jobs:
             Copy-Item (Join-Path $src 'tools/bin/x64/Release') (Join-Path $env:RUNNER_TEMP "bin/$side") -Recurse
           }
 
-      # 실행 스크립트는 head 쪽 것을 쓴다(base 커밋에 AB-Bench.ps1이 없어도 된다).
-      # 두 빌드 결과가 바이트까지 같으면 AB-Bench.ps1은 측정하지 않고 "바이너리 동일"만 기록한다.
-      - name: A/B benchmark
-        run: >
-          ./tools/ci/AB-Bench.ps1 -Mode ${{ matrix.mode }}
-          -Base "$env:RUNNER_TEMP/bin/base/srcli.exe"
-          -Head "$env:RUNNER_TEMP/bin/head/srcli.exe"
-          -Rounds ${{ inputs.rounds || '30' }} -Frames ${{ inputs.frames || '200' }}
-          -Out ab/${{ matrix.mode }}.jsonl
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
 
-      # 커밋 제목은 PR 작성자가 정하는 문자열이라 명령줄에 직접 넣지 않고 환경 변수로 넘긴다.
-      - name: Report (this mode)
+      - name: A/B workload benchmark
         env:
-          AB_CONTEXT: ${{ needs.plan.outputs.context }}
-        run: ./tools/ci/AB-Report.ps1 -InputPath ab/${{ matrix.mode }}.jsonl -Title 'A/B ${{ matrix.mode }}' -Context $env:AB_CONTEXT
+          SCENE: ${{ matrix.mode }}
+          PAIR_LIMIT: ${{ inputs.rounds }}
+          FRAME_COUNT: ${{ inputs.frames }}
+          BASE_REV: ${{ needs.plan.outputs.base }}
+          HEAD_REV: ${{ needs.plan.outputs.head }}
+        run: |
+          $scene = $env:SCENE
+          $mode = 'fill'
+          $fixtureHash = $null
+          $extra = @()
+          if ($scene -in @('crowd-fill','crowd-wire','crowd-normal')) {
+            $mode = $scene.Substring(6)
+          } else {
+            $hashes = Get-Content -LiteralPath tools/ci/BenchSceneHashes.json -Raw | ConvertFrom-Json -AsHashtable
+            if (-not $hashes.Contains($scene)) { throw "Unknown benchmark workload: $scene" }
+            $fixtureDir = Join-Path $env:RUNNER_TEMP 'fixtures'
+            node tools/ci/GenerateBenchScenes.cjs $fixtureDir
+            if ($LASTEXITCODE -ne 0) { throw 'Failed to generate workload fixtures.' }
+            $fixture = Join-Path $fixtureDir ($scene + '.glb')
+            $fixtureHash = (Get-FileHash -LiteralPath $fixture).Hash
+            if ($fixtureHash -ne $hashes[$scene]) { throw "Fixture hash changed: $scene" }
+            $extra = @('--scene', $fixture, '--no-lod', '--shading', 'phong')
+          }
+          $raw = Join-Path 'ab' ($scene + '.jsonl')
+          ./tools/ci/AB-Bench.ps1 -Mode $mode -Base "$env:RUNNER_TEMP/bin/base/srcli.exe" -Head "$env:RUNNER_TEMP/bin/head/srcli.exe" -Rounds ([int]$env:PAIR_LIMIT) -Frames ([int]$env:FRAME_COUNT) -AdoptPct 1 -ExtraArgs $extra -Out $raw
+          [ordered]@{scene=$scene;base=$env:BASE_REV;head=$env:HEAD_REV;fixture_sha256=$fixtureHash;frames=[int]$env:FRAME_COUNT;warmup=60} | ConvertTo-Json | Set-Content -LiteralPath 'ab/workload.json'
+          ./tools/ci/AB-Report.ps1 -InputPath $raw -Title "A/B $scene" -AdoptPct 1 -SummaryPath $env:GITHUB_STEP_SUMMARY
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ab-${{ matrix.mode }}
-          path: ab/${{ matrix.mode }}.jsonl
+          name: workload-${{ matrix.mode }}
+          path: ab/*
           retention-days: 30
-
-  report:
-    name: A/B report
-    needs: [plan, bench]
-    if: ${{ !cancelled() && needs.plan.result == 'success' }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    permissions:
-      contents: read
-      pull-requests: write # PR 댓글. fork에서 온 PR은 토큰이 읽기 전용이라 댓글 없이 요약만 남는다.
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: ab-*
-          path: ab
-          merge-multiple: true
-
-      - name: Summary
-        env:
-          AB_CONTEXT: ${{ needs.plan.outputs.context }}
-        run: ./tools/ci/AB-Report.ps1 -InputPath 'ab/*.jsonl' -SummaryPath $env:GITHUB_STEP_SUMMARY -CommentPath comment.md -Context $env:AB_CONTEXT
-
-      # 같은 PR에는 댓글 하나만 두고 새 결과로 고쳐 쓴다(표식: <!-- sr-ab-bench -->).
-      - name: PR comment
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR: ${{ github.event.pull_request.number }}
-        run: |
-          $run = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
-          Add-Content comment.md "`n[실행 기록]($run)"
-          $id = gh api "repos/$env:GITHUB_REPOSITORY/issues/$env:PR/comments" --paginate --jq '.[] | select(.body | startswith("<!-- sr-ab-bench -->")) | .id' | Select-Object -First 1
-          if ($id) { gh api -X PATCH "repos/$env:GITHUB_REPOSITORY/issues/comments/$id" -F body=@comment.md | Out-Null }
-          else { gh pr comment $env:PR --repo $env:GITHUB_REPOSITORY --body-file comment.md }
