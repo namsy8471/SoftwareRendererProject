@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% if page.title %}{{ page.title }} · {% endif %}{{ site.title }}</title>
+<meta name="description" content="{{ page.description | default: site.description }}">
+<link rel="stylesheet" href="{{ '/assets/book.css' | relative_url }}">
+</head>
+<body>
+<button class="nav-toggle" aria-label="목차 열기" onclick="document.body.classList.toggle('nav-open')">☰ 목차</button>
+<nav class="sidebar">
+  <a class="brand" href="{{ '/' | relative_url }}">{{ site.title }}</a>
+  {% for part in site.data.toc %}
+  <div class="part">{{ part.part }}</div>
+  <ol class="chapters">
+    {% for ch in part.chapters %}
+    {% if ch.url %}
+    <li{% if page.url == ch.url %} class="current"{% endif %}><a href="{{ ch.url | relative_url }}"><span class="no">{{ ch.n }}</span>{{ ch.title }}</a></li>
+    {% else %}
+    <li class="todo"><span class="no">{{ ch.n }}</span>{{ ch.title }}</li>
+    {% endif %}
+    {% endfor %}
+  </ol>
+  {% endfor %}
+</nav>
+<main class="content">
+  {% if page.chapter %}<div class="kicker">{{ page.chapter }}장</div>{% endif %}
+  {% if page.title %}<h1 class="title">{{ page.title }}</h1>{% endif %}
+  {% if page.lede %}<p class="lede">{{ page.lede }}</p>{% endif %}
+  {{ content }}
+  {% if page.prev or page.next %}
+  <div class="pager">
+    {% if page.prev %}<a class="prev" href="{{ page.prev.url | relative_url }}">← {{ page.prev.title }}</a>{% else %}<span></span>{% endif %}
+    {% if page.next %}<a class="next" href="{{ page.next.url | relative_url }}">{{ page.next.title }} →</a>{% endif %}
+  </div>
+  {% endif %}
+  <footer>소스: <a href="https://github.com/namsy8471/SoftwareRendererProject">namsy8471/SoftwareRendererProject</a> · 데모는 브라우저 JavaScript로 같은 알고리즘을 다시 구현한 것입니다.</footer>
+</main>
+<script src="{{ '/assets/demos/common.js' | relative_url }}"></script>
+{% for s in page.demos %}<script src="{{ s | prepend: '/assets/demos/' | relative_url }}"></script>
+{% endfor %}
+</body>
+</html>

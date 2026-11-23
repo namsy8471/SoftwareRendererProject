@@ -1,0 +1,46 @@
+# 목차. n은 장 번호(YAML에서 no는 false로 읽혀서 쓰지 않음). url이 없는 장은 아직 쓰지 않은 장이다(사이드바에 회색으로 보인다).
+- part: "1부. 가장 단순한 렌더러"
+  chapters:
+    - { n: 1, title: "창 띄우고 픽셀 찍기", url: "/ch01/" }
+    - { n: 2, title: "선 그리기와 와이어프레임", url: "/ch02/" }
+    - { n: 3, title: "삼각형 채우기: 무게중심 좌표", url: "/ch03/" }
+    - { n: 4, title: "원근 투영, 깊이 버퍼, 클리핑", url: "/ch04/" }
+    - { n: 5, title: "OBJ/MTL 로드, 법선, 텍스처", url: "/ch05/" }
+    - { n: 6, title: "조명: Lambert에서 Phong까지", url: "/ch06/" }
+- part: "2부. 구조를 갖추기"
+  chapters:
+    - { n: 7, title: "Render Queue: 그리기를 명령으로" }
+    - { n: 8, title: "AABB, 프러스텀, Octree 컬링" }
+    - { n: 9, title: "SIMD 수학" }
+    - { n: 10, title: "타일 기반 멀티스레딩" }
+    - { n: 11, title: "FXAA" }
+- part: "3부. 측정하는 법"
+  chapters:
+    - { n: 12, title: "숫자를 믿는 법: A/B와 노이즈" }
+    - { n: 13, title: "프로파일러와 어셈블리 읽기" }
+- part: "4부. 1080p 100fps까지"
+  chapters:
+    - { n: 14, title: "직렬 구간 없애기" }
+    - { n: 15, title: "그릴 것 줄이기: Octree 평탄화" }
+    - { n: 16, title: "정점 캐시는 L2에 맞게" }
+    - { n: 17, title: "타일 작업 나누기" }
+    - { n: 18, title: "셰이딩은 한 번만, 4픽셀씩" }
+    - { n: 19, title: "메모리 쓰기량 줄이기" }
+    - { n: 20, title: "자체 Job System" }
+    - { n: 21, title: "실패에서 배운 것" }
+- part: "5부. 기능 확장"
+  chapters:
+    - { n: 22, title: "비동기 I/O와 프로젝트 파일" }
+    - { n: 23, title: "직접 만든 디코더: PNG, JPEG, glTF" }
+    - { n: 24, title: "애니메이션과 스키닝" }
+    - { n: 25, title: "그림자: 섀도 맵, PCF, CSM" }
+    - { n: 26, title: "PBR과 IBL" }
+- part: "6부. 군집 장면: 188만 삼각형"
+  chapters:
+    - { n: 27, title: "안 보이는 작은 삼각형 버리기" }
+    - { n: 28, title: "Hi-Z 가림 컬링" }
+    - { n: 29, title: "quadric LOD" }
+    - { n: 30, title: "실패: SoA 변환과 다시 만든 초안들" }
+- part: "7부. 맺으며"
+  chapters:
+    - { n: 31, title: "무엇이 얼마나 효과 있었나" }
