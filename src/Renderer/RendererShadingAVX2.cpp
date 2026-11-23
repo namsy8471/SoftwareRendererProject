@@ -660,21 +660,29 @@ void ShadeLanes8Phong(const Lanes8 &normal, const Lanes8 &position, const float 
         }
     }
 
-    SRMath::vec3 baseColor[8];
-    for (int i = 0; i < 8; ++i)
+    Lanes8 base;
+    if (sameMaterial && !material[0]->diffuseTexture)
     {
-        const Material &m = *material[i];
-        if (m.diffuseTexture)
-        {
-            baseColor[i] = sampleTexture(*m.diffuseTexture, u[i], v[i], lod[i], frame);
-            baseColor[i] *= m.diffuse;
-        }
-        else
-            baseColor[i] = m.diffuse;
+        // 단색 재질의 diffuse는 여덟 픽셀에 동일하다.
+        base = Broadcast8(material[0]->diffuse);
     }
-
-    const Lanes8 base = Transpose8(baseColor[0], baseColor[1], baseColor[2], baseColor[3],
-                                   baseColor[4], baseColor[5], baseColor[6], baseColor[7]);
+    else
+    {
+        SRMath::vec3 baseColor[8];
+        for (int i = 0; i < 8; ++i)
+        {
+            const Material &m = *material[i];
+            if (m.diffuseTexture)
+            {
+                baseColor[i] = sampleTexture(*m.diffuseTexture, u[i], v[i], lod[i], frame);
+                baseColor[i] *= m.diffuse;
+            }
+            else
+                baseColor[i] = m.diffuse;
+        }
+        base = Transpose8(baseColor[0], baseColor[1], baseColor[2], baseColor[3],
+                          baseColor[4], baseColor[5], baseColor[6], baseColor[7]);
+    }
     const Lanes8 ambient = sameMaterial ? Broadcast8(material[0]->ambient)
                                         : Transpose8(material[0]->ambient, material[1]->ambient,
                                                      material[2]->ambient, material[3]->ambient,
