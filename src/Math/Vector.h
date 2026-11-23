@@ -306,53 +306,48 @@ static_assert(std::is_trivially_copyable_v<vec2> && std::is_trivially_copyable_v
                   std::is_trivially_copyable_v<vec4>,
               "SRMath vector types must be trivially copyable for SIMD register passing and fast copies");
 
-// inline operator overloading function
+// 새 SIMD 결과를 만들어 값을 반환한다. Win32 MSVC는 인라인된 값 매개변수에
+// 복합 대입을 쓰면 호출자의 원본에 결과를 저장할 수 있다.
 template <std::size_t N>
     requires SupportedVectorDimension<N>
-[[nodiscard]] inline Vector<N> operator+(Vector<N> lhs, const Vector<N> &rhs) noexcept
+[[nodiscard]] inline Vector<N> operator+(const Vector<N> &lhs, const Vector<N> &rhs) noexcept
 {
-    lhs += rhs;
-    return lhs;
+    return Vector<N>(_mm_add_ps(lhs.m128, rhs.m128));
 }
 
 template <std::size_t N>
     requires SupportedVectorDimension<N>
-[[nodiscard]] inline Vector<N> operator-(Vector<N> lhs, const Vector<N> &rhs) noexcept
+[[nodiscard]] inline Vector<N> operator-(const Vector<N> &lhs, const Vector<N> &rhs) noexcept
 {
-    lhs -= rhs;
-    return lhs;
+    return Vector<N>(_mm_sub_ps(lhs.m128, rhs.m128));
 }
 
 template <std::size_t N>
     requires SupportedVectorDimension<N>
-[[nodiscard]] inline Vector<N> operator*(Vector<N> value, float scalar) noexcept
+[[nodiscard]] inline Vector<N> operator*(const Vector<N> &value, float scalar) noexcept
 {
-    value *= scalar;
-    return value;
+    return Vector<N>(_mm_mul_ps(value.m128, _mm_set1_ps(scalar)));
 }
 
 template <std::size_t N>
     requires SupportedVectorDimension<N>
-[[nodiscard]] inline Vector<N> operator*(float scalar, Vector<N> value) noexcept
+[[nodiscard]] inline Vector<N> operator*(float scalar, const Vector<N> &value) noexcept
 {
-    value *= scalar;
-    return value;
+    return value * scalar;
 }
 
 template <std::size_t N>
     requires SupportedVectorDimension<N>
-[[nodiscard]] inline Vector<N> operator*(Vector<N> lhs, const Vector<N> &rhs) noexcept
+[[nodiscard]] inline Vector<N> operator*(const Vector<N> &lhs, const Vector<N> &rhs) noexcept
 {
-    lhs *= rhs;
-    return lhs;
+    return Vector<N>(_mm_mul_ps(lhs.m128, rhs.m128));
 }
 
 template <std::size_t N>
     requires SupportedVectorDimension<N>
-[[nodiscard]] inline Vector<N> operator/(Vector<N> value, float scalar) noexcept
+[[nodiscard]] inline Vector<N> operator/(const Vector<N> &value, float scalar) noexcept
 {
-    value /= scalar;
-    return value;
+    return value * (1.0f / scalar);
 }
 
 template <std::size_t N>
@@ -454,9 +449,10 @@ template <std::size_t N>
 
 template <std::size_t N>
     requires SupportedVectorDimension<N>
-[[nodiscard]] inline Vector<N> clamp(Vector<N> value, float minimum, float maximum) noexcept
+[[nodiscard]] inline Vector<N> clamp(const Vector<N> &value, float minimum, float maximum) noexcept
 {
-    value.clamp(minimum, maximum);
-    return value;
+    const auto lower = _mm_set1_ps(minimum);
+    const auto upper = _mm_set1_ps(maximum);
+    return Vector<N>(_mm_max_ps(lower, _mm_min_ps(upper, value.m128)));
 }
 } // namespace SRMath
