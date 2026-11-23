@@ -250,8 +250,15 @@ class Renderer
                      const ShadedVertex &, const FrameContext &, WorkerScratch &,
                      std::uint64_t primitiveId = 0);
     SR_FORCEINLINE void binPrepared(const MeshRenderCommand &, TriangleRef *, const FrameContext &, WorkerScratch &);
-    static ShadedVertex shadeVertex(const Vertex &, const SRMath::mat4 &, const SRMath::mat4 &,
-                                    const SRMath::mat4 &);
+    static void shadeVertex(ShadedVertex &, const Vertex &, const SRMath::mat4 &, const SRMath::mat4 &,
+                            const SRMath::mat4 &);
+    static ShadedVertex shadeVertex(const Vertex &vertex, const SRMath::mat4 &world, const SRMath::mat4 &mvp,
+                                    const SRMath::mat4 &normalMatrix)
+    {
+        ShadedVertex result;
+        shadeVertex(result, vertex, world, mvp, normalMatrix);
+        return result;
+    }
     // 정점의 약 80%는 이미 이 명령에서 계산됐다. hit는 tag 비교 하나로 끝내도록 인라인하고,
     // 함수 호출(prologue/epilogue)은 miss(fillVertex)일 때만 한다.
     // 반환한 참조는 같은 칸을 쓰는 다른 정점을 채우기 전까지만 유효하다.

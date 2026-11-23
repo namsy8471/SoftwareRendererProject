@@ -95,15 +95,13 @@ bool Renderer::WorkerScratch::BeginCachedCommand(const MeshRenderCommand &comman
     transformCacheValid = true;
     return false;
 }
-ShadedVertex Renderer::shadeVertex(const Vertex &vertex, const SRMath::mat4 &world,
-                                   const SRMath::mat4 &modelViewProjection, const SRMath::mat4 &normalMatrix)
+void Renderer::shadeVertex(ShadedVertex &result, const Vertex &vertex, const SRMath::mat4 &world,
+                           const SRMath::mat4 &modelViewProjection, const SRMath::mat4 &normalMatrix)
 {
-    ShadedVertex result;
     result.posClip = modelViewProjection * SRMath::vec4(vertex.position, 1.0f);
     result.posWorld = SRMath::vec3(world * SRMath::vec4(vertex.position, 1.0f));
     result.normalWorld = SRMath::normalize(SRMath::vec3(normalMatrix * SRMath::vec4(vertex.normal, 0.0f)));
     result.texcoord = vertex.texcoord;
-    return result;
 }
 void Renderer::fillVertex(std::uint32_t index, const MeshRenderCommand &command,
                           const SRMath::mat4 &modelViewProjection, const SRMath::mat4 &normalMatrix,
@@ -122,8 +120,8 @@ void Renderer::fillVertex(std::uint32_t index, const MeshRenderCommand &command,
         vertex = wire;
     }
     else
-        vertex = shadeVertex(command.sourceMesh->vertices[index], command.worldTransform, modelViewProjection,
-                             normalMatrix);
+        shadeVertex(vertex, command.sourceMesh->vertices[index], command.worldTransform, modelViewProjection,
+                    normalMatrix);
 
     auto &setup = cached.setup;
     const __m128 p = _mm_loadu_ps(&vertex.posClip.x);
