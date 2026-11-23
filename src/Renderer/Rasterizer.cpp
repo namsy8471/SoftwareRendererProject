@@ -1025,7 +1025,10 @@ template <bool Instrumented, RasterPass Pass> void Rasterizer::DrawTriangleImpl(
     const __m128 one_f = _mm_set1_ps(1.f);
     const __m128 covEps = _mm_set1_ps(1e-5f);
     const __m128i idVec = _mm_set1_epi64x(static_cast<std::int64_t>(t.primitiveId));
-    const __m128i triVec = _mm_set1_epi64x(reinterpret_cast<std::intptr_t>(&t));
+    const auto triangleAddress = reinterpret_cast<std::intptr_t>(&t);
+    const __m128i triVec = sizeof(const PreparedTriangle *) == 8
+                               ? _mm_set1_epi64x(triangleAddress)
+                               : _mm_set1_epi32(static_cast<std::int32_t>(triangleAddress));
 
     const auto shadePixelScalar = [&](int px, [[maybe_unused]] int py, std::int64_t pw0, std::int64_t pw1,
                                       std::int64_t pw2) SR_FORCEINLINE_LAMBDA
@@ -1181,8 +1184,10 @@ template <bool Instrumented, RasterPass Pass> void Rasterizer::DrawTriangleImpl(
                                     cellRow + static_cast<std::size_t>(x - m_bounds.minX);
                                 _mm_storeu_si128(
                                     reinterpret_cast<__m128i *>(&m_ownerScratch.triangles[cell + 0]), triVec);
-                                _mm_storeu_si128(
-                                    reinterpret_cast<__m128i *>(&m_ownerScratch.triangles[cell + 2]), triVec);
+                                // 16바이트에 Win32 포인터 네 개 또는 x64 포인터 두 개가 들어간다.
+                                if constexpr (sizeof(const PreparedTriangle *) == 8)
+                                    _mm_storeu_si128(
+                                        reinterpret_cast<__m128i *>(&m_ownerScratch.triangles[cell + 2]), triVec);
 
                                 __m128 s0 = a, s1 = b, s2 = c, s3 = q;
                                 _MM_TRANSPOSE4_PS(s0, s1, s2, s3);
