@@ -177,7 +177,11 @@ class Renderer
         struct VertexSetup
         {
             RasterizerVertex raster;
-            SRMath::vec3 ndc;
+            struct
+            {
+                float x;
+                float y;
+            } ndc{};
             std::uint8_t outcode = 0;
             bool finiteClip = false;
         };
@@ -191,8 +195,8 @@ class Renderer
             std::uint64_t stamp = 0;
             std::uint32_t index = 0;
         };
-        // 메시 크기 배열(IronMan 약 13만 정점 x 176B = 23MB를 worker마다) 대신 정점 번호 하위 비트로 칸을
-        // 고르는 direct-mapped 캐시다. 명령 하나는 많아야 768개 정점을 쓰므로 4096칸(약 0.8MB)이면 충돌이
+        // 메시 크기 배열(IronMan 약 13만 정점 x 160B = 21MB를 worker마다) 대신 정점 번호 하위 비트로 칸을
+        // 고르는 direct-mapped 캐시다. 명령 하나는 많아야 768개 정점을 쓰므로 4096칸(640KiB)이면 충돌이
         // 드물고, worker의 L2에 남아 miss 때 DRAM 왕복 없이 쓴다. 칸은 (stamp, index)가 모두 같을 때만
         // 유효하다.
         static constexpr std::size_t vertexCacheSize = 4096;

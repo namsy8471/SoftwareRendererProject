@@ -134,7 +134,7 @@ void Renderer::fillVertex(std::uint32_t index, const MeshRenderCommand &command,
 
     const float oneOverW = 1.0f / vertex.posClip.w;
     const auto ndc = SRMath::vec3(vertex.posClip) * oneOverW;
-    setup.ndc = ndc;
+    setup.ndc = {ndc.x, ndc.y};
 
     auto &r = setup.raster;
     r.screenPos.x = (ndc.x + 1.f) * 0.5f * static_cast<float>(width);
