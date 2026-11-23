@@ -195,7 +195,8 @@ std::optional<PreparedTriangle> Rasterizer::Prepare(const ShadedVertex &a, const
 
 bool Rasterizer::PrepareRasterInto(PreparedTriangle &t, const RasterizerVertex &a, const RasterizerVertex &b,
                                    const RasterizerVertex &c, int width, int height,
-                                   std::uint64_t primitiveId, const MeshRenderCommand *command)
+                                   std::uint64_t primitiveId, const MeshRenderCommand *command,
+                                   bool rejectEmptyCoverage)
 {
     if (width <= 0 || height <= 0 || primitiveId == noPrimitive)
         return false;
@@ -208,12 +209,6 @@ bool Rasterizer::PrepareRasterInto(PreparedTriangle &t, const RasterizerVertex &
     };
     if (!isValidVertex(a) || !isValidVertex(b) || !isValidVertex(c))
         return false;
-
-    t.sourceCommand = command;
-    t.primitiveId = primitiveId;
-    t.rv0 = a;
-    t.rv1 = b;
-    t.rv2 = c;
 
     // Vectorized min/max bounds calculation across 3 vertices using SSE
     const __m128 p0 = a.screenPos.m128;
@@ -259,23 +254,28 @@ bool Rasterizer::PrepareRasterInto(PreparedTriangle &t, const RasterizerVertex &
     t.dx20Fixed = _mm_cvttss_si64(scaled_20);
     t.dy20Fixed = _mm_cvttss_si64(_mm_shuffle_ps(scaled_20, scaled_20, _MM_SHUFFLE(1, 1, 1, 1)));
 
+    // 한 타일 안의 4x4 이하만 검사하며, 통과한 삼각형의 정점 속성만 슬롯에 복사한다.
+    if (rejectEmptyCoverage && ((t.minX ^ t.maxX) | (t.minY ^ t.maxY)) <= 15 &&
+        t.maxX - t.minX <= 3 && t.maxY - t.minY <= 3 && coversNoPixel(t, a.screenPos, b.screenPos, c.screenPos))
+        return false;
+
     const __m128 w0 = _mm_set_ss(a.oneOverW);
     const __m128 w1 = _mm_set_ss(b.oneOverW);
     const __m128 w2 = _mm_set_ss(c.oneOverW);
     t.maximumInverseW = _mm_cvtss_f32(_mm_max_ss(_mm_max_ss(w0, w1), w2));
+    t.sourceCommand = command;
+    t.primitiveId = primitiveId;
+    t.rv0 = a;
+    t.rv1 = b;
+    t.rv2 = c;
     return true;
 }
 
-bool Rasterizer::CoversNoPixel(const PreparedTriangle &t)
+bool Rasterizer::coversNoPixel(const PreparedTriangle &t, const SRMath::vec2 &p0, const SRMath::vec2 &p1,
+                               const SRMath::vec2 &p2)
 {
     // 타일 원점이 x0/y0를 바꾸면 시작 edge 절삭값도 바뀐다. 한 타일 안이면 모든 패스의 시작이 (minX, minY)다.
-    // minX..maxX는 PrepareRasterInto가 [0, width-1]로 잘랐으므로 타일 오른쪽 끝(maxX - 1)보다 크지 않다.
-    if (((t.minX ^ t.maxX) | (t.minY ^ t.maxY)) > 15 || t.maxX - t.minX > 3 || t.maxY - t.minY > 3)
-        return false;
     const int x0 = t.minX, y0 = t.minY;
-    const auto &p0 = t.rv0.screenPos;
-    const auto &p1 = t.rv1.screenPos;
-    const auto &p2 = t.rv2.screenPos;
     std::int64_t r0, r1, r2;
     // DrawTriangleImpl과 같은 식, 같은 순서다. 실패하면 그 함수도 아무것도 그리지 않고 돌아간다.
     if (!toFixed(t.dy12 * (x0 + 0.5f - p1.x) - t.dx12 * (y0 + 0.5f - p1.y), r0) ||
