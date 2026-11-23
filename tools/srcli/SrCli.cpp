@@ -366,6 +366,8 @@ std::string toJson(const Options &options, const sr::headless::RunResult &result
             << ",\"depth_rejected\":" << stats.depthRejected << ",\"shaded_pixels\":" << stats.shadedPixels
             << ",\"final_filled_pixels\":" << stats.finalFilledPixels << ",\"hiz_tests\":" << stats.hiZTests
             << ",\"hiz_rejected\":" << stats.hiZRejected << ",\"line_depth_rejected\":" << stats.lineDepthRejected
+            << ",\"xray_wire_edges\":" << stats.xrayWireEdges
+            << ",\"xray_wire_edges_reused\":" << stats.xrayWireEdgesReused
             << ",\"occlusion_rejected\":" << stats.occlusionRejected
             << ",\"prepare_ms\":" << stats.prepareMs << ",\"bin_ms\":" << stats.binMs
             << ",\"raster_ms\":" << stats.rasterMs << ",\"line_ms\":" << stats.lineMs

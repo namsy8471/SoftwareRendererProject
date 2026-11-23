@@ -807,6 +807,7 @@ void Renderer::renderLines(RenderTarget &target, const RenderQueue &queue, const
     if (hasWireframe)
     {
         std::array<RenderStats, maximumLineBands> bandStats{};
+        const bool reuseEdges = !m_options.hiddenWireframe && m_currentLineAlgorithm == ELineAlgorithm::Bresenham;
         // 풀은 binCommands 완료 뒤 읽기 전용이다. 선의 기울기/오차는 원래
         // 끝점 기준이며 band는 쓰기 영역만 제한해 경계 픽셀도 동일하다.
         sr::jobs::ParallelFor(0, m_lineBandCount,
@@ -819,10 +820,20 @@ void Renderer::renderLines(RenderTarget &target, const RenderQueue &queue, const
                                       Rasterizer lines(target, frame,
                                                        m_options.collectStats ? &bandStats[band] : nullptr);
                                       lines.BeginLineRows(minY, maxY);
-                                      for (const auto &scratch : m_workerScratch)
-                                          for (const auto *triangle : scratch.wireBins[band])
-                                              lines.DrawWireTriangle(*triangle, m_currentLineAlgorithm,
-                                                                     m_options.hiddenWireframe);
+                                      if (reuseEdges)
+                                      {
+                                          Rasterizer::XRayWireEdges edges{};
+                                          for (const auto &scratch : m_workerScratch)
+                                              for (const auto *triangle : scratch.wireBins[band])
+                                                  lines.DrawXRayWireTriangle(*triangle, edges);
+                                      }
+                                      else
+                                      {
+                                          for (const auto &scratch : m_workerScratch)
+                                              for (const auto *triangle : scratch.wireBins[band])
+                                                  lines.DrawWireTriangle(*triangle, m_currentLineAlgorithm,
+                                                                         m_options.hiddenWireframe);
+                                      }
                                   }
                               });
         if (m_options.collectStats)

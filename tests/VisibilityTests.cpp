@@ -462,6 +462,46 @@ void hiddenLineTests()
     }
 }
 
+void xrayWireEdgeReuseTests()
+{
+    constexpr int size = 64;
+    MemoryTarget reference(size, size), candidate(size, size);
+    const RenderFrameContext frame{SRMath::mat4::identity(), {}, {}, 4, 4};
+    const auto triangle = [](const SRMath::vec2 &a, const SRMath::vec2 &b, const SRMath::vec2 &c)
+    {
+        PreparedTriangle result;
+        result.rv0.screenPos = a;
+        result.rv1.screenPos = b;
+        result.rv2.screenPos = c;
+        return result;
+    };
+    const auto tie = triangle({8.f, 8.f}, {10.f, 9.f}, {10.f, 3.f});
+    const auto reversedTie = triangle({10.f, 9.f}, {8.f, 8.f}, {10.f, 13.f});
+    const auto symmetric = triangle({25.f, 20.f}, {28.f, 22.f}, {25.f, 17.f});
+    const auto reversedSymmetric = triangle({28.f, 22.f}, {25.f, 20.f}, {28.f, 25.f});
+    const auto outside = triangle({-1.f, 17.f}, {6.f, 16.f}, {1.f, 19.f});
+    const std::array geometry{tie, reversedTie, tie, symmetric, reversedSymmetric, outside};
+    RenderStats stats;
+    Rasterizer baseline(reference.target, frame), tested(candidate.target, frame, &stats);
+    int firstRow = 0;
+    for (const int endRow : {9, 21, size})
+    {
+        Rasterizer::XRayWireEdges edges{};
+        baseline.BeginLineRows(firstRow, endRow);
+        tested.BeginLineRows(firstRow, endRow);
+        for (const auto &item : geometry)
+        {
+            baseline.DrawWireTriangle(item, ELineAlgorithm::Bresenham, false);
+            tested.DrawXRayWireTriangle(item, edges);
+        }
+        firstRow = endRow;
+    }
+    require(candidate.storage[8 * size + 9] == 0xffffffu && candidate.storage[9 * size + 9] == 0xffffffu,
+            "both directions of a tied edge preserve their pixels across row bands");
+    require(snapshot(reference.target) == snapshot(candidate.target), "edge cache is pixel, depth and owner exact");
+    require(stats.xrayWireEdgesReused >= 4, "repeated and symmetric shared edges hit the cache");
+}
+
 struct SyntheticScene
 {
     std::vector<Mesh> meshes;
@@ -1263,6 +1303,7 @@ void sr::test::RegisterVisibilityTests(TestRegistry &registry)
     registry.Add("visibility.determinism", determinismTests);
     registry.Add("visibility.tileMergeSubmission", tileMergeSubmissionTests);
     registry.Add("visibility.wireOption", wireOptionTests);
+    registry.Add("visibility.xrayWireEdgeReuse", xrayWireEdgeReuseTests);
     registry.Add("visibility.parallelDebugSubmission", parallelDebugSubmissionTests);
     registry.Add("visibility.preparedDebugSlotFreshness", preparedDebugSlotFreshnessTests);
     registry.Add("visibility.independentLineTraversal", independentLineTraversalTests);

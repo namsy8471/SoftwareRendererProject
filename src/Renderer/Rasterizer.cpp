@@ -1663,6 +1663,53 @@ void Rasterizer::BeginLineRows(int minY, int maxY)
     m_lineMaxY = std::clamp(maxY, m_lineMinY, m_target.Height());
 }
 
+void Rasterizer::DrawXRayWireTriangle(const PreparedTriangle &t, XRayWireEdges &edges)
+{
+    const auto pack = [](const SRMath::vec2 &p) -> std::optional<unsigned>
+    {
+        if (!(p.x >= 0.f && p.x < 65536.f && p.y >= 0.f && p.y < 65536.f))
+            return std::nullopt;
+        return (static_cast<unsigned>(p.y) << 16) | static_cast<unsigned>(p.x);
+    };
+    const auto a = pack(t.rv0.screenPos), b = pack(t.rv1.screenPos), c = pack(t.rv2.screenPos);
+    if (!a || !b || !c)
+    {
+        DrawWireTriangle(t, ELineAlgorithm::Bresenham, false);
+        return;
+    }
+    const auto draw = [&](const RasterizerVertex &v0, const RasterizerVertex &v1, unsigned first, unsigned last)
+    {
+        const int startY = static_cast<int>(first >> 16), endY = static_cast<int>(last >> 16);
+        if (std::max(startY, endY) < m_lineMinY || std::min(startY, endY) >= m_lineMaxY)
+            return;
+        const auto dx = static_cast<unsigned>(
+            std::abs(static_cast<int>(first & 0xffffu) - static_cast<int>(last & 0xffffu)));
+        const auto dy = static_cast<unsigned>(std::abs(endY - startY));
+        const unsigned major = std::max(dx, dy), minor = std::min(dx, dy);
+        // major/gcd(major, minor)가 짝수이면 정확히 반 픽셀에 닿는 step이 있어 방향을 보존한다.
+        const unsigned lowBit = major & (0u - major);
+        if ((minor & (lowBit - 1u)) == 0 && first > last)
+            std::swap(first, last);
+        const auto key = (static_cast<std::uint64_t>(first) << 32) | last;
+        const unsigned hash = (std::rotl(first, 13) ^ last) * 0x9e3779b1u;
+        auto &cached = edges[hash >> 22];
+        if (m_stats)
+            ++m_stats->xrayWireEdges;
+        if (key != 0 && key == cached)
+        {
+            if (m_stats)
+                ++m_stats->xrayWireEdgesReused;
+            return;
+        }
+        cached = key;
+        DrawScreenLine(v0.screenPos, v1.screenPos, v0.oneOverW, v1.oneOverW, 0xFFFFFFu,
+                       ELineAlgorithm::Bresenham, false);
+    };
+    draw(t.rv0, t.rv1, *a, *b);
+    draw(t.rv1, t.rv2, *b, *c);
+    draw(t.rv2, t.rv0, *c, *a);
+}
+
 void Rasterizer::DrawWireTriangle(const PreparedTriangle &t, ELineAlgorithm algorithm, bool depthTest)
 {
     const auto &a = t.rv0;

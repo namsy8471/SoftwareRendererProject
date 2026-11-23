@@ -52,6 +52,9 @@ class Rasterizer
         std::uint32_t color = 0;
     };
 
+    // 한 행 band의 흰색 X-ray 선에만 쓴다. 해시 충돌은 이전 키를 밀어낸다.
+    using XRayWireEdges = std::array<std::uint64_t, 1024>;
+
     Rasterizer(RenderTarget &target, const RenderFrameContext &frame, RenderStats *stats = nullptr)
         : m_target(target), m_frame(frame), m_stats(stats), m_lineMaxY(target.Height()),
           m_ownerScratch(ThreadOwnerScratch())
@@ -106,6 +109,7 @@ class Rasterizer
     // DepthOwner 패스로 타일의 모든 삼각형을 그린 뒤 부른다. 기록된 픽셀마다 그 삼각형으로 한 번 셰이딩한다.
     void ShadeOwners();
     void DrawWireTriangle(const PreparedTriangle &, ELineAlgorithm, bool depthTest = true);
+    void DrawXRayWireTriangle(const PreparedTriangle &, XRayWireEdges &);
     void DrawDebugPrimitive(const DebugPrimitiveCommand &, ELineAlgorithm);
     static std::optional<PreparedDebugLine> PrepareDepthTestedLine(const DebugVertex &, const DebugVertex &,
                                                                    const SRMath::mat4 &modelViewProjection,
