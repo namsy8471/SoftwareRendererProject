@@ -13,6 +13,7 @@
 #include "Renderer/ShadowMap.h"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <immintrin.h>
 
@@ -1018,6 +1019,50 @@ void ShadeOwner8(const PreparedTriangle *const (&triangle)[8],
                  const Rasterizer::OwnerSample *const (&sample)[8], const RenderFrameContext &frame,
                  SRMath::vec3 (&colors)[8]) noexcept
 {
+    const PreparedTriangle &first = *triangle[0];
+    if (triangle[7] == &first && triangle[1] == &first && triangle[2] == &first &&
+        triangle[3] == &first && triangle[4] == &first && triangle[5] == &first &&
+        triangle[6] == &first && !first.sourceCommand->material->normalTexture)
+    {
+        // 같은 삼각형의 정점 속성은 공유하고, 각 픽셀의 보간 계수와 1/q는 lane마다 유지한다.
+        __m128 aLo = std::bit_cast<__m128>(*sample[0]), bLo = std::bit_cast<__m128>(*sample[1]);
+        __m128 cLo = std::bit_cast<__m128>(*sample[2]), qLo = std::bit_cast<__m128>(*sample[3]);
+        __m128 aHi = std::bit_cast<__m128>(*sample[4]), bHi = std::bit_cast<__m128>(*sample[5]);
+        __m128 cHi = std::bit_cast<__m128>(*sample[6]), qHi = std::bit_cast<__m128>(*sample[7]);
+        _MM_TRANSPOSE4_PS(aLo, bLo, cLo, qLo);
+        _MM_TRANSPOSE4_PS(aHi, bHi, cHi, qHi);
+
+        const __m256 a = _mm256_set_m128(aHi, aLo);
+        const __m256 b = _mm256_set_m128(bHi, bLo);
+        const __m256 c = _mm256_set_m128(cHi, cLo);
+        const __m256 reciprocal = _mm256_div_ps(_mm256_set1_ps(1.f), _mm256_set_m128(qHi, qLo));
+        const auto blendAttribute = [&](float v0, float v1, float v2) SR_FORCEINLINE_LAMBDA
+        {
+            __m256 value = _mm256_mul_ps(_mm256_set1_ps(v0), a);
+            value = _mm256_add_ps(value, _mm256_mul_ps(_mm256_set1_ps(v1), b));
+            value = _mm256_add_ps(value, _mm256_mul_ps(_mm256_set1_ps(v2), c));
+            return _mm256_mul_ps(value, reciprocal);
+        };
+
+        const Lanes8 normal{
+            blendAttribute(first.rv0.normalWorldOverW.x, first.rv1.normalWorldOverW.x, first.rv2.normalWorldOverW.x),
+            blendAttribute(first.rv0.normalWorldOverW.y, first.rv1.normalWorldOverW.y, first.rv2.normalWorldOverW.y),
+            blendAttribute(first.rv0.normalWorldOverW.z, first.rv1.normalWorldOverW.z, first.rv2.normalWorldOverW.z)};
+        const Lanes8 position{
+            blendAttribute(first.rv0.worldPosOverW.x, first.rv1.worldPosOverW.x, first.rv2.worldPosOverW.x),
+            blendAttribute(first.rv0.worldPosOverW.y, first.rv1.worldPosOverW.y, first.rv2.worldPosOverW.y),
+            blendAttribute(first.rv0.worldPosOverW.z, first.rv1.worldPosOverW.z, first.rv2.worldPosOverW.z)};
+        alignas(32) float u[8], v[8], lod[8];
+        _mm256_store_ps(u, blendAttribute(first.rv0.texcoordOverW.x, first.rv1.texcoordOverW.x, first.rv2.texcoordOverW.x));
+        _mm256_store_ps(v, blendAttribute(first.rv0.texcoordOverW.y, first.rv1.texcoordOverW.y, first.rv2.texcoordOverW.y));
+        const float triangleLod = frame.mipmapping ? Rasterizer::ComputeTriangleLod(first) : 0.f;
+        _mm256_store_ps(lod, _mm256_set1_ps(triangleLod));
+        const Material *const shared = first.sourceCommand->material;
+        const Material *const material[8] = {shared, shared, shared, shared, shared, shared, shared, shared};
+        ShadeLanes8(Normalize8(normal), position, u, v, lod, material, frame, colors);
+        return;
+    }
+
     const auto blend = [](__m128 a0, __m128 a1, __m128 a2, __m128 a, __m128 b, __m128 c, __m128 r)
     {
         __m128 value = _mm_mul_ps(a0, a);
