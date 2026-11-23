@@ -26,6 +26,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <numbers>
 #include <random>
 #include <stdexcept>
@@ -315,20 +316,20 @@ struct RendererTestAccess
         check(!scratch.BeginCachedCommand(command, vp), "different NaN payload invalidates cache key");
 
         // 실제 command 처리도 새 subset 정점만 채우고 material 변경에 stamp를 재발급하지 않는다.
-        Renderer renderer;
-        renderer.ensureViewport(32, 32);
-        auto &actualWorker = renderer.m_workerScratch.Local();
+        const auto renderer = std::make_unique<Renderer>();
+        renderer->ensureViewport(32, 32);
+        auto &actualWorker = renderer->m_workerScratch.Local();
         const Renderer::FrameContext frame{identity, {}, {}, 2, 2};
         command.worldTransform = identity;
         command.indicesToDraw = mesh.indices;
         const auto firstCommand = command;
-        renderer.processCommand(firstCommand, frame, actualWorker, 0);
+        renderer->processCommand(firstCommand, frame, actualWorker, 0);
         const auto stamp = actualWorker.commandStamp;
         check(!actualWorker.IsCached(3), "first subset leaves unused vertex unshaded");
         command.indicesToDraw = subset;
         command.material = &mesh.material;
         const auto secondCommand = command;
-        renderer.processCommand(secondCommand, frame, actualWorker, 1);
+        renderer->processCommand(secondCommand, frame, actualWorker, 1);
         check(actualWorker.commandStamp == stamp && actualWorker.IsCached(3),
               "processCommand reuses transform cache and lazily shades newly referenced vertices");
         verify(actualWorker, command, identity, 32); // renderer 뷰포트 크기로 채운 setup이다.
@@ -351,10 +352,10 @@ struct RendererTestAccess
         wide.vertices[3] = mesh.vertices[2];
         const std::array<unsigned int, 6> colliding{0, slots, 2 * slots, 2 * slots + 1, 2 * slots + 2, 3};
         MeshRenderCommand wideCommand{&wide, colliding, identity, &mesh.material};
-        Renderer collider;
-        collider.ensureViewport(32, 32);
-        auto &collidingWorker = collider.m_workerScratch.Local();
-        collider.processCommand(wideCommand, frame, collidingWorker, 0);
+        const auto collider = std::make_unique<Renderer>();
+        collider->ensureViewport(32, 32);
+        auto &collidingWorker = collider->m_workerScratch.Local();
+        collider->processCommand(wideCommand, frame, collidingWorker, 0);
         const auto expectedTriangle = Rasterizer::Prepare(
             Renderer::shadeVertex(mesh.vertices[0], identity, identity, identity),
             Renderer::shadeVertex(mesh.vertices[1], identity, identity, identity),
