@@ -82,6 +82,37 @@ void attachmentValidation()
     // bad_alloc 강제 주입은 공용 allocator를 바꾸므로 이 테스트에서는 의도적으로 하지 않는다.
 }
 
+void clearFullWidthTile()
+{
+    constexpr int firstColumn = 5;
+    constexpr int width = firstColumn + tileSize;
+    constexpr int height = 3;
+    constexpr int stride = width + 2;
+    constexpr unsigned int sentinel = 0xDEADBEEFu;
+    std::array<unsigned int, stride * (height - 1) + width> pixels;
+    pixels.fill(sentinel);
+    RenderTarget target;
+    require(target.Attach({pixels, width, height, stride}, false).has_value(), "padded target without IDs");
+    std::ranges::fill(target.Depth(), 1.25f);
+
+    target.ClearRect(firstColumn, 1, width, height);
+
+    for (int y = 0; y < height; ++y)
+    {
+        const int colorColumns = y < height - 1 ? stride : width;
+        for (int x = 0; x < colorColumns; ++x)
+        {
+            const bool inside = y >= 1 && x >= firstColumn && x < width;
+            require(pixels[static_cast<std::size_t>(y * stride + x)] == (inside ? 0u : sentinel),
+                    "tile clear preserves adjacent color pixels and padding");
+            if (x < width)
+                require(target.Depth()[static_cast<std::size_t>(y * width + x)] ==
+                            (inside ? RenderTarget::emptyDepth : 1.25f),
+                        "tile clear uses tight depth stride");
+        }
+    }
+}
+
 void clearAndStride()
 {
     constexpr unsigned int sentinel = 0xDEADBEEFu;
@@ -663,6 +694,7 @@ void sr::test::RegisterRenderTargetTests(TestRegistry &registry)
 {
     registry.Add("target.attachmentValidation", attachmentValidation);
     registry.Add("target.clearAndStride", clearAndStride);
+    registry.Add("target.clearFullWidthTile", clearFullWidthTile);
     registry.Add("target.fxaaStrides", fxaaStrides);
     registry.Add("target.nativePixelAndLegacyFxaaColors", nativePixelAndLegacyFxaaColors);
     registry.Add("target.lineRowBands", lineRowBands);

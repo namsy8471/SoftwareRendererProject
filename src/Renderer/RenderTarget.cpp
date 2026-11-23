@@ -1,8 +1,10 @@
 #include "Renderer/RenderTarget.h"
+#include "Renderer/Tile.h"
 
 #include <algorithm>
 #include <new>
 #include <stdexcept>
+#include <xmmintrin.h>
 #include "Utils/Jobs.h"
 
 std::expected<void, RenderTargetError> RenderTarget::Attach(PixelSurfaceView surface, bool keepPrimitiveIds)
@@ -77,6 +79,26 @@ void RenderTarget::ClearRect(int minX, int minY, int maxX, int maxY) noexcept
 {
     const auto width = static_cast<std::size_t>(maxX - minX);
     const bool ids = !m_primitiveIds.empty();
+    if (width == static_cast<std::size_t>(tileSize) && !ids)
+    {
+        // 온전한 너비의 빈 타일은 행당 고정 길이로 지운다. 색상과 깊이의 stride는 서로 다를 수 있다.
+        static_assert(tileSize % 4 == 0);
+        const __m128 clearedDepth = _mm_set1_ps(emptyDepth);
+        auto *const pixels = m_surface.pixels.data();
+        auto *const depth = m_depth.data();
+        const auto colorStride = m_surface.stridePixels;
+        const auto depthStride = static_cast<std::size_t>(m_surface.width);
+        const auto firstColumn = static_cast<std::size_t>(minX);
+        for (int y = minY; y < maxY; ++y)
+        {
+            const auto row = static_cast<std::size_t>(y);
+            std::fill_n(pixels + row * colorStride + firstColumn, tileSize, 0u);
+            auto *const depthRow = depth + row * depthStride + firstColumn;
+            for (int x = 0; x < tileSize; x += 4)
+                _mm_storeu_ps(depthRow + x, clearedDepth);
+        }
+        return;
+    }
     for (int y = minY; y < maxY; ++y)
     {
         const auto row = static_cast<std::size_t>(y) * m_surface.stridePixels + minX;
