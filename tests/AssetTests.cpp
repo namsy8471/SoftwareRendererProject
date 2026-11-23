@@ -82,7 +82,9 @@ void hierarchyTests(const TestContext &context)
     check(!parent->AddChild(child) && !child->AddChild(parent), "duplicates/cycles rejected");
     check(!parent->AddChild(nullptr), "null child rejected");
     parent->Update(0.f, false);
-    check(approximatelyEqual(child->GetWorldAABB().Center().x, 0.f), "composed world transform");
+    const float childCenter = child->GetWorldAABB().Center().x;
+    check(approximatelyEqual(childCenter, 0.f),
+          "composed world transform, child center x=" + std::to_string(childCenter));
     Frustum frustum;
     frustum.Update(SRMath::mat4::identity());
     RenderQueue queue;
@@ -187,7 +189,9 @@ void octreeRangeTests(const TestContext &context)
         }
         outsideHits += test == FrustumTest::Outside;
     }
-    check(cases > 0 && insideHits > 0 && outsideHits > 0, "octree range test covered all classes");
+    check(cases > 0 && insideHits > 0 && outsideHits > 0,
+          "octree range test covered all classes, cases=" + std::to_string(cases) +
+              " inside=" + std::to_string(insideHits) + " outside=" + std::to_string(outsideHits));
 }
 
 // ---- 메시 LOD ----
@@ -270,7 +274,8 @@ void lodPlaneTests()
     check(coarsest.error < 1e-4f, "plane: flat surface simplifies without error");
     for (const auto &lod : plane.lods)
     {
-        check(std::abs(triangleArea(plane, lod.indices) - 1.0) < 1e-4, "plane: area kept (no holes, no overlap)");
+        const double area = triangleArea(plane, lod.indices);
+        check(std::abs(area - 1.0) < 1e-4, "plane: area kept (no holes, no overlap), area=" + std::to_string(area));
         for (const auto &[edge, count] : edgeUse(plane, lod.indices))
         {
             // 한 면만 쓰는 변은 정사각형 둘레 위에만 있어야 한다.
@@ -326,7 +331,8 @@ void lodSphereTests()
             check(count == 2, "sphere: LOD stays closed");
         // 반지름 1 구의 표면에서 정점은 움직이지 않으므로(정점 위로 접기) 면적은 줄기만 하고 크게 줄지 않는다.
         const double area = triangleArea(sphere, lod.indices);
-        check(area > 0.85 * 4.0 * std::numbers::pi && area <= 4.0 * std::numbers::pi, "sphere: LOD area plausible");
+        check(area > 0.85 * 4.0 * std::numbers::pi && area <= 4.0 * std::numbers::pi,
+              "sphere: LOD area plausible, area=" + std::to_string(area));
     }
 }
 
@@ -418,7 +424,9 @@ void lodSelectionTests()
     };
     check(drawnFrom(1.f, false) == 0, "selection: near object draws the source mesh");
     const int far = drawnFrom(90.f, false);
-    check(far == static_cast<int>(source.lods.size()), "selection: far object draws the coarsest LOD");
+    check(far == static_cast<int>(source.lods.size()),
+          "selection: far object draws the coarsest LOD, selected=" + std::to_string(far) +
+              " expected=" + std::to_string(source.lods.size()));
     check(drawnFrom(90.f, true) == 0, "selection: bDisableLod draws the source mesh");
     // 중간 거리는 그 사이 단계이고 거리가 멀수록 거칠어진다.
     // (카메라 far 평면이 100이라 90까지만 본다.)
