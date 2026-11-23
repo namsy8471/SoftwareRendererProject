@@ -154,7 +154,10 @@ jobs:
           $mode = 'fill'
           $fixtureHash = $null
           $extra = @()
-          if ($scene -in @('crowd-fill','crowd-wire','crowd-normal')) {
+          if ($scene -in @('crowd-hidden-wire','crowd-dda-wire')) {
+            $mode = 'wire'
+            $extra = @(if ($scene -eq 'crowd-hidden-wire') { '--hidden-wire' } else { '--dda' })
+          } elseif ($scene -in @('crowd-fill','crowd-wire','crowd-normal')) {
             $mode = $scene.Substring(6)
           } else {
             $fixtureName = $scene
