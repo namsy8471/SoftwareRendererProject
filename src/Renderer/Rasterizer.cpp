@@ -51,6 +51,16 @@ bool toFixed(float input, std::int64_t &result)
     return true;
 }
 
+SR_FORCEINLINE std::int64_t truncateEdgeDelta(__m128 scaled)
+{
+#if defined(_M_X64) || defined(__x86_64__)
+    return _mm_cvttss_si64(scaled);
+#else
+    // Win32에는 64비트 목적지 SSE 명령이 없어, 유효 범위를 확인한 값을 같은 방향으로 절삭한다.
+    return static_cast<std::int64_t>(_mm_cvtss_f32(scaled));
+#endif
+}
+
 struct BresenhamRows
 {
     int x, y, lastX, lastY;
@@ -252,12 +262,12 @@ bool Rasterizer::PrepareRasterInto(PreparedTriangle &t, const RasterizerVertex &
     const __m128 scaled_01_12 = _mm_mul_ps(d01_12, scale256);
     const __m128 scaled_20 = _mm_mul_ps(d20, scale256);
 
-    t.dx01Fixed = _mm_cvttss_si64(scaled_01_12);
-    t.dy01Fixed = _mm_cvttss_si64(_mm_shuffle_ps(scaled_01_12, scaled_01_12, _MM_SHUFFLE(1, 1, 1, 1)));
-    t.dx12Fixed = _mm_cvttss_si64(_mm_movehl_ps(scaled_01_12, scaled_01_12));
-    t.dy12Fixed = _mm_cvttss_si64(_mm_shuffle_ps(scaled_01_12, scaled_01_12, _MM_SHUFFLE(3, 3, 3, 3)));
-    t.dx20Fixed = _mm_cvttss_si64(scaled_20);
-    t.dy20Fixed = _mm_cvttss_si64(_mm_shuffle_ps(scaled_20, scaled_20, _MM_SHUFFLE(1, 1, 1, 1)));
+    t.dx01Fixed = truncateEdgeDelta(scaled_01_12);
+    t.dy01Fixed = truncateEdgeDelta(_mm_shuffle_ps(scaled_01_12, scaled_01_12, _MM_SHUFFLE(1, 1, 1, 1)));
+    t.dx12Fixed = truncateEdgeDelta(_mm_movehl_ps(scaled_01_12, scaled_01_12));
+    t.dy12Fixed = truncateEdgeDelta(_mm_shuffle_ps(scaled_01_12, scaled_01_12, _MM_SHUFFLE(3, 3, 3, 3)));
+    t.dx20Fixed = truncateEdgeDelta(scaled_20);
+    t.dy20Fixed = truncateEdgeDelta(_mm_shuffle_ps(scaled_20, scaled_20, _MM_SHUFFLE(1, 1, 1, 1)));
 
     const __m128 w0 = _mm_set_ss(a.oneOverW);
     const __m128 w1 = _mm_set_ss(b.oneOverW);
@@ -1015,7 +1025,10 @@ template <bool Instrumented, RasterPass Pass> void Rasterizer::DrawTriangleImpl(
     const __m128 one_f = _mm_set1_ps(1.f);
     const __m128 covEps = _mm_set1_ps(1e-5f);
     const __m128i idVec = _mm_set1_epi64x(static_cast<std::int64_t>(t.primitiveId));
-    const __m128i triVec = _mm_set1_epi64x(reinterpret_cast<std::intptr_t>(&t));
+    const auto triangleAddress = reinterpret_cast<std::intptr_t>(&t);
+    const __m128i triVec = sizeof(const PreparedTriangle *) == 8
+                               ? _mm_set1_epi64x(triangleAddress)
+                               : _mm_set1_epi32(static_cast<std::int32_t>(triangleAddress));
 
     const auto shadePixelScalar = [&](int px, [[maybe_unused]] int py, std::int64_t pw0, std::int64_t pw1,
                                       std::int64_t pw2) SR_FORCEINLINE_LAMBDA
@@ -1171,8 +1184,10 @@ template <bool Instrumented, RasterPass Pass> void Rasterizer::DrawTriangleImpl(
                                     cellRow + static_cast<std::size_t>(x - m_bounds.minX);
                                 _mm_storeu_si128(
                                     reinterpret_cast<__m128i *>(&m_ownerScratch.triangles[cell + 0]), triVec);
-                                _mm_storeu_si128(
-                                    reinterpret_cast<__m128i *>(&m_ownerScratch.triangles[cell + 2]), triVec);
+                                // 16바이트에 Win32 포인터 네 개 또는 x64 포인터 두 개가 들어간다.
+                                if constexpr (sizeof(const PreparedTriangle *) == 8)
+                                    _mm_storeu_si128(
+                                        reinterpret_cast<__m128i *>(&m_ownerScratch.triangles[cell + 2]), triVec);
 
                                 __m128 s0 = a, s1 = b, s2 = c, s3 = q;
                                 _MM_TRANSPOSE4_PS(s0, s1, s2, s3);

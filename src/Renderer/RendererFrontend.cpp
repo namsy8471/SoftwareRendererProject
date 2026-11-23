@@ -12,8 +12,10 @@
 
 Renderer::WorkerScratch::WorkerScratch()
 {
-    // 준비 구조가 커졌으므로 작은 초기 용량으로 시작하고 실제 high-water를 재사용한다.
-    triangles.reserve(131072);
+    // Win32에서는 여러 Renderer의 선할당이 주소 공간을 소진한다.
+    // TrianglePool::Slot이 필요한 블록을 할당하고 다음 프레임에도 재사용한다.
+    if constexpr (sizeof(void *) == 8)
+        triangles.reserve(131072);
     tileReferences.reserve(131072);
     sortedTileReferences.reserve(131072);
     touchedTileIds.reserve(8192);
