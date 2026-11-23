@@ -915,6 +915,7 @@ void parallelDebugSubmissionTests()
                 MemoryTarget emptyReference(width, height), emptyTested(width, height);
                 Renderer geometryOnly;
                 geometryOnly.SetLineAlgorithm(algorithm);
+                geometryOnly.SetOptions({.hiddenWireframe = false});
                 geometryOnly.RenderScene(emptyReference.target, geometry, scene.camera.GetViewParams(), scene.lights);
                 reused.SetOptions({false, false, true, false});
                 reused.RenderScene(emptyTested.target, geometry, scene.camera.GetViewParams(), scene.lights);
