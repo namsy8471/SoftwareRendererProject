@@ -63,27 +63,25 @@ void SceneRenderCollector::processVisibleMeshTasks(const Frustum &frustum,
         return;
     const std::size_t meshCount = taskCount;
 
-    // resize/clear는 병렬 작업 전에만 수행한다. 서로 다른 메시의 batch를
-    // 각 작업이 독점하므로 worker 배치가 달라도 최종 제출 순서는 같다.
     if (m_batches.size() < meshCount)
         m_batches.resize(meshCount);
-    for (std::size_t i = 0; i < meshCount; ++i)
-    {
-        auto &batch = m_batches[i];
-        batch.commands.clear();
-        batch.debugCommands.clear();
-        if (flags.bShowNormal)
-            batch.normalLines = queue.AcquireDebugVertices();
-    }
+    // 법선 정점 저장소는 제출 순서대로 재사용하므로 호출 스레드에서 받는다.
+    if (flags.bShowNormal)
+        for (std::size_t i = 0; i < meshCount; ++i)
+            m_batches[i].normalLines = queue.AcquireDebugVertices();
 
+    // 각 작업이 자기 메시의 batch를 비우고 채운다. 배치가 끝나는 순서와 무관하게 인덱스 순서로 제출한다.
     sr::jobs::ParallelFor(std::size_t{0}, meshCount,
                           [&](std::size_t first, std::size_t last)
                           {
                               for (std::size_t i = first; i != last; ++i)
                               {
                                   const auto &task = m_visibleMeshTasks[i];
+                                  auto &batch = m_batches[i];
+                                  batch.commands.clear();
+                                  batch.debugCommands.clear();
                                   collectMeshCommands(*task.object, *task.mesh, task.allowedLodError, frustum, flags,
-                                                      m_batches[i]);
+                                                      batch);
                               }
                           });
 
