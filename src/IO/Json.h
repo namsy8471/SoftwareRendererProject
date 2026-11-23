@@ -106,7 +106,7 @@ inline const Value::Array *Value::AsArray() const noexcept { return std::get_if<
 inline Value::Array *Value::AsArray() noexcept { return std::get_if<Array>(&m_data); }
 inline const Value::Object *Value::AsObject() const noexcept { return std::get_if<Object>(&m_data); }
 inline Value::Object *Value::AsObject() noexcept { return std::get_if<Object>(&m_data); }
-inline bool operator==(const Value &, const Value &) = default;
+inline bool operator==(const Value &left, const Value &right) { return left.m_data == right.m_data; }
 
 struct ParseError
 {
