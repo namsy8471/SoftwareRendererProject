@@ -585,16 +585,16 @@ void determinismTests()
     mixed.Submit(wire);
     for (const auto &cmd : scene.queue.GetRenderCommands().subspan(1))
         mixed.Submit(cmd);
-    renderer.SetOptions({false, false, false, true});
+    renderer.SetOptions({});
     image.target.Clear();
     renderer.RenderScene(image.target, mixed, scene.camera.GetViewParams(), scene.lights);
     require(std::ranges::all_of(image.storage, [](auto pixel) { return pixel == 0 || pixel == 0xFFFFFF; }),
             "mixed wire occludes filled colors");
-    renderer.SetOptions({});
+    renderer.SetOptions({.hiddenWireframe = false});
     image.target.Clear();
     renderer.RenderScene(image.target, mixed, scene.camera.GetViewParams(), scene.lights);
     require(std::ranges::any_of(image.storage, [](auto pixel) { return pixel != 0 && pixel != 0xFFFFFF; }),
-            "default mixed X-ray wire does not occlude filled colors");
+            "mixed X-ray wire does not occlude filled colors");
 }
 
 void tileMergeSubmissionTests()
@@ -742,7 +742,7 @@ void wireOptionTests()
     MemoryTarget image(129, 193);
     SyntheticScene scene(129, 193, true, true);
     Renderer renderer;
-    require(!renderer.GetOptions().hiddenWireframe, "renderer default is fast X-ray wire");
+    require(renderer.GetOptions().hiddenWireframe, "renderer hides occluded wire edges by default");
     RenderQueue frontOnly;
     frontOnly.Submit(scene.queue.GetRenderCommands().front());
     std::array<Snapshot, 2> expected;
@@ -765,12 +765,12 @@ void wireOptionTests()
         }
         else
         {
-            require(expected[index].colors != front.colors, "default X-ray wire retains rear edges");
+            require(expected[index].colors != front.colors, "X-ray wire retains rear edges");
             require(std::ranges::all_of(expected[index].owners,
                                         [](auto id) { return id == RenderTarget::emptyOwner; }),
-                    "default wire skips face depth ownership");
+                    "X-ray wire skips face depth ownership");
             require(renderer.GetStats().binReferences == 0 && renderer.GetStats().coveragePassed == 0,
-                    "default wire skips triangle binning and face rasterization");
+                    "X-ray wire skips triangle binning and face rasterization");
         }
         for (bool single : {true, false})
         {
@@ -795,7 +795,7 @@ void wireOptionTests()
     mixed.Submit(fillCommand);
     for (const auto &command : scene.queue.GetRenderCommands().subspan(1))
         mixed.Submit(command);
-    renderer.SetOptions({});
+    renderer.SetOptions({.hiddenWireframe = false});
     image.target.Clear();
     renderer.RenderScene(image.target, filledFront, scene.camera.GetViewParams(), scene.lights);
     const auto fillReference = snapshot(image.target);
@@ -805,7 +805,7 @@ void wireOptionTests()
     require(xrayMixed.colors != fillReference.colors && xrayMixed.depths == fillReference.depths &&
                 xrayMixed.owners == fillReference.owners,
             "mixed X-ray rear wires overlay filled face without altering depth");
-    renderer.SetOptions({false, false, false, true});
+    renderer.SetOptions({});
     image.target.Clear();
     renderer.RenderScene(image.target, mixed, scene.camera.GetViewParams(), scene.lights);
     require(snapshot(image.target) == fillReference, "mixed hidden rear wires stay behind filled face");

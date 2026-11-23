@@ -107,6 +107,7 @@ std::size_t differingPixels(const std::vector<unsigned int> &a, const std::vecto
 void jsonRoundTripTests()
 {
     project::ProjectDocument projectDocument;
+    check(projectDocument.GetRenderOptions().hiddenWireframe, "new projects hide occluded wires");
     projectDocument.name = "\xED\x95\x9C\xEA\xB8\x80 project"; // 한글
     projectDocument.startupScene = "Scenes/Main.srscene";
     projectDocument.AddScene("Scenes/Main.srscene");
@@ -114,7 +115,7 @@ void jsonRoundTripTests()
     projectDocument.AddScene("Scenes/Main.srscene"); // 중복은 무시
     projectDocument.assets.push_back({.id = "0123456789abcdef", .path = "Assets/teapot/teapot.obj"});
     projectDocument.hiZ = true;
-    projectDocument.hiddenWireframe = true;
+    projectDocument.hiddenWireframe = false;
     check(projectDocument.scenes.size() == 2, "AddScene keeps one copy");
 
     const auto projectText = sr::json::Write(project::ToJson(projectDocument));
@@ -124,8 +125,14 @@ void jsonRoundTripTests()
     const auto projectBack = project::ProjectFromJson(*projectParsed);
     check(projectBack.has_value(), "project from json");
     check(*projectBack == projectDocument, "project round trip");
-    check(projectBack->GetRenderOptions().hiZ && !projectBack->GetRenderOptions().frontToBack,
-          "render options");
+    check(projectBack->GetRenderOptions().hiZ && !projectBack->GetRenderOptions().frontToBack &&
+              !projectBack->GetRenderOptions().hiddenWireframe,
+          "saved render options include explicit X-ray");
+    auto projectWithDefaults = *projectParsed;
+    projectWithDefaults.Set("render", sr::json::Value::Object{});
+    const auto defaultProject = project::ProjectFromJson(projectWithDefaults);
+    check(defaultProject.has_value() && defaultProject->GetRenderOptions().hiddenWireframe,
+          "omitted wire option uses hidden-line default");
 
     project::SceneDocument scene = project::MakeEmptyScene("Main");
     scene.autoRotate = true;

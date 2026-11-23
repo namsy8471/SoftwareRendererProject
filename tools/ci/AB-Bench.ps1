@@ -108,10 +108,25 @@ $outDir = Split-Path $Out -Parent
 if ($outDir) { New-Item -ItemType Directory -Force -Path $outDir | Out-Null }
 Set-Content -Path $Out -Value $null -NoNewline
 
+# 예전 실행 파일은 X-ray가 기본이며 --xray-wire를 지원하지 않는다.
+function Get-BenchArgs([string]$exe) {
+    if ($Mode -ne 'wire') { return $ExtraArgs }
+    $policy = $ExtraArgs | Where-Object { $_ -in @('--hidden-wire', '--xray-wire') } | Select-Object -Last 1
+    $options = @($ExtraArgs | Where-Object { $_ -notin @('--hidden-wire', '--xray-wire') })
+    if ($policy -eq '--hidden-wire') { return @($policy) + $options }
+    # 인자 없이 호출하면 이전 CLI도 실행 없이 사용법을 stderr에 출력한다.
+    $PSNativeCommandUseErrorActionPreference = $false
+    if ((& $exe 2>&1 | Out-String) -match '--xray-wire\b') {
+        return @('--xray-wire') + $options
+    }
+    return $options
+}
+
 function Invoke-Side([string]$side, [int]$round) {
     $exe = if ($side -eq 'base') { $Base } else { $Head }
     $label = if ($side -eq 'base') { $BaseLabel } else { $HeadLabel }
-    $line = & $exe bench --mode $Mode --size $Size --frames $Frames --warmup $Warmup --json @ExtraArgs
+    $benchArgs = $sideArgs[$side]
+    $line = & $exe bench --mode $Mode --size $Size --frames $Frames --warmup $Warmup --json @benchArgs
     if ($LASTEXITCODE -ne 0) { throw "srcli ($side) failed for mode $Mode" }
     $row = $line | ConvertFrom-Json
     $row | Add-Member side $side
@@ -137,6 +152,7 @@ if ($baseHash -eq $headHash -and -not $Force) {
     return
 }
 
+$sideArgs = @{ base = @(Get-BenchArgs $Base); head = @(Get-BenchArgs $Head) }
 $measured = [System.Collections.Generic.List[object]]::new()
 $stopNote = if ($NoEarlyStop) { 'no early stop' } else { "early stop checks from $MinRounds every $CheckEvery" }
 Write-Output "A/B $Mode $Size, up to $Rounds rounds x $Frames frames (warmup $Warmup, $stopNote), $cpu, $cores logical cores"

@@ -56,7 +56,7 @@ struct ProjectDocument
     // collectStats는 측정용이라 저장하지 않는다.
     bool frontToBack = false;
     bool hiZ = false;
-    bool hiddenWireframe = false;
+    bool hiddenWireframe = RenderOptions{}.hiddenWireframe;
 
     [[nodiscard]] const AssetEntry *FindAsset(std::string_view id) const noexcept;
     [[nodiscard]] RenderOptions GetRenderOptions(RenderOptions base = {}) const noexcept;

@@ -252,13 +252,13 @@ flowchart LR
     Math -.-> Frontend
 ```
 
-シーンのコマンドはオブジェクト・mesh・octreeの安定した順序で収集します。Clip後の`PreparedTriangle`をworker別の`concurrent_vector` poolに一度作り、`(tileIndex, triangle*)`参照をworker別のflat配列へ記録します。Tile別のcount/cursorとtouched IDを持ち、front-endのjoin後に固定したactive worker一覧からprefix offsetと重ならない出力範囲を計算します。Worker別の並列scatterで単一pointer配列を埋め、join後に各tile spanを任意にsortして描画します。並列実行は`sr::jobs`が担い、primitive ID・pixel所有権の規則は維持します。標準の高速X-rayだけのsceneでは、flat tile参照・worker metadataの新規割り当てとdepth prepassを省きます。
+シーンのコマンドはオブジェクト・mesh・octreeの安定した順序で収集します。Clip後の`PreparedTriangle`をworker別の`concurrent_vector` poolに一度作り、`(tileIndex, triangle*)`参照をworker別のflat配列へ記録します。Tile別のcount/cursorとtouched IDを持ち、front-endのjoin後に固定したactive worker一覧からprefix offsetと重ならない出力範囲を計算します。Worker別の並列scatterで単一pointer配列を埋め、join後に各tile spanを任意にsortして描画します。並列実行は`sr::jobs`が担い、primitive ID・pixel所有権の規則は維持します。X-rayだけのsceneでは、flat tile参照・worker metadataの新規割り当てとdepth prepassを省きます。
 
 Tile別vectorのcapacity累積ではなく、worker別flat参照と最終pointer配列のcapacityを再利用します。`binReferences`は論理参照を一度だけ数え、`retainedBinBytes`はflat/最終/wire/debug保存領域、count/cursor/offset、header、touched/active worker一覧を含みます。`binMs`はfront-end参照準備、`rasterMs`はprefix・scatter・sort・rasterizationの時間です。速度・memoryの比較は進行中であり、性能向上や最終採用を示すものではありません。
 
 `Renderer`はwindow handleを持たず、`RenderTarget&`を受け取ります。`RenderTarget`はstride付きの非所有`PixelSurfaceView`と所有するdepth/ID bufferを接続し、`GdiPresenter`はDIBの生成・resize・表示を担当します。アプリはDIBに直接書き込むため、分離による画面全体の追加コピーはありません。FXAAの既存input snapshotは維持します。
 
-Wireframeの初期値は、隠れた線も表示する高速な**X-ray表示**です。`Hidden-line wireframe (depth prepass)`をONにした場合だけ、wire commandを含むframeで全ての面のdepth-only passを先行し、隠れた線を除きます。標準の混在modeではwire面がfill面を隠さず、prepassもありません。Normalのdepth policyは独立し、存在する面深度を判定します。Hidden wireがOFFならfill面の深度だけを使うため、純粋なX-ray wire sceneにはnormalを隠す面深度がありません。AABB/lightは深度を無視するoverlayで、全ての線pass後に任意でFXAAを適用します。
+ワイヤーフレームは既定で**隠線を除去**します。ワイヤーを含むフレームでは面の深度を先に記録し、見える辺を描きます。Algorithmsで`Hidden-line wireframe (depth prepass)`をオフにするか、`srcli`に`--xray-wire`を渡すとX-ray表示になります。X-rayではワイヤーの面が塗りつぶし面を遮りません。法線は記録済みの面深度を使います。AABBとライトのギズモは深度に依存せず、FXAAは線の描画後に適用します。
 
 Wire線は重ならないY行bandで並列処理します。約64行を基準に最大32 bandとし、front-end完了後のtriangle poolとdepth/primitive IDは読み取り専用です。`BeginLineRows`はpixelの書き込み範囲だけを制限し、band境界で端点をclipしたり線を再始動したりしないため、既存のBresenham/DDAのpixel規則を維持します。Wireのjoin後、DepthTested線が256本以上なら256本単位のchunkで変換・clippingを並列準備し、元の提出順を保つbinとY行bandで描画します。少数のnormalは既存の逐次経路を使い、overlayはnormalのjoin後に逐次実行します。
 
@@ -498,7 +498,7 @@ msbuild .\SoftrendererProject.sln /m /p:Configuration=Release /p:Platform=x64
 
 Window上部のmenuから、Bresenham/DDA line drawing、None/FXAA、Normal Vector/AABB/Wire Frame/Light Direction表示も選択できます。
 
-Algorithmsには独立した`Front-to-back sorting (experimental)`、`Hi-Z culling (experimental)`、`Hidden-line wireframe (depth prepass)`があり、全て初期値OFFです。DebugのWire Frameは標準ではX-ray表示で、hidden wireを追加でONにすると面depth prepassと隠線除去を使います。Normalは別のdepth policyを維持し、AABB/light directionはoverlayです。
+Algorithmsの`Hidden-line wireframe (depth prepass)`は既定でオンです。DebugのWire Frameは見える辺を表示し、隠線除去をオフにするとX-rayに切り替わります。Front-to-back sortingとHi-Z cullingは独立したオプションで、既定はオフです。
 
 <details>
 <summary><strong>ディレクトリ構成を見る</strong></summary>

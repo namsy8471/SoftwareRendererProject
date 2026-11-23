@@ -100,8 +100,8 @@ struct RenderOptions
     bool frontToBack = false;
     bool hiZ = false;
     bool collectStats = false;
-    // 기본 와이어는 기존 X-ray 표시다. 숨은 선 제거를 선택한 경우에만 면 깊이를 만든다.
-    bool hiddenWireframe = false;
+    // 와이어 면의 깊이로 뒤에 가려진 모서리를 숨긴다.
+    bool hiddenWireframe = true;
     // 가까운 물체를 먼저 그려 만든 깊이로 뒤 물체의 가려진 삼각형을 타일 분류 전에 버린다(픽셀은 같다).
     bool occlusionPasses = true;
     bool bilinearFiltering = false;
