@@ -157,14 +157,19 @@ jobs:
           if ($scene -in @('crowd-fill','crowd-wire','crowd-normal')) {
             $mode = $scene.Substring(6)
           } else {
+            $fixtureName = $scene
+            if ($scene.EndsWith('-wire', [StringComparison]::Ordinal)) {
+              $mode = 'wire'
+              $fixtureName = $scene.Substring(0, $scene.Length - 5)
+            }
             $hashes = Get-Content -LiteralPath tools/ci/BenchSceneHashes.json -Raw | ConvertFrom-Json -AsHashtable
-            if (-not $hashes.Contains($scene)) { throw "Unknown benchmark workload: $scene" }
+            if (-not $hashes.Contains($fixtureName)) { throw "Unknown benchmark workload: $scene" }
             $fixtureDir = Join-Path $env:RUNNER_TEMP 'fixtures'
             node tools/ci/GenerateBenchScenes.cjs $fixtureDir
             if ($LASTEXITCODE -ne 0) { throw 'Failed to generate workload fixtures.' }
-            $fixture = Join-Path $fixtureDir ($scene + '.glb')
+            $fixture = Join-Path $fixtureDir ($fixtureName + '.glb')
             $fixtureHash = (Get-FileHash -LiteralPath $fixture).Hash
-            if ($fixtureHash -ne $hashes[$scene]) { throw "Fixture hash changed: $scene" }
+            if ($fixtureHash -ne $hashes[$fixtureName]) { throw "Fixture hash changed: $scene" }
             $extra = @('--scene', $fixture, '--no-lod', '--shading', 'phong')
           }
           $raw = Join-Path 'ab' ($scene + '.jsonl')
