@@ -11,7 +11,7 @@ on:
         description: Configurations to rebuild
         type: choice
         default: all
-        options: [all, win32]
+        options: [all, win32, win32-release]
 
 permissions:
   contents: read
@@ -24,8 +24,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: ${{ fromJSON(inputs.scope == 'win32' && '["Win32"]' || '["x64","Win32"]') }}
-        configuration: [Debug, Release]
+        platform: ${{ fromJSON(inputs.scope == 'all' && '["x64","Win32"]' || '["Win32"]') }}
+        configuration: ${{ fromJSON(inputs.scope == 'win32-release' && '["Release"]' || '["Debug","Release"]') }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -62,7 +62,7 @@ jobs:
           }
           $debugger = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits/10/Debuggers/x86/cdb.exe'
           if (Test-Path -LiteralPath $debugger) {
-            & $debugger -G -c 'sxe av; g; .exr -1; .ecxr; kP; q' $exe $PWD.Path --filter visibility.depthAndHiZ 2>&1 |
+            & $debugger -G -c 'sxe av; g; .exr -1; r; u @eip-20 @eip+20; kP; q' $exe $PWD.Path --filter visibility.depthAndHiZ 2>&1 |
                 Tee-Object -FilePath $notes -Append
           }
           Get-WinEvent -FilterHashtable @{LogName='Application'; Id=1000; StartTime=$started} -ErrorAction SilentlyContinue |
