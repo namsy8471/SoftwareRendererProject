@@ -7,6 +7,11 @@ on:
         description: Full commit SHA of the candidate
         required: true
         type: string
+      scope:
+        description: Configurations to rebuild
+        type: choice
+        default: all
+        options: [all, win32]
 
 permissions:
   contents: read
@@ -19,7 +24,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [x64, Win32]
+        platform: ${{ fromJSON(inputs.scope == 'win32' && '["Win32"]' || '["x64","Win32"]') }}
         configuration: [Debug, Release]
     steps:
       - uses: actions/checkout@v4
@@ -37,6 +42,33 @@ jobs:
           $actual = (git rev-parse HEAD).Trim()
           if ($LASTEXITCODE -ne 0 -or $actual -ne $env:SR_REVISION) { throw "Unexpected checkout: $actual" }
           ./tests/RunTests.ps1 -Rebuild -Platforms $env:SR_PLATFORM -Configurations $env:SR_CONFIGURATION
+      - name: Diagnose isolated Win32 cases
+        if: failure() && matrix.platform == 'Win32'
+        shell: pwsh
+        timeout-minutes: 8
+        env:
+          SR_CONFIGURATION: ${{ matrix.configuration }}
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $PSNativeCommandUseErrorActionPreference = $false
+          $exe = Join-Path $PWD "tests/bin/Win32/$env:SR_CONFIGURATION/RendererTests.exe"
+          if (-not (Test-Path -LiteralPath $exe)) { return }
+          $started = Get-Date
+          $notes = "tests/bin/logs/Win32-$env:SR_CONFIGURATION-diagnostics.txt"
+          foreach ($test in @('scene.hierarchy', 'scene.octreeRanges', 'lod.plane', 'lod.sphere', 'lod.selection', 'visibility.depthAndHiZ', 'visibility.passBoundaryTie', 'golden.fill')) {
+            "=== $test ===" | Tee-Object -FilePath $notes -Append
+            & $exe $PWD.Path --filter $test 2>&1 | Tee-Object -FilePath $notes -Append
+            "exit=$LASTEXITCODE" | Tee-Object -FilePath $notes -Append
+          }
+          $debugger = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits/10/Debuggers/x86/cdb.exe'
+          if (Test-Path -LiteralPath $debugger) {
+            & $debugger -G -c 'sxe av; g; .exr -1; .ecxr; kP; q' $exe $PWD.Path --filter visibility.depthAndHiZ 2>&1 |
+                Tee-Object -FilePath $notes -Append
+          }
+          Get-WinEvent -FilterHashtable @{LogName='Application'; Id=1000; StartTime=$started} -ErrorAction SilentlyContinue |
+              Where-Object Message -like '*RendererTests.exe*' | Select-Object -First 8 -ExpandProperty Message |
+              Tee-Object -FilePath $notes -Append
+          exit 0
       - uses: actions/upload-artifact@v4
         if: always()
         with:
