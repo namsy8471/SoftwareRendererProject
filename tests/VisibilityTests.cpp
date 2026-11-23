@@ -187,8 +187,22 @@ void depthAndHiZTests()
     auto far = rectangle(0, 0, 17, 19, 0.5f, 32, 17, 19, blueCommand);
     std::vector<PreparedTriangle> geometry = near;
     geometry.insert(geometry.end(), far.begin(), far.end());
-    drawPrepared(image.target, frame, geometry, false);
+    RenderStats referenceStats;
+    drawPrepared(image.target, frame, geometry, false, &referenceStats);
     const auto reference = snapshot(image.target);
+    require(referenceStats.depthRejected > 0, "far layer loses the depth test");
+    for (const auto pass : {RasterPass::DepthOwner, RasterPass::DepthOnly})
+    {
+        image.target.Clear();
+        RenderStats passStats;
+        drawPrepared(image.target, frame, geometry, false, &passStats, pass);
+        if (pass == RasterPass::DepthOnly)
+            drawPrepared(image.target, frame, geometry, false, nullptr, RasterPass::ShadeVisible);
+        require(snapshot(image.target) == reference, "SIMD depth rejection preserves color, depth and owner");
+        require(passStats.coveragePassed == referenceStats.coveragePassed &&
+                    passStats.depthRejected == referenceStats.depthRejected,
+                "SIMD depth rejection counts every covered pixel");
+    }
     image.target.Clear();
     RenderStats stats;
     drawPrepared(image.target, frame, geometry, true, &stats);
