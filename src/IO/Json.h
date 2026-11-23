@@ -4,6 +4,7 @@
 #include <expected>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -30,40 +31,45 @@ class Value
         Object
     };
 
-    Value() noexcept = default;
-    Value(std::nullptr_t) noexcept {}
-    Value(bool value) noexcept : m_data(value) {}
-    Value(double value) noexcept : m_data(value) {}
+    Value() noexcept;
+    Value(std::nullptr_t) noexcept;
+    Value(bool value) noexcept;
+    Value(double value) noexcept;
     // int/float를 bool이나 다른 오버로드로 바꾸지 않도록 숫자는 모두 double로 받는다.
-    Value(int value) noexcept : m_data(static_cast<double>(value)) {}
-    Value(float value) noexcept : m_data(static_cast<double>(value)) {}
-    Value(std::string value) : m_data(std::move(value)) {}
-    Value(std::string_view value) : m_data(std::string(value)) {}
-    Value(const char *value) : m_data(std::string(value)) {}
-    Value(Array value) : m_data(std::move(value)) {}
-    Value(Object value) : m_data(std::move(value)) {}
+    Value(int value) noexcept;
+    Value(float value) noexcept;
+    Value(std::string value);
+    Value(std::string_view value);
+    Value(const char *value);
+    Value(Array value);
+    Value(Object value);
+    Value(const Value &);
+    Value(Value &&) noexcept;
+    Value &operator=(const Value &);
+    Value &operator=(Value &&) noexcept;
+    ~Value() noexcept;
 
-    [[nodiscard]] Type GetType() const noexcept { return static_cast<Type>(m_data.index()); }
+    [[nodiscard]] Type GetType() const noexcept;
     [[nodiscard]] bool IsNull() const noexcept { return GetType() == Type::Null; }
 
     // 타입이 다르면 nullptr이다. 호출자는 파일 형식 오류를 직접 보고한다.
-    [[nodiscard]] const bool *AsBool() const noexcept { return std::get_if<bool>(&m_data); }
-    [[nodiscard]] const double *AsNumber() const noexcept { return std::get_if<double>(&m_data); }
-    [[nodiscard]] const std::string *AsString() const noexcept { return std::get_if<std::string>(&m_data); }
-    [[nodiscard]] const Array *AsArray() const noexcept { return std::get_if<Array>(&m_data); }
-    [[nodiscard]] Array *AsArray() noexcept { return std::get_if<Array>(&m_data); }
-    [[nodiscard]] const Object *AsObject() const noexcept { return std::get_if<Object>(&m_data); }
-    [[nodiscard]] Object *AsObject() noexcept { return std::get_if<Object>(&m_data); }
+    [[nodiscard]] const bool *AsBool() const noexcept;
+    [[nodiscard]] const double *AsNumber() const noexcept;
+    [[nodiscard]] const std::string *AsString() const noexcept;
+    [[nodiscard]] const Array *AsArray() const noexcept;
+    [[nodiscard]] Array *AsArray() noexcept;
+    [[nodiscard]] const Object *AsObject() const noexcept;
+    [[nodiscard]] Object *AsObject() noexcept;
 
     // 객체가 아니거나 키가 없으면 nullptr. 선형 검색이며 씬 파일 크기에서는 충분하다.
     [[nodiscard]] const Value *Find(std::string_view key) const noexcept;
     // 객체에 키를 넣거나 바꾼다. 객체가 아니면 빈 객체로 바꾼 뒤 넣는다.
     Value &Set(std::string_view key, Value value);
 
-    friend bool operator==(const Value &, const Value &) = default;
+    friend bool operator==(const Value &, const Value &);
 
   private:
-    std::variant<std::nullptr_t, bool, double, std::string, Array, Object> m_data{nullptr};
+    std::variant<std::nullptr_t, bool, double, std::string, Array, Object> m_data;
 };
 
 struct Member
@@ -73,6 +79,34 @@ struct Member
 
     friend bool operator==(const Member &, const Member &) = default;
 };
+
+// Object의 원소 Member가 완전한 형식이 된 뒤에만 variant 연산을 정의한다.
+inline Value::Value() noexcept = default;
+inline Value::Value(std::nullptr_t) noexcept : Value() {}
+inline Value::Value(bool value) noexcept : m_data(value) {}
+inline Value::Value(double value) noexcept : m_data(value) {}
+inline Value::Value(int value) noexcept : Value(static_cast<double>(value)) {}
+inline Value::Value(float value) noexcept : Value(static_cast<double>(value)) {}
+inline Value::Value(std::string value) : m_data(std::move(value)) {}
+inline Value::Value(std::string_view value) : m_data(std::string(value)) {}
+inline Value::Value(const char *value) : m_data(std::string(value)) {}
+inline Value::Value(Array value) : m_data(std::move(value)) {}
+inline Value::Value(Object value) : m_data(std::move(value)) {}
+inline Value::Value(const Value &) = default;
+inline Value::Value(Value &&) noexcept = default;
+inline Value &Value::operator=(const Value &) = default;
+inline Value &Value::operator=(Value &&) noexcept = default;
+inline Value::~Value() noexcept = default;
+
+inline Value::Type Value::GetType() const noexcept { return static_cast<Type>(m_data.index()); }
+inline const bool *Value::AsBool() const noexcept { return std::get_if<bool>(&m_data); }
+inline const double *Value::AsNumber() const noexcept { return std::get_if<double>(&m_data); }
+inline const std::string *Value::AsString() const noexcept { return std::get_if<std::string>(&m_data); }
+inline const Value::Array *Value::AsArray() const noexcept { return std::get_if<Array>(&m_data); }
+inline Value::Array *Value::AsArray() noexcept { return std::get_if<Array>(&m_data); }
+inline const Value::Object *Value::AsObject() const noexcept { return std::get_if<Object>(&m_data); }
+inline Value::Object *Value::AsObject() noexcept { return std::get_if<Object>(&m_data); }
+inline bool operator==(const Value &left, const Value &right) { return left.m_data == right.m_data; }
 
 struct ParseError
 {
