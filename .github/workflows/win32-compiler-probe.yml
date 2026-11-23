@@ -1,0 +1,69 @@
+name: Diagnose Win32 compiler output
+
+on:
+  workflow_dispatch:
+    inputs:
+      revision:
+        description: Exact renderer revision to test
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: windows-2025
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.revision }}
+          path: renderer
+      - name: Compare compiler configurations
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $finder = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
+          $vs = & $finder -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          $vcvars = Join-Path $vs 'VC/Auxiliary/Build/vcvarsall.bat'
+          $toolsets = @(Get-ChildItem (Join-Path $vs 'VC/Tools/MSVC') -Directory | Sort-Object Name)
+          $toolsets.Name
+          $out = Join-Path $PWD 'probe-results'
+          New-Item -ItemType Directory -Path $out | Out-Null
+          $flags = '/nologo /W4 /WX /std:c++latest /EHsc /permissive- /utf-8 /Gy /GS /sdl /MD /fp:precise'
+          $results = foreach ($toolset in $toolsets) {
+            foreach ($configuration in @(@('x86','/O2 /Oi /Oy-','win32-release'), @('x86','/Od','win32-debug-optimizer-control'), @('amd64','/O2 /Oi','x64-release'))) {
+              $arch, $options, $label = $configuration
+              $id = "$($toolset.Name)-$label"
+              $script = Join-Path $out "$id.cmd"
+              $obj = Join-Path $out "$id.obj"
+              $exe = Join-Path $out "$id.exe"
+              $asm = Join-Path $out "$id.asm"
+              @(
+                '@echo off',
+                ('call "{0}" {1} -vcvars_ver={2}' -f $vcvars, $arch, $toolset.Name),
+                'if errorlevel 1 exit /b %errorlevel%',
+                ('cl {0} {1} /I"{2}\renderer\src" /FAs /Fa"{3}" /Fo"{4}" /Fe"{5}" "{2}\tools\ci\Win32SimdProbe.cpp"' -f $flags, $options, $PWD, $asm, $obj, $exe),
+                'if errorlevel 1 exit /b %errorlevel%',
+                ('"{0}"' -f $exe)
+              ) | Set-Content -LiteralPath $script -Encoding ascii
+              $probe = & $script 2>&1 | Tee-Object -FilePath (Join-Path $out "$id.txt")
+              $exitCode = $LASTEXITCODE
+              $probe | Out-Host
+              [pscustomobject]@{ configuration=$id; exit=$exitCode }
+            }
+          }
+          $results | Format-Table -AutoSize
+          $results | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $out 'summary.json')
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: win32-compiler-probe
+          path: |
+            probe-results/*.txt
+            probe-results/*.json
+            probe-results/*.asm
