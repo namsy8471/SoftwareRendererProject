@@ -173,6 +173,35 @@ template <bool DepthTest, bool Sloped, bool VaryingDepth, bool Instrumented> str
         surface.pixels[static_cast<std::size_t>(py) * surface.stridePixels + px] = color;
     }
 };
+
+template <class PixelWriter>
+SR_FORCEINLINE void drawBresenhamRows(int startX, int startY, int endX, int endY, const PixelWriter &plot)
+{
+    const auto rows = restrictBresenhamRows(startX, startY, endX, endY, plot.minY, plot.maxY);
+    int x = rows.x, y = rows.y;
+    const int dx = std::abs(endX - startX), sx = startX < endX ? 1 : -1;
+    const int dy = -std::abs(endY - startY), sy = startY < endY ? 1 : -1;
+    // endpoint guard만으로는 2*error의 int32 overflow를 막지 못한다.
+    // 재개 상태와 후속 누적 모두 int64로 유지한다.
+    auto error = rows.error;
+    while (true)
+    {
+        plot(x, y);
+        if (x == rows.lastX && y == rows.lastY)
+            break;
+        const auto twiceError = 2 * error;
+        if (twiceError >= dy)
+        {
+            error += dy;
+            x += sx;
+        }
+        if (twiceError <= dx)
+        {
+            error += dx;
+            y += sy;
+        }
+    }
+}
 } // namespace
 
 RasterizerVertex Rasterizer::ToRasterizerVertex(const ShadedVertex &v, int width, int height)
@@ -1604,32 +1633,7 @@ void Rasterizer::DrawScreenLine(SRMath::vec2 a, SRMath::vec2 b, float qa, float 
             }
         }
         else
-        {
-            const auto rows = restrictBresenhamRows(startX, startY, endX, endY, m_lineMinY, m_lineMaxY);
-            int x = rows.x, y = rows.y;
-            const int dx = std::abs(endX - startX), sx = startX < endX ? 1 : -1;
-            const int dy = -std::abs(endY - startY), sy = startY < endY ? 1 : -1;
-            // endpoint guard만으로는 2*error의 int32 overflow를 막지 못한다.
-            // 재개 상태와 후속 누적 모두 int64로 유지한다.
-            auto error = rows.error;
-            while (true)
-            {
-                plot(x, y);
-                if (x == rows.lastX && y == rows.lastY)
-                    break;
-                const auto twiceError = 2 * error;
-                if (twiceError >= dy)
-                {
-                    error += dy;
-                    x += sx;
-                }
-                if (twiceError <= dx)
-                {
-                    error += dx;
-                    y += sy;
-                }
-            }
-        }
+            drawBresenhamRows(startX, startY, endX, endY, plot);
     };
     const auto drawDepth = [&]<bool Sloped, bool VaryingDepth>()
     {
@@ -1665,6 +1669,8 @@ void Rasterizer::BeginLineRows(int minY, int maxY)
 
 void Rasterizer::DrawXRayWireTriangle(const PreparedTriangle &t, XRayWireEdges &edges)
 {
+    if (m_target.Empty() || m_lineMinY >= m_lineMaxY)
+        return;
     const auto pack = [](const SRMath::vec2 &p) -> std::optional<unsigned>
     {
         if (!(p.x >= 0.f && p.x < 65536.f && p.y >= 0.f && p.y < 65536.f))
@@ -1677,13 +1683,18 @@ void Rasterizer::DrawXRayWireTriangle(const PreparedTriangle &t, XRayWireEdges &
         DrawWireTriangle(t, ELineAlgorithm::Bresenham, false);
         return;
     }
-    const auto draw = [&](const RasterizerVertex &v0, const RasterizerVertex &v1, unsigned first, unsigned last)
+    LinePixelWriter<false, false, false, false> plot{};
+    plot.surface = m_target.Surface();
+    plot.color = 0xFFFFFFu;
+    plot.minY = m_lineMinY;
+    plot.maxY = m_lineMaxY;
+    const auto draw = [&](unsigned first, unsigned last)
     {
         const int startY = static_cast<int>(first >> 16), endY = static_cast<int>(last >> 16);
         if (std::max(startY, endY) < m_lineMinY || std::min(startY, endY) >= m_lineMaxY)
             return;
-        const auto dx = static_cast<unsigned>(
-            std::abs(static_cast<int>(first & 0xffffu) - static_cast<int>(last & 0xffffu)));
+        const int startX = static_cast<int>(first & 0xffffu), endX = static_cast<int>(last & 0xffffu);
+        const auto dx = static_cast<unsigned>(std::abs(endX - startX));
         const auto dy = static_cast<unsigned>(std::abs(endY - startY));
         const unsigned major = std::max(dx, dy), minor = std::min(dx, dy);
         // major/gcd(major, minor)가 짝수이면 정확히 반 픽셀에 닿는 step이 있어 방향을 보존한다.
@@ -1702,12 +1713,11 @@ void Rasterizer::DrawXRayWireTriangle(const PreparedTriangle &t, XRayWireEdges &
             return;
         }
         cached = key;
-        DrawScreenLine(v0.screenPos, v1.screenPos, v0.oneOverW, v1.oneOverW, 0xFFFFFFu,
-                       ELineAlgorithm::Bresenham, false);
+        drawBresenhamRows(startX, startY, endX, endY, plot);
     };
-    draw(t.rv0, t.rv1, *a, *b);
-    draw(t.rv1, t.rv2, *b, *c);
-    draw(t.rv2, t.rv0, *c, *a);
+    draw(*a, *b);
+    draw(*b, *c);
+    draw(*c, *a);
 }
 
 void Rasterizer::DrawWireTriangle(const PreparedTriangle &t, ELineAlgorithm algorithm, bool depthTest)
