@@ -36,8 +36,10 @@ function Get-Median([double[]]$values) {
 }
 
 $rows = foreach ($mode in $Modes) {
+    # 기존 와이어 성능 기준은 X-ray다. ExtraArgs로 숨은선 측정을 선택할 수 있다.
+    $policy = @(if ($mode -eq 'wire') { '--xray-wire' })
     $results = for ($run = 0; $run -lt $Runs; ++$run) {
-        $line = & $cli bench --mode $mode --frames $Frames --size $Size --target-fps $TargetFps --json @ExtraArgs
+        $line = & $cli bench --mode $mode --frames $Frames --size $Size --target-fps $TargetFps --json @policy @ExtraArgs
         if ($LASTEXITCODE -ne 0) { throw "srcli failed for mode $mode" }
         Add-Content -Path $outFile -Value $line
         $line | ConvertFrom-Json

@@ -40,7 +40,8 @@ options:
   --warmup N          unmeasured frames before measuring (default 60)
   --mode M            fill | wire | normal | aabb | fxaa (default fill)
   --opt O             none | sort | hiz | both (default none)
-  --hidden-wire       hidden-line wireframe (depth prepass)
+  --hidden-wire       hidden-line wireframe (default, uses a depth prepass)
+  --xray-wire         show occluded wireframe edges
   --no-occlusion      draw in one pass (turn off near-first occlusion passes)
   --no-lod            draw original meshes only (disable mesh LOD)
   --bilinear          enable bilinear texture filtering
@@ -183,6 +184,8 @@ Options parseArguments(int argc, char **argv)
         }
         else if (argument == "--hidden-wire")
             config.options.hiddenWireframe = true;
+        else if (argument == "--xray-wire")
+            config.options.hiddenWireframe = false;
         else if (argument == "--no-occlusion")
             config.options.occlusionPasses = false;
         else if (argument == "--no-lod")

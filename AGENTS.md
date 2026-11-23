@@ -111,7 +111,8 @@ tools/dev.sh render wire out.png
 ```
 
 `srcli` 옵션: `--size WxH --frames N --warmup N --mode fill|wire|normal|aabb|fxaa --opt none|sort|hiz|both
---hidden-wire --no-lod --dda --stats --threads N --load-every N --target-fps F --require-target --json --out file.png`.
+--hidden-wire|--xray-wire --no-lod --dda --stats --threads N --load-every N --target-fps F --require-target --json --out file.png`.
+와이어 화면과 직접 실행한 srcli는 숨은 선 제거가 기본이다. 앱의 Algorithms 옵션을 끄거나 srcli에 --xray-wire를 넘겨 X-ray를 선택한다. Bench.ps1과 클라우드 A/B의 기존 wire 성능 기준은 X-ray다.
 `--load-every N`은 측정 중 N프레임마다 teapot.obj를 백그라운드로 로드한다(결과는 버려 픽셀 동일). 로딩이 p95를 흔드는지 볼 때 쓴다.
 `--no-lod`는 메시 LOD를 끄고 원본 삼각형만 그린다. LOD 도입 전과 같은 화면(pixel_hash)이라 LOD 전후 비교에 쓴다.
 `--scene`은 데모 대신 glTF 장면을 가장 긴 변 4로 맞춰 그리고 `--clip` 애니메이션을 재생한다(자동 회전 끔). JSON에 `skinned_vertices`, `joints`,

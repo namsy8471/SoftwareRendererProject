@@ -252,13 +252,13 @@ flowchart LR
     Math -.-> Frontend
 ```
 
-렌더 명령은 안정된 객체·메시·옥트리 순서로 수집됩니다. 클리핑된 `PreparedTriangle`은 worker별 `concurrent_vector` 풀에 한 번 만들고, `(tileIndex, triangle*)` 참조는 worker별 flat 배열에 기록합니다. 타일별 count/cursor와 touched ID를 두고, front-end join 뒤 고정한 활성 worker 목록에서 prefix offset과 서로 겹치지 않는 목적 구간을 계산합니다. Worker별 병렬 scatter가 단일 포인터 배열을 채우고 join한 뒤, 각 타일 span을 선택적으로 정렬하고 래스터화합니다. 병렬 실행은 `sr::jobs`가 맡으며 primitive ID와 픽셀 소유권 규칙은 바뀌지 않습니다. 기본 빠른 X-ray만 있는 장면은 flat 타일 참조·worker 메타데이터의 신규 할당과 depth prepass를 건너뜁니다.
+렌더 명령은 안정된 객체·메시·옥트리 순서로 수집됩니다. 클리핑된 `PreparedTriangle`은 worker별 `concurrent_vector` 풀에 한 번 만들고, `(tileIndex, triangle*)` 참조는 worker별 flat 배열에 기록합니다. 타일별 count/cursor와 touched ID를 두고, front-end join 뒤 고정한 활성 worker 목록에서 prefix offset과 서로 겹치지 않는 목적 구간을 계산합니다. Worker별 병렬 scatter가 단일 포인터 배열을 채우고 join한 뒤, 각 타일 span을 선택적으로 정렬하고 래스터화합니다. 병렬 실행은 `sr::jobs`가 맡으며 primitive ID와 픽셀 소유권 규칙은 바뀌지 않습니다. X-ray만 있는 장면은 flat 타일 참조·worker 메타데이터의 신규 할당과 depth prepass를 건너뜁니다.
 
 타일별 vector의 누적 capacity 대신 worker별 flat 참조와 최종 포인터 배열의 capacity를 재사용합니다. `binReferences`는 논리 참조를 한 번만 세고, `retainedBinBytes`는 flat/최종/wire/debug 저장소와 count/cursor/offset, 헤더, touched/활성 worker 목록을 포함합니다. `binMs`는 front-end 참조 준비, `rasterMs`는 prefix·scatter·정렬·래스터화 시간입니다. 이 구조의 속도·메모리 비교는 진행 중이며 성능 향상이나 최종 채택을 뜻하지 않습니다.
 
 `Renderer`는 창 핸들 없이 `RenderTarget&`를 받아 프레임을 조정합니다. `RenderTarget`은 stride가 있는 비소유 `PixelSurfaceView`와 소유 깊이·ID 버퍼를 연결하고, `GdiPresenter`는 DIB 생성·resize·표시를 담당합니다. 앱은 DIB에 직접 쓰므로 표시 계층 분리로 추가 화면 복사가 생기지 않습니다. FXAA의 기존 입력 snapshot은 유지합니다.
 
-와이어프레임의 기본값은 가려진 선도 보여주는 빠른 **X-ray 표시**입니다. `Hidden-line wireframe (depth prepass)`를 켠 경우에만 와이어가 포함된 프레임에서 모든 면의 depth-only 패스를 먼저 실행하고 와이어의 숨은 선을 제거합니다. 기본 혼합 모드에서는 와이어 면이 채움 면을 가리지 않으며 prepass도 없습니다. 법선의 깊이 정책은 독립적입니다. 항상 존재하는 면 깊이를 검사하되, 옵션 OFF에서는 채움 면이 기록한 깊이만 사용하므로 순수 X-ray 와이어 장면에는 법선을 가릴 면 깊이가 없습니다. AABB·광원은 깊이를 무시하는 설명용 오버레이이며, 모든 선 패스 뒤에 선택적으로 FXAA를 적용합니다.
+와이어프레임은 기본으로 **숨은 선을 제거**합니다. 와이어 명령이 있는 프레임에서는 면 깊이를 먼저 기록합니다. Algorithms에서 `Hidden-line wireframe (depth prepass)`을 끄거나 `srcli`에 `--xray-wire`를 넘기면 가려진 모서리도 표시합니다. X-ray에서는 와이어 면이 채움 면을 가리지 않습니다. 법선은 이미 기록된 면 깊이를 검사합니다. AABB·광원은 깊이와 독립적인 오버레이이며, FXAA는 선 패스 뒤에 적용합니다.
 
 와이어 선은 서로 겹치지 않는 Y행 band로 병렬 처리합니다. band 수는 약 64행 단위를 기준으로 최대 32개이며, front-end가 완성한 삼각형 풀과 깊이·primitive ID는 읽기 전용입니다. `BeginLineRows`는 픽셀 쓰기 범위만 제한하고 선을 band 경계로 자르거나 새 끝점에서 재시작하지 않아 Bresenham/DDA의 기존 픽셀 규칙을 유지합니다. 와이어 join 뒤 DepthTested 선이 256개 이상이면 256개 선 단위 chunk로 변환·클리핑을 병렬 준비하고, 원본 제출 순서를 보존하는 bin과 Y행 band로 그립니다. 더 적은 법선은 기존 순차 경로를 사용하며, 오버레이는 법선 작업 join 뒤 순차 처리합니다.
 
@@ -498,7 +498,7 @@ msbuild .\SoftrendererProject.sln /m /p:Configuration=Release /p:Platform=x64
 
 창 상단 menu에서는 Bresenham/DDA line drawing, None/FXAA, Normal Vector/AABB/Wire Frame/Light Direction 표시를 선택할 수 있습니다.
 
-Algorithms의 `Front-to-back sorting (experimental)`, `Hi-Z culling (experimental)`, `Hidden-line wireframe (depth prepass)`은 독립 옵션이며 모두 기본 꺼짐입니다. Debug의 Wire Frame은 기본 X-ray 와이어를 표시하고, 숨은 와이어 옵션을 추가로 켜면 면 depth prepass와 숨은 선 제거를 사용합니다. 법선은 별도의 깊이 정책을 유지하고 AABB·광원 방향은 오버레이로 표시합니다.
+Algorithms의 `Hidden-line wireframe (depth prepass)`은 기본 켜짐입니다. Debug의 Wire Frame을 켜면 보이는 모서리를 표시하고, Algorithms에서 숨은 선 제거를 끄면 X-ray로 전환됩니다. Front-to-back sorting과 Hi-Z culling은 독립 옵션이며 기본 꺼짐입니다.
 
 <details>
 <summary><strong>디렉터리 구조 보기</strong></summary>

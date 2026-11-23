@@ -252,13 +252,13 @@ flowchart LR
     Math -.-> Frontend
 ```
 
-Scene commands retain stable object, mesh, and octree order. Each clipped `PreparedTriangle` is created once in a per-worker `concurrent_vector` pool; `(tileIndex, triangle*)` references enter a worker-local flat array with per-tile counts/cursors and touched IDs. After the front-end join freezes the active-worker list, prefix offsets assign disjoint destination ranges. Parallel worker scatters fill one pointer array and join before each tile span is optionally sorted and rasterized. Scheduling runs on `sr::jobs`; primitive IDs and pixel-ownership rules are unchanged. A pure default fast X-ray scene skips new flat tile-reference/worker-metadata allocations and the depth prepass.
+Scene commands retain stable object, mesh, and octree order. Each clipped `PreparedTriangle` is created once in a per-worker `concurrent_vector` pool; `(tileIndex, triangle*)` references enter a worker-local flat array with per-tile counts/cursors and touched IDs. After the front-end join freezes the active-worker list, prefix offsets assign disjoint destination ranges. Parallel worker scatters fill one pointer array and join before each tile span is optionally sorted and rasterized. Scheduling runs on `sr::jobs`; primitive IDs and pixel-ownership rules are unchanged. A pure X-ray scene skips new flat tile-reference/worker-metadata allocations and the depth prepass.
 
 Worker-flat and final-pointer capacities are reused instead of accumulating capacity in per-tile vectors. `binReferences` counts logical references once; `retainedBinBytes` includes flat/final/wire/debug storage, counts/cursors/offsets, headers, and touched/active-worker lists. `binMs` covers front-end reference preparation; `rasterMs` includes prefix, scatter, sorting, and rasterization. Speed and memory comparisons are still in progress: this structure is not a claim of improved performance or final adoption.
 
 `Renderer` accepts a `RenderTarget&` without a window handle. `RenderTarget` binds a strided, non-owning `PixelSurfaceView` and owns tight depth/ID buffers; `GdiPresenter` creates, resizes, and presents the DIB. The application renders directly into that DIB, with no additional full-screen copy introduced by the split. FXAA retains its existing input snapshot.
 
-Wireframe defaults to fast **X-ray display**, including occluded lines. Only enabling `Hidden-line wireframe (depth prepass)` adds an all-face depth-only pass to frames containing wire commands and hides their occluded segments. Default mixed-mode wire faces do not occlude filled faces and require no prepass. Normals have an independent depth policy: they test existing face depth; with hidden wire off, only fill faces produce it, so a pure X-ray wire scene has no face depth to hide normals. AABB/light gizmos remain depth-independent overlays. Optional FXAA follows all line passes.
+Wireframe hides occluded edges by default. Frames with wire commands record face depth before drawing visible edge segments. Turn off `Hidden-line wireframe (depth prepass)` in Algorithms or pass `--xray-wire` to `srcli` to show occluded edges. X-ray wire faces leave fill faces visible. Normals test the existing face depth. AABB and light gizmos are depth-independent overlays, and optional FXAA follows the line passes.
 
 Wire lines run in parallel using disjoint Y-row bands: roughly one band per 64 rows, capped at 32. Completed front-end triangle pools, depth, and primitive IDs are read-only. `BeginLineRows` restricts pixel writes without clipping endpoints or restarting a line at a band boundary, preserving the original Bresenham/DDA pixel rules. After wire workers join, batches of at least 256 DepthTested lines prepare transforms and clipping in parallel 256-line chunks, then draw through original-order bins and disjoint Y-row bands. Smaller normal batches use the existing sequential path; overlays run sequentially after normal workers join.
 
@@ -498,7 +498,7 @@ msbuild .\SoftrendererProject.sln /m /p:Configuration=Release /p:Platform=x64
 
 The window menu also provides Bresenham/DDA line drawing, None/FXAA selection, and Normal Vector/AABB/Wire Frame/Light Direction visualizations.
 
-Algorithms provides independent `Front-to-back sorting (experimental)`, `Hi-Z culling (experimental)`, and `Hidden-line wireframe (depth prepass)` toggles, all initially off. Debug → Wire Frame uses X-ray wires by default; enabling hidden wire additionally creates face depth and removes hidden lines. Normals retain their separate depth policy, while AABB/light direction remain overlays.
+`Hidden-line wireframe (depth prepass)` is enabled by default in Algorithms. Debug → Wire Frame shows visible edges. Disable Hidden-line to switch to X-ray. Front-to-back sorting and Hi-Z culling are independent and initially off.
 
 <details>
 <summary><strong>View the directory structure</strong></summary>

@@ -182,6 +182,9 @@ Win32App::Win32App(HINSTANCE hInstance, int nCmdShow)
               }
               refreshAnimationMenu();
               refreshEditMenu();
+              const auto &options = m_runner.GetRenderer().GetOptions();
+              for (const auto &menu : renderOptionMenus)
+                  checkMenuItem(menu.commandId, options.*menu.option);
               refreshWindowTitle();
           })
 {
@@ -234,12 +237,13 @@ void Win32App::initializeWindow(HINSTANCE hInstance, int nCmdShow)
     }
     m_windowTitle = m_szTitle.data();
 
-    // 정렬/Hi-Z와 숨은 와이어는 기본 비활성화다. 기본 와이어는 빠른 X-ray 표시다.
     const HMENU algorithmsMenu = GetSubMenu(GetMenu(m_hWnd), 1);
     if (!algorithmsMenu)
         throw std::runtime_error("Failed to initialize rendering options menu");
+    const auto &options = m_runner.GetRenderer().GetOptions();
     for (const auto &menu : renderOptionMenus)
-        if (!AppendMenuW(algorithmsMenu, MF_STRING | MF_UNCHECKED, menu.commandId, menu.label))
+        if (!AppendMenuW(algorithmsMenu, MF_STRING | (options.*menu.option ? MF_CHECKED : MF_UNCHECKED),
+                         menu.commandId, menu.label))
             throw std::runtime_error("Failed to initialize rendering options menu");
 
     AppendMenuW(algorithmsMenu, MF_SEPARATOR, 0, nullptr);

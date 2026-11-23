@@ -84,15 +84,17 @@ struct Win32AppTestAccess
         check(app.m_runner.GetRenderer().GetOptions().frontToBack, "front-to-back menu toggle");
         app.HandleMessage(app.m_hWnd, WM_COMMAND, ID_RENDER_HIZ, 0);
         check(app.m_runner.GetRenderer().GetOptions().hiZ, "Hi-Z menu toggle");
-        check(!app.m_runner.GetRenderer().GetOptions().hiddenWireframe, "wire defaults to X-ray");
-        app.HandleMessage(app.m_hWnd, WM_COMMAND, ID_RENDER_HIDDEN_WIRE, 0);
-        check(app.m_runner.GetRenderer().GetOptions().hiddenWireframe, "hidden-wire menu toggle on");
+        check(app.m_runner.GetRenderer().GetOptions().hiddenWireframe, "wire hides occluded edges by default");
         check((GetMenuState(GetMenu(app.m_hWnd), ID_RENDER_HIDDEN_WIRE, MF_BYCOMMAND) & MF_CHECKED) != 0,
-              "hidden-wire checked menu state");
+              "hidden-wire menu checked at startup");
         app.HandleMessage(app.m_hWnd, WM_COMMAND, ID_RENDER_HIDDEN_WIRE, 0);
         check(!app.m_runner.GetRenderer().GetOptions().hiddenWireframe, "hidden-wire menu toggle off");
         check((GetMenuState(GetMenu(app.m_hWnd), ID_RENDER_HIDDEN_WIRE, MF_BYCOMMAND) & MF_CHECKED) == 0,
               "hidden-wire unchecked menu state");
+        app.HandleMessage(app.m_hWnd, WM_COMMAND, ID_RENDER_HIDDEN_WIRE, 0);
+        check(app.m_runner.GetRenderer().GetOptions().hiddenWireframe, "hidden-wire menu toggle on");
+        check((GetMenuState(GetMenu(app.m_hWnd), ID_RENDER_HIDDEN_WIRE, MF_BYCOMMAND) & MF_CHECKED) != 0,
+              "hidden-wire checked menu state");
         app.HandleMessage(app.m_hWnd, WM_COMMAND, ID_RENDER_BILINEAR, 0);
         check(app.m_runner.GetRenderer().GetOptions().bilinearFiltering, "bilinear menu toggle");
         app.HandleMessage(app.m_hWnd, WM_COMMAND, ID_RENDER_MIPMAP, 0);
