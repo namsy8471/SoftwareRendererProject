@@ -1,7 +1,7 @@
 name: Diagnose Win32 compiler output
 
 on:
-  workflow_dispatch:
+  workflow_call:
     inputs:
       revision:
         description: Exact renderer revision to test
@@ -27,6 +27,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
           $finder = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
           $vs = & $finder -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
           $vcvars = Join-Path $vs 'VC/Auxiliary/Build/vcvarsall.bat'

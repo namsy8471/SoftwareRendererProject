@@ -11,13 +11,19 @@ on:
         description: Configurations to rebuild
         type: choice
         default: all
-        options: [all, win32, win32-release]
+        options: [all, win32, win32-release, win32-probe]
 
 permissions:
   contents: read
 
 jobs:
+  probe:
+    if: inputs.scope == 'win32-probe'
+    uses: ./.github/workflows/win32-compiler-probe.yml
+    with:
+      revision: ${{ inputs.revision }}
   verify:
+    if: inputs.scope != 'win32-probe'
     name: ${{ matrix.platform }} ${{ matrix.configuration }} rebuild and tests
     runs-on: windows-2025
     timeout-minutes: 55
